@@ -266,6 +266,8 @@ MainWindow::MainWindow(QWidget* parent)
       settings_(new QSettings(configDir_ + QStringLiteral("/portal-mux.conf"), QSettings::IniFormat, this))
 {
     setWindowTitle(QStringLiteral("Portal Mux"));
+    // before menuBar(): on macOS it creates the native window
+    if (windowEffects::translucencyPossible()) setAttribute(Qt::WA_TranslucentBackground);
     if (QFont font; font.fromString(settings_->value(QStringLiteral("font/main")).toString())) QApplication::setFont(font);
     resize(1280, 800);
     QDir().mkpath(configDir_);
@@ -597,8 +599,7 @@ MainWindow::MainWindow(QWidget* parent)
     if (restoreGeometry(settings_->value(QStringLiteral("window/geometry")).toByteArray()))
         setWindowState(windowState() & ~Qt::WindowFullScreen);
 
-    if (windowEffects::translucencyPossible()) {
-        setAttribute(Qt::WA_TranslucentBackground);
+    if (testAttribute(Qt::WA_TranslucentBackground)) {
         for (QWidget* w : std::initializer_list<QWidget*>{menuBar(), work, sessionBar_, status_, tabs_, splitter->handle(1)})
             w->setAutoFillBackground(true);
         views_->installEventFilter(this);
