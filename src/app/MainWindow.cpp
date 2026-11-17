@@ -1037,7 +1037,6 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     if (watched == centralWidget() && event->type() == QEvent::Paint && centralWidget()->layout()->contentsMargins().top() > 0) {
         QPainter(centralWidget()).fillRect(0, 0, centralWidget()->width(), 1, lineColor());
     }
-    // the sidebar's border over the session: the floating panel's, or the bar's when collapsed
     if (event->type() == QEvent::Paint && ((watched == views_ && sidebarMode_ == SidebarMode::Overlay) ||
                                            (watched == activityBar_ && sidebarMode_ == SidebarMode::Collapsed))) {
         auto* w = static_cast<QWidget*>(watched);
