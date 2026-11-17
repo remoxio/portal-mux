@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-rdp">
+    <sub-class-of type="text/plain"/>
+    <comment>Remote Desktop connection</comment>
+    <glob pattern="*.rdp"/>
+  </mime-type>
+  <mime-type type="application/x-vnc">
+    <sub-class-of type="text/plain"/>
+    <comment>VNC connection</comment>
+    <glob pattern="*.vnc"/>
+    <glob pattern="*.tigervnc"/>
+  </mime-type>
+</mime-info>

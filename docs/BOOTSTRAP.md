@@ -1,0 +1,425 @@
+# Remote Desktop Client — BOOTSTRAP
+
+Cross-platform, open-source remote connection client (RDP, VNC, SPICE, SSH) for Linux, Windows and macOS.
+
+Project name: **Portal Mux** (`portal-mux` for the binary, install paths, config folder and keychain service).
+
+---
+
+## 1. Goals
+
+- One app for the common remote protocols: **RDP, VNC, SPICE, SSH**, each on the best free library available.
+- Runs on **Linux (X11 + Wayland), Windows, macOS**.
+- **Platform look** on every platform (Qt 6 Widgets with the platform style).
+- Connection manager: saved connections, groups, credentials in the OS keychain.
+- File transfer: RDP drive redirection first, then RDP clipboard file copy-paste; SFTP for SSH (and as a side channel for VNC hosts).
+- Open source, **GPL-3.0-or-later**.
+
+Non-goals for v1: RemoteApp (RAIL), USB redirection other than SPICE's, gaming/low-latency streaming, mobile.
+
+---
+
+## 2. Decisions
+
+| Area | Decision | Notes |
+|---|---|---|
+| Language | C++20 | All protocol libraries are C, called directly |
+| UI toolkit | Qt 6 Widgets (≥ 6.5) | Platform styles; Wayland + HiDPI first-class; `QImage::Format_RGB32` has the framebuffer's byte layout |
+| RDP | FreeRDP 3 | Reference client: `client/SDL` in the FreeRDP repo |
+| VNC | LibVNCClient (from LibVNCServer) | Includes Apple ARD auth for macOS Screen Sharing |
+| SPICE | spice-client-glib (from spice-gtk) | GTK-independent part only; brings GLib + GStreamer |
+| SSH | libssh | SSH, SFTP, port forwarding |
+| Telnet, serial | own (sockets, termios) | RFC 854 options: window size, terminal type; raw TCP; serial line settings |
+| Terminal emulation | libvterm + own Qt terminal widget | Fallback: xterm.js in Qt WebEngine (heavy) |
+| Credentials | QtKeychain | Windows Credential Manager / macOS Keychain / libsecret |
+| Connection file | JSON via `QJsonDocument` | No extra dependency |
+| Connection properties | One schema table per protocol (`src/core/Properties.cpp`) | Drives the tabbed dialog, the JSON `options`, defaults and secrets (keychain `<id>/<property>`) |
+| Dependencies | **OS package managers**, no vcpkg/Conan | Linux: distro (dev), Flatpak (release) · Windows: MSYS2 UCRT64 · macOS: MacPorts (release), Homebrew (dev) |
+| Build | CMake + Ninja, one CMake preset per OS | Same `CMakeLists.txt` everywhere |
+| CI | TeamCity | Linux, Windows (MSYS2), macOS (MacPorts) agents |
+| License | GPL-3.0-or-later | Required by Apache-2.0 + GPL-2.0+ combination |
+
+---
+
+## 3. License matrix
+
+| Component | License | GPL-3.0 compatible |
+|---|---|---|
+| FreeRDP 3 | Apache-2.0 | Yes (not with GPL-2.0-only) |
+| OpenSSL 3 | Apache-2.0 | Yes (not with GPL-2.0-only) |
+| LibVNCClient | GPL-2.0-or-later | Yes, via "or later" — **verify headers of the pinned version** |
+| spice-gtk / spice-client-glib | LGPL-2.1-or-later | Yes |
+| GLib, GStreamer (via spice-gtk) | LGPL-2.1-or-later | Yes |
+| libssh | LGPL-2.1 | Yes |
+| libvterm | MIT | Yes |
+| Qt 6 | LGPL-3.0 | Yes (not with GPL-2.0-only) |
+| QtKeychain | BSD-3-Clause | Yes |
+| xterm.js (fallback only) | MIT | Yes |
+
+---
+
+## 4. Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ UI (Qt 6 Widgets)                                            │
+│  MainWindow · ConnectionTree · TabbedSessions · Settings     │
+│  RemoteView (QImage)           TerminalView (libvterm grid)  │
+└──────────────▲───────────────────────────────▲───────────────┘
+               │ QMetaObject::invokeMethod     │
+               │ (Qt::QueuedConnection)        │
+┌──────────────┴───────────────────────────────┴───────────────┐
+│ core (no Qt dependency)                                      │
+│  DisplaySession · TerminalSession · Framebuffer · InputEvent │
+│  ConnectionStore · SecretStore · KnownHosts                  │
+└──────▲───────────▲────────────▲────────────────▲─────────────┘
+       │           │            │                │
+   rdp (FreeRDP) vnc (LibVNC) spice (glib)   ssh (libssh)
+                                              └─ tunnels used by rdp/vnc/spice
+```
+
+`ConnectionStore` and `SecretStore` may use Qt (JSON, QtKeychain); they live outside the headless `rdcore` library if so.
+
+### 4.1 Session interfaces
+
+Defined in `src/core/Session.h`:
+
+- `SessionListener` (worker thread → UI): `onStateChanged`, `onError`, and the **blocking** prompts `askTrust` (certificate / host key / unencrypted warning) and `askCredentials`. The UI answers through `PromptBridge`, which is closed before a view joins its worker, so a pending dialog can never deadlock shutdown.
+- `DisplayListener : SessionListener`: `onResize`, `onFrameUpdated`, `onClipboardText`, `onCursor` (BGRA image; empty = default cursor).
+- `TerminalListener : SessionListener`: `onData`.
+- `DisplaySession` (RDP, VNC, SPICE, `TunneledDisplaySession`) and `TerminalSession` (SSH): called on the UI thread, never block on the network; work is queued to the worker (`TaskQueue`).
+
+`KeyEvent` carries both the **XT scancode** (0x100 = E0-extended; RDP and SPICE send it as-is) and the **keysym** (VNC); each backend uses what its protocol needs.
+
+### 4.2 Threading model
+
+- Every session runs on **its own worker thread**:
+  - RDP: FreeRDP event loop (`freerdp_check_event_handles`).
+  - VNC: `WaitForMessage` / `HandleRFBServerMessage` loop.
+  - SPICE: **exception** — runs on the UI thread's GLib default main context. spice-glib emits signals on the default context regardless of the context it was started from, so a worker thread raced it (crash found in testing). Its I/O is asynchronous, so the UI never blocks. Qt drives that context on Linux; on Windows/macOS `main.cpp` pumps it.
+  - SSH: libssh non-blocking loop.
+- Framebuffer: the backend's own surface is the back buffer; changed regions are copied into `Framebuffer` (front buffer) and an accumulated dirty rect under a mutex. The worker notifies via `onFrameUpdated`; the view coalesces notifications into one queued repaint and copies only the dirty rows.
+- Input: UI thread pushes into a mutex-protected queue; worker drains it.
+- No protocol call is ever made from the UI thread. `disconnect()` joins the worker before the view is destroyed.
+
+### 4.3 Remote screen rendering
+
+- v1: `RemoteView` (a `QWidget` inside a `QScrollArea`) paints a `QImage` in `Format_RGB32`. The framebuffer uses the same byte layout (B,G,R,0xFF), so dirty regions are plain row copies.
+- If 4K / 60 fps is too slow: switch `RemoteView` to `QOpenGLWidget` or QRhi with a texture upload of dirty rects. The interface above does not change.
+- Scaling modes: 1:1 with scrollbars, fit-to-window, and (RDP/SPICE) dynamic resolution via `resizeDesktop`. 1:1 should mean physical pixels on HiDPI screens (`devicePixelRatio`).
+
+### 4.4 Keyboard
+
+- `QKeyEvent::nativeScanCode()` / `nativeVirtualKey()` give the platform codes: Linux = XKB keycode (evdev + 8) / X11 keysym; Windows = scancode / VK; macOS = virtual keycode.
+- RDP: map to RDP scancodes (FreeRDP 3 provides keyboard helper functions; check `client/SDL` for usage).
+- VNC: map to X11 keysyms; resolve layout locally (AltGr → `ISO_Level3_Shift`).
+- Release all pressed keys on focus loss.
+- Wayland: capturing system shortcuts (Alt+Tab, Super) needs the keyboard-shortcuts-inhibit protocol via **direct Wayland calls** — not part of Qt's public API. Done in `src/app/KeyboardGrab.cpp` (QWaylandClientExtensionTemplate + the qpa native interface for the wl_surface/wl_seat, as KRDC does); X11 uses Qt's keyboard grab.
+- Without "Grab All Possible Keys" every key still goes to the remote side except the window's Ctrl+Shift+F (full screen) and Ctrl+W (disconnect); with it, those too.
+
+### 4.5 Security
+
+- RDP: certificate verification with trust-on-first-use store and a fingerprint dialog. Never auto-accept silently; the only exception is the per-connection "Always trust" opt-in (ticked on the prompt or under Security).
+- SSH: `known_hosts` handling via libssh, same TOFU dialog.
+- VNC: warn when the connection is unencrypted; offer "connect via SSH tunnel".
+- Passwords only in QtKeychain, never in the connection file.
+
+---
+
+## 5. Repository layout
+
+```
+portal-mux/
+├── CMakeLists.txt
+├── CMakePresets.json        presets: linux, windows-msys2, macos
+├── LICENSE                  GPL-3.0
+├── docs/BOOTSTRAP.md
+├── src/
+│   ├── app/                 main, MainWindow, RemoteView, dialogs, connection tree
+│   ├── core/                interfaces, Framebuffer, TestPatternSession, ConnectionStore, KnownHosts
+│   ├── rdp/                 FreeRDP backend
+│   ├── vnc/                 LibVNCClient backend
+│   ├── spice/               spice-client-glib backend
+│   ├── ssh/                 libssh sessions, SFTP, tunnels
+│   ├── stream/              telnet and serial terminal sessions
+│   ├── terminal/            libvterm wrapper + TerminalView widget
+│   └── platform/
+│       ├── linux/           Wayland shortcut inhibit, FUSE file clipboard
+│       ├── windows/         IDataObject file clipboard
+│       └── macos/           NSPasteboard file promises
+├── tests/
+└── packaging/
+    ├── flatpak/
+    ├── windows/
+    └── macos/
+```
+
+Connection storage: one JSON file in `QStandardPaths::AppConfigLocation`, passwords referenced by key into QtKeychain.
+
+---
+
+## 6. Build setup
+
+### 6.1 Dependencies per OS
+
+Every library is prebuilt in each OS's package manager (checked 2026-11-13):
+
+| | FreeRDP 3 | LibVNCServer | spice-gtk | libvterm | libssh | Qt 6 | QtKeychain |
+|---|---|---|---|---|---|---|---|
+| Fedora 44 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| MSYS2 UCRT64 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| MacPorts | ✓ 3.33 | ✓ 0.9.15 | ✓ 0.43 | ✓ | ✓ | ✓ | ✓ |
+| Homebrew | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| vcpkg (rejected) | ✓ | ✗ | ✗ | ✗ | ✓ | ✓ | — |
+| Conan Center (rejected) | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ | — |
+
+**Fedora**
+```bash
+sudo dnf install gcc-c++ cmake ninja-build git pkgconf-pkg-config
+sudo dnf install qt6-qtbase-devel qtkeychain-qt6-devel freerdp-devel libvncserver-devel \
+                 libssh-devel libvterm-devel spice-glib-devel kf6-kwindowsystem-devel \
+                 qt6-qtmultimedia-devel qt6-qtwebsockets-devel ffmpeg-devel SDL3-devel \
+                 qt6-qtbase-private-devel wayland-protocols-devel   # ffmpeg-devel: RPM Fusion (full codec set)
+# Qt older than 6.10 also needs qt6-qtwayland-devel (WaylandClient moved into qtbase in 6.10)
+sudo dnf install libvirt-devel   # optional: the "Virtual machines" group (Linux only)
+```
+
+**Windows** — install MSYS2, then in the **UCRT64** shell:
+```bash
+pacman -S --needed mingw-w64-ucrt-x86_64-{toolchain,cmake,ninja,qt6-base,qt6-multimedia,qt6-websockets,qtkeychain-qt6,freerdp,libvncserver,libssh,libvterm,spice-gtk,ffmpeg,sdl3}
+```
+
+**macOS** — MacPorts (used for releases):
+```bash
+sudo port install cmake ninja qt6-qtbase qt6-qtmultimedia qt6-qtwebsockets qtkeychain-qt6 FreeRDP LibVNCServer libssh libvterm spice-gtk ffmpeg libsdl3
+```
+or Homebrew (fine for development):
+```bash
+brew install cmake ninja qt qtkeychain freerdp libvncserver libssh libvterm spice-gtk ffmpeg sdl3
+```
+
+### 6.2 Build
+
+```bash
+cmake --preset linux            # or windows-msys2 / macos
+cmake --build --preset linux
+ctest --preset linux
+```
+
+- Release build: add `-DCMAKE_BUILD_TYPE=Release` to the configure line.
+- The `macos` preset assumes MacPorts (`/opt/local`, Qt in `/opt/local/libexec/qt6`). With Homebrew: `cmake --preset macos -DCMAKE_PREFIX_PATH=$(brew --prefix)`.
+- Only the `linux` preset has been built so far; the Windows and macOS presets are untested.
+
+### 6.3 Packaging notes
+
+- `cmake --install build/linux --prefix ~/.local` (or a package's prefix) installs `bin/portal-mux`, `share/portal-mux/scrcpy-server`, the desktop entry and the mime types; then `update-mime-database ~/.local/share/mime` and `update-desktop-database ~/.local/share/applications`. Making Portal Mux the default for `rdp://` etc. stays the user's choice (`xdg-mime default portal-mux.desktop x-scheme-handler/rdp`).
+
+- **Linux**: Flatpak builds FreeRDP, LibVNCServer, spice-gtk as manifest modules (Remmina's Flathub manifest does the same; reuse it).
+- **Windows**: `windeployqt` + copy the remaining MinGW DLLs (`ldd`/`ntldd`); installer with Inno Setup or WiX.
+- **macOS**: libraries are built for the build machine's macOS version → build releases on the oldest macOS supported. `macdeployqt` + fix remaining dylib paths; sign and notarize every bundled dylib.
+- MSYS2 and Homebrew are rolling releases: CI caches the installed dependency set and refreshes it on purpose, not on every build.
+
+---
+
+## 7. Roadmap
+
+### Phase 0 — Skeleton
+- [x] Repo, LICENSE (GPL-3.0), CMake + CMakePresets (`linux`, `windows-msys2`, `macos`)
+- [x] Qt app: main window, connection tree (left), tabbed sessions (right)
+- [x] `core` interfaces, Framebuffer, `RemoteView` with a test pattern (`TestPatternSession`: worker thread, dirty rects, pointer input)
+- [ ] First build on Windows (MSYS2) and macOS (MacPorts)
+- [ ] TeamCity builds on Linux, Windows, macOS — `cmake --preset <os> && cmake --build --preset <os> && ctest --preset <os>`
+
+Status on Linux, 2026-11-14. "verified" = tested end to end against the local test servers (§11).
+
+### Phase 1 — RDP core
+- [x] ConnectionStore (JSON, atomic save, `.broken` backup on parse error) + QtKeychain passwords + connection dialog — verified
+- [x] NLA/CredSSP and TLS login, certificate TOFU dialog (stored per host:port, changed-certificate warning) — verified
+- [x] "Always trust" per connection: a checkbox on the certificate prompt saves it to the connection (yes only); Security tab shows/undoes it; then unknown, mismatched and changed certificates (also the gateway's) are accepted without asking and stored — verified against freerdp-shadow-cli
+- [x] Dirty-rect rendering (GDI + GFX), keyboard (XT scancodes, Linux), mouse, remote cursor shapes — verified
+- [x] Keyboard layout sent to the server: detected from systemd-localed (`localectl` layout), per-connection override — verified
+- [x] Text clipboard both ways (UTF-8, CRLF↔LF) — verified
+- [x] Dynamic resolution (Display Control channel), initial size = tab size — verified; HiDPI 1:1 implemented, not tested on a HiDPI screen
+- [x] Drive redirection (`\\tsclient`) — verified read/write against Windows 10 and xrdp (full session)
+- [x] Server-side resolution changes (DesktopResize) — verified
+
+### Phase 2 — VNC
+- [x] VNC auth, VeNCrypt/TLS — verified; Apple ARD — implemented, **untested** (needs macOS)
+- [x] Encodings (Tight, ZRLE, Hextile, CopyRect, Raw, …); DesktopSize + ExtendedDesktopSize resize — verified. LibVNCClient's `SendExtDesktopSize` makes TigerVNC drop the client, so we send SetDesktopSize ourselves, followed, as the library does, by a full update request before flagging the resize (LibVNCClient sends no update requests while it is flagged; without one outstanding the server couldn't answer and both waited, the picture frozen at the old size)
+- [x] The receive loop handles messages LibVNCClient already buffered before waiting on the socket (`c->buffered`): it handles one message per call, and when the server's clipboard announcement and first update came in one read the update sat unhandled while the server waited for the next request (no picture at all). Both freezes found with Xvnc resized at connect (Fit); 10 of 10 connects and resizes mid-session fine afterwards (traced with strace and Xvnc's per-connection update counts)
+- [x] Keysyms from the local layout (AltGr resolved by XKB); key release uses the keysym of the press — verified with a US layout only
+- [x] Text clipboard: UTF-8 extended clipboard, Latin-1 fallback — verified
+- [x] Unencrypted-connection warning (skipped for loopback, i.e. tunnels) — verified
+
+### Phase 3 — SSH
+- [x] libssh session, known_hosts TOFU (writes the app's own file, also trusts `~/.ssh/known_hosts`, refuses changed keys), `~/.ssh/config` honoured — verified
+- [x] Auth: key file (with passphrase prompt), agent, default keys — verified; password and keyboard-interactive — implemented, **untested** (test sshd is key-only)
+- [x] `TerminalView` (libvterm): 256/truecolor, bold/italic/underline, wide chars, scrollback, selection (primary + Ctrl+Shift+C/V), bracketed paste — verified
+- [x] Terminal mouse and extras: programs that ask for the mouse (mc, htop, vim) get clicks, drags and the wheel (libvterm encodes them in the mode they asked for); Shift+mouse still selects locally and Shift+right-click opens the menu; the wheel sends arrow keys to full-screen programs without mouse support (less, man), as Konsole; double-click selects a word (Konsole's word characters), triple-click a line; right-click menu Copy/Paste/Find; the title the shell sets goes to the tab tooltip and the window title; the bell marks a background tab (and the Active list) until it is shown and asks the taskbar for attention; Find (Ctrl+Shift+F) over scrollback and screen, case-insensitive, newest first, Enter older / Shift+Enter newer, wraps around. Mouse reporting is switched off when the session ends, so text can be selected again. Verified over SSH with mc (click, wheel, Quit button), less, double/triple click, find and title. Not done: Ctrl+click links, matches across wrapped lines, highlighting every match.
+- [x] SFTP browser: list, navigate, upload, download (atomic `.part` rename) — verified
+- [x] SSH tunnel / jump host for RDP, VNC, SPICE (stable local port per connection) — verified with RDP and VNC
+
+### Phase 4 — SPICE + Proxmox
+- [x] spice-client-glib session on its own GMainContext/GMainLoop thread — verified
+- [x] Display, keyboard, mouse (client mode), cursor — verified against QEMU; clipboard, resize-to-window, audio — implemented, **untested** (need spice-vdagent in a guest OS)
+- [x] **Client → guest file drag-and-drop** (SPICE): drop files on the VM's display and the guest's agent saves them (Windows' SPICE agent: the user's Desktop; spice-vdagent on Linux: Downloads); `spice_main_channel_file_copy_async`, generic as `DisplaySession::canSendFiles/sendFiles` and forwarded through SSH tunnels. Regular files only (folders can't be sent), not in view-only mode, only while the agent is connected; "Copying…/Copied" in the status bar, an error in a dialog. Verified on the Windows 10 VM under Xvfb (a PySide6 drag source): a text file and 1 MB of random data, byte-identical on the Desktop (removed afterwards). Not shown: progress of a long copy.
+- [x] Proxmox integration: API login, VM list, SPICE ticket — see the Proxmox view under Main window extras; verified against `tests/proxmox_mock.py`, not a real Proxmox VE
+- [x] SPICE over TLS (tls-port, CA file, host subject) through an HTTP CONNECT proxy — verified on the Proxmox path (mock spiceproxy → QEMU with an x509 dir); a plain SPICE port still warns when it isn't loopback
+- [ ] Bundle spice-glib, GLib and GStreamer in the Windows and macOS packages
+
+### Phase 5 — Advanced
+- [ ] RDP clipboard file copy-paste per OS (Linux FUSE, Windows `IDataObject`, macOS file promises)
+- [x] Multi-monitor (RDP; Display → "Use all monitors", or `use multimon:i:1` in an .rdp file): the client sends this computer's screens as the monitor layout (device pixels, the primary first; `freerdp_settings_set_monitor_def_array_sorted`), the desktop is their bounding box, and the tab shows it all fitted (no resizing to the tab). Full Screen opens one frameless full-screen window per screen (`MonitorWindow`, placed on its output, so it works on Wayland too, where one window can't span outputs), each drawing its part of the picture at 1:1 and sending pointer input in desktop coordinates; keys go to the session; the same shortcut leaves. Verified in a nested KWin with two outputs against a FreeRDP shadow server: the client's monitor data (2 monitors, 0,0–1279,799 and 1280,0–2559,799), the server's monitor layout PDU back, both windows showing their halves seamlessly, a click and typing on the second monitor reaching the right remote window, leaving. Untested against a Windows server (the shadow server keeps its own desktop size); not done: monitor changes mid-session, per-monitor scale factors.
+- [ ] RD Gateway — settings wired (`host[:port]`, same credentials), **untested**
+- [ ] Audio playback — enabled (RDP rdpsnd, SPICE SpiceAudio), **untested**
+- [x] Wayland shortcut inhibit
+- [ ] Packaging: Flatpak (Flathub), Windows installer, signed + notarized macOS `.dmg`
+
+### Phase 6 — Media pipeline, Android, Moonlight
+- [x] **Shared pipeline** (`src/media/`): FFmpeg software decoding of H.264/H.265/AV1 into the framebuffer (aligned, padded swscale output; stream colorspace/range), Opus/AAC/FLAC/raw to S16 PCM; `DisplayListener::onAudio` → `AudioPlayer` (Qt Multimedia `QAudioSink`, ≤120 ms queued). Decoder unit-tested with a one-frame H.264 clip.
+- [x] **Android via scrcpy 5.0.1** (`src/android/`): adb host protocol spoken directly (`host:transport`, `shell:`, `sync:` push, `localabstract:` sockets: no adb processes per request, no forwards); scrcpy-server vendored in `third_party/scrcpy` (Apache-2.0, SHA-256 checked); video/audio/control sockets, session and config packets, control messages per scrcpy's `control_msg.c` (unit-tested byte layout). Mouse: left = touch, right = Back, middle = Home, wheel = scroll; keyboard in scrcpy's "mixed" mode (letters/space/navigation/modifiers as Android key codes with meta state, everything else as text); clipboard both ways; turn screen off, stay awake, show touches, codecs, bit rates, max size/fps, audio source.
+  - Verified on the Android 15 emulator (headless, read-only): video, touch, Back, typing, clipboard both directions, audio stream decoding, tab close stops the server, lost-device and wrong-serial errors.
+  - Text mode cannot inject characters missing from the device's virtual key map (e.g. Hungarian ő/ű — "Could not inject char").
+  - [x] **Hardware keyboard** (Keyboard: Hardware keyboard): a UHID keyboard named "Portal Mux" (scrcpy's report descriptor), XT scancode → HID usage, modifier bits, Caps Lock re-aligned from the device's LED report. Verified on the emulator: typing with the default US layout, and "őűéá" plus the Y/Z swap after choosing Hungarian for the Portal Mux keyboard on the device.
+  - No hardware decoding yet; audio output not heard (the emulator had no sound device), only decoded.
+- [x] **Moonlight** (`src/moonlight/`, `third_party/moonlight-common-c` at the commit moonlight-qt v6.2.0 pins): client identity (RSA-2048 self-signed, `<config>/moonlight`), PIN pairing ported from moonlight-qt (SHA-256/AES-ECB challenge, host signature check, pinned host certificate), HTTPS on OpenSSL with the pinned certificate, serverinfo / applist / launch / resume / cancel, stream through `LiStartConnection` into the shared decoders. Keyboard as US-layout VK codes (+0x8000, extended flag), absolute mouse, high-res wheel. Settings: app name, resolution (or window size), fps, bit rate, codec, audio here / on the host, quit app on disconnect.
+  - Verified against Sunshine v2026.914 (portable, software x264) on the Windows 10 VM: pairing (Sunshine's new pending-pairing list: the PIN is entered for the request named "Portal Mux"), stream video and audio, mouse and keyboard, reconnect without pairing. Not tested: wrong PIN, GeForce Experience hosts, HEVC/AV1 (quit-on-close: verified with Apollo).
+  - **Apollo** (Sunshine fork, SudoVDA virtual displays): "Virtual display of this size (Apollo)" sends `virtualDisplay=1` at launch, so Apollo adds a screen of exactly the stream's resolution; with "Window size when connecting" the remote desktop matches the tab 1:1. Sunshine ignores it. Apollo gives full rights only to the first client paired; later ones get view/list, and a launch then fails with "Permission denied": the error names Apollo's paired-clients page. Its pairing API is behind a login session (`/api/login`, then `/api/pin`), not basic auth.
+    - Verified against Apollo 0.4.6 (software x264) on the Windows 10 VM: pairing, stream, mouse and keyboard, resume without pairing; without the option a 1280×720 stream is the 1912×1019 desktop scaled; with it and window size, a 930×666 virtual display at 1:1; quit-on-close removes the virtual display (a plain disconnect keeps it for resuming); a second client's "Permission denied" with the hint. Not tested: HDR, scale factor.
+  - **Session → Reconnect at Window Size** (Moonlight tabs): Apollo sizes a virtual display only at launch (a resume keeps it and scales), and GameStream can't change the size mid-stream, so this quits the app on the host and launches it again at the window's size, inside the same session on its worker (stop stream, `cancel`, `launch`, start stream; the picture dims under "Reconnecting…" meanwhile). Manual on purpose: it closes what runs in the stream and Windows moves the windows on the virtual display while it is replaced; Artemis doesn't follow resizes either. The decoders free their previous stream when opened again. Verified with Apollo: 930×666 → window enlarged → 1230×846 at 1:1, Apollo's log: display removed and created again, about 1.3 s.
+  - **Apollo clipboard** (text; "Share clipboard" and the toolbar toggle as for RDP): Apollo's `POST/GET /actions/clipboard?type=text` over the pinned HTTPS, allowed only while this client streams and if its rights include clipboard (serverinfo's `Permission` bits 16/17; the first client paired has them). Apollo can't announce a change, so, as Artemis does, a local change is sent at once and the host's text is fetched when you leave the stream (focus out: another tab, the sidebar, another app); text already known isn't sent or set again, so a newer local copy isn't overwritten. Runs on the stream's worker between its waits (cancelled with it). CRLF from Windows becomes LF; Apollo adds CRLF itself. Sunshine and GFE hosts: nothing is sent.
+    - Verified against Apollo 0.4.6 on the Windows 10 VM, inside an isolated Xvfb session: local → host with accents and a line break (read back with the client's certificate), host → local after leaving the stream (Windows clipboard set in the user's session by a hidden scheduled task), a newer local copy kept, sharing off stops both ways, sharing on sends the current text.
+  - One stream at a time (the library is a singleton); GameStream itself has no clipboard.
+  - [x] **Gamepads** (`src/app/Gamepads.cpp`, SDL3 gamepad API, polled on the UI thread): up to 16 controllers with hotplug, buttons by position (Xbox layout, paddles, touchpad click, misc), sticks (Y up), analog triggers, rumble and trigger rumble back from the host. Arrival tells the host the type (Xbox/PlayStation/Nintendo), the buttons present and the capabilities, so Sunshine picks a matching virtual pad. Input goes only to the tab shown in the active window; leaving it puts the controllers at rest on the host (still plugged in) and stops rumble. Sunshine on Windows needs the ViGEmBus driver.
+    - Verified with a uinput Xbox 360 pad against Sunshine v2026.914 + ViGEmBus 1.22 on the Windows 10 VM, read back with XInput: every button, both sticks, triggers, d-pad; rumble from `XInputSetState` reaching the local pad's force feedback; unplug/replug; release on focus loss and tab switch. This Sunshine build takes ~5 s to create each virtual pad (its Virtual HID Driver license check runs before the ViGEmBus fallback), so input in that window is lost.
+    - Not done: motion sensors, touchpad surface, LED, battery, DualSense adaptive triggers; the Android (scrcpy UHID) gamepad.
+
+### Connection properties (per protocol, tabbed dialog)
+- [x] **RDP**: General (domain, view only, clipboard) · Display (window mode, desktop size, color depth, remote scale) · Experience (connection type, custom experience flags, GFX, H.264) · Local resources (audio local/remote/off, microphone, shared folders, printers, smart cards, keyboard layout) · Security (protocol, TLS level, restricted admin, Remote Credential Guard) · Gateway (host, port, usage, transport, own credentials) · Advanced (console session, start program/folder, load balance info, pre-connection blob, timeout) · SSH tunnel
+- [x] **VNC**: window mode, view only, clipboard, shared session, JPEG quality, compression, encodings, local cursor, encrypted-only, timeout, SSH tunnel
+- [x] **SPICE**: window mode, view only, clipboard, TLS port + CA + certificate subject, HTTP proxy, audio, shared folder (+ read-only), image compression, video codec, SSH tunnel
+- [x] **SSH**: key file, jump hosts (ProxyJump, with our host-key prompt and key/agent auth per hop), start command, terminal type, font, font size, scrollback, compression, keepalive
+- Verified: dialog and storage; RDP window modes, fixed size and color depth (xrdp log), VNC scale + view only, SSH term/command/font, jump host. The rest is wired to the library setting but not exercised against a server that shows it.
+
+### RDP file copy-paste (Phase 5, Linux part)
+- [x] Implemented with FreeRDP's `CliprdrFileContext` (FUSE) + WinPR clipboard, following FreeRDP's SDL client: local files offered as FileGroupDescriptorW, remote files exposed in the FUSE mount and put on the local clipboard as `text/uri-list` + `x-special/gnome-copied-files`
+- **Verified end to end against Windows 10**: Windows → local (copy in the session, `cp` from the FUSE path, identical bytes) and local → Windows (Explorer Ctrl+V, identical bytes). Also against xrdp (full Xorg session): both directions deliver the data, but reading a remote file to EOF ends with EIO because FreeRDP's FUSE layer requests a range at EOF and xrdp's chansrv answers it with a failure (upstream interop issue; Windows is fine).
+- WinPR 3.32's FileGroupDescriptorW → text/uri-list conversion returns nothing, so the uri-list for remote files is built from the parsed file list instead.
+
+### Main window extras
+- [x] **Import from KRDC** (File menu): bookmarks.xml folders → groups, history-only entries → "KRDC history", per-host settings from krdcrc; passwords stay in KWallet. Re-import skips existing connections.
+- [x] **KVM Manager** (sidebar view): every VM of `qemu:///system`, running or not, drawn as virt-manager lists them (`VmDelegate` with `GuestRow`, which the Proxmox view shares): a screen icon with the state inside (play, pause, saved, crashed), the name in bold, the state below, and on the right a graph of the guest's CPU use over the last 80 s (`virDomainGetInfo` every 2 s: CPU time of the wall time times the vCPUs, as virt-manager's guest CPU graph). States from libvirt's lifecycle events; reconnects every 5 s while libvirt is down. Start (restores a managed save), Resume, Pause, Shut Down (ACPI/agent), Reboot, Save (managed save), Force Off and Reset, enabled by state (`LibvirtVms::allowed`), in the context menu and the view's title bar (Open, Start/Resume, Pause, Shut Down, Force Off). Force Off and Reset ask first, Cancel the default. Actions run on their own thread (a save writes the VM's memory to disk; libvirt connections are thread-safe) and report errors in a dialog. Double-click or Open: the VM's **console tab** (`VmConsole`, one per VM, as virt-manager's VM window): its SPICE/VNC display while it runs (an ordinary display page from `MainWindow::createDisplay`, so the Session menu works on it), a round power button while it is off, saved or crashed, which starts it; it follows the VM, so the display opens when it starts (also on a new port) and the button comes back when it stops; the tab closes when the VM is deleted. Display host/port/password from the live XML (read-write connection). Read-only access lists only. `PORTAL_MUX_LIBVIRT_URI` replaces `qemu:///system` (`test:///<file>` for UI tests, `qemu:///session`). Optional at build time. Verified with libvirt's test driver (every action, confirmations, Enter on them, the console's button) and on the real libvirt with a throwaway disk-less VM: all 15 VMs with the running ones' graphs, console → power button → SPICE display in the same tab → Force Off → button again, save and restore, Reconnect to a changed port. Remote hosts: see libvirt hosts over SSH; with them each host is a folding panel as in the Proxmox view (header with the server icon, the name and its state on the right: "connecting…", "read-only" in grey, "not reachable" in red; a chevron to fold it; no indentation). Verified with two extra test-driver hosts, one of them a missing file (not reachable). Not done: `qemu:///session` by default, creating/deleting VMs, snapshots, UNIX-socket displays, SPICE TLS CA.
+- [x] **Closing a tab asks** (its ✕): "Disconnect from "<name>" and close its tab?", Disconnect / Cancel (the default, so Enter keeps it), only while its session is connecting or connected (`RemoteView::live()`, `TerminalView::live()`); an ended or failed session, or a VM console showing its power button, closes at once. Disconnect (Ctrl+W, the toolbar) doesn't ask. Verified on a VNC console (Enter keeps the tab; Disconnect closes it and its websocket).
+- [x] **Proxmox view** (sidebar; `Proxmox.cpp` parsing, `ProxmoxClient` one server's REST API, `ProxmoxView`): Proxmox VE servers added with + (name, host[:port], 8006 by default, user `user@realm` with its password, or an API token `user@realm!id` with its secret), kept in `portal-mux.conf` (`[proxmox]` array: id, name, host, port, user, pinned fingerprint) with the password/secret in the OS keychain (`proxmox/<id>`). Server → nodes → VMs and containers as **folding panels, not an indented tree** (no indentation, so a narrow sidebar keeps the names): servers are panel headers (a 6% text-coloured band, the Proxmox mark, the name, the state word on the right), nodes and guests full-width rows; a chevron at the right of every row with children (down: folded, up: open) folds it on a click, as do a double-click on the row and Left/Right; a double-click on the chevron folds once and opens nothing; all rows keep the chevrons' column, so graphs and chevrons line up. Folding is animated (Qt's tree animation: the rows below slide, about 250 ms, in-out), not from the keyboard (instant), and not when the style's animation duration is 0 (KDE's animation speed "Instant"; `QApplication::isEffectEnabled` can't tell, KDE leaves UI effects off). A fold waits until the mouse button is up: a release after it ends the animation at once. Shared with the KVM Manager (`PanelTree`: `PanelDelegate`, `setUpPanels`, `foldLater`). Verified by recording the screen at 60 fps: 16–20 changed frames per fold by chevron or double-click in both views, one frame by Left/Right, one per 5 s refresh (the graphs), none moving. Nodes and guests are drawn as the KVM Manager's VMs (`GuestRow`, shared with it): a server, screen or box icon with the state inside (play, pause), the name in bold, below it "vmid · state" for guests and "RAM used / total GiB" for nodes ("Offline" when off), and on the right a graph of its CPU use, one sample per refresh (40, so 200 s; restarted after a gap, as the view isn't polled while hidden); CPU, memory, cores and uptime in the tooltip; templates marked. Refreshed every 5 s while the view is shown (`GET /cluster/resources`), the selection and collapsed nodes kept. Password logins get a ticket (`POST /access/ticket`, cookie + CSRF header on writes), renewed once on a 401; a refused login (wrong password, an account with a second factor) stops the polling of that server until it is edited or refreshed by hand, so a wrong password doesn't hit fail2ban or lockouts every 5 s. Certificates: Proxmox's own CA isn't trusted by the system, so the server's SHA-256 fingerprint is asked for once (Yes/No, No the default; "has CHANGED" when a pinned one differs) and pinned; other certificate errors are then ignored for exactly that certificate. Actions by state in the title bar (Add, Console, Start, Shut Down, Stop) and the context menu (also Pause, Resume, Reboot, Reset, Refresh, Edit/Remove server); Stop and Reset ask first (Cancel the default); errors of an action go to the status bar. **Server state** on the right of the server's header, coloured by what it needs: "Connecting…" (grey, before the first list), "Log in" (grey: no password stored), "Login failed" (red; polling stops), "Certificate" (orange: not trusted, or refused), "Unreachable" (red; polling goes on), "Error" (red); the full message in the tooltip. While there is a problem the guests aren't listed (the client keeps the last list, so consoles and Reconnect still try and say why they fail); a hint row under the server says what a double-click does instead: "Double-click to log in" (a password dialog showing the user, or "Secret of the API token …"; stored in the keychain and connects), "Double-click to check its certificate" (asks again, also after a No), "Double-click to retry". A double-click on a healthy server or node row expands or collapses it. Console (double-click), one tab per guest (a double-click shows it), Reconnect asks for a new ticket; status bar "SPICE · <server> · node/vmid" or "VNC · …". A VM whose display is SPICE (`GET …/status/current` says `spice`): `POST …/qemu/{vmid}/spiceproxy` with `proxy=<server host>` gives a one-time SPICE ticket; the cluster CA is written to `<config>/proxmox/<id>-ca.pem` and the console opens as an ordinary SPICE tab (TLS port, CA, host subject, HTTP CONNECT through the node's spiceproxy on 3128). Any other VM, as the web console does: `POST …/vncproxy websocket=1` gives a port and a VNC ticket; `WebSocketTunnel` listens on a random 127.0.0.1 port for one connection and carries it over `wss://host:8006/api2/json/nodes/{node}/{qemu|lxc}/{vmid}/vncwebsocket?port=…&vncticket=…` (the login's cookie or token header, subprotocol `binary` as pveproxy requires, the pinned certificate) to the ordinary VNC session, which authenticates with the ticket as the VNC password (noVNC does the same; VNC uses its first 8 characters); the tunnel goes with the tab. Needs Qt WebSockets. **Containers: a real terminal** (`ProxmoxTerminal`, a terminal tab grouped with Terminals, status bar "Terminal · <server> · node/vmid"), as Proxmox's xterm.js console: `POST …/lxc/{vmid}/termproxy` gives a port, a ticket and the user; the same vncwebsocket carries termproxy's protocol: "user:ticket\n" first, "OK" back, then `0:<bytes>:<data>` for typed input, `1:<cols>:<rows>:` on every resize (also right after OK), `2` every 30 s as a ping; output arrives raw. Typing before OK is kept and sent after it. A close frame from Proxmox (the console ended) closes the tab as an exited shell does; a broken connection keeps it with "[disconnected]" and Reconnect (a new ticket in the same tab). Verified against `tests/proxmox_mock.py` (password, token and 2FA logins, certificate prompt and pinning, start/stop with confirmation, server down and back, SPICE console through the mock spiceproxy to QEMU's TLS port, VNC console of a VM through the mock vncwebsocket to QEMU's VNC port with both logins, closing a tab closes its websocket, reconnect, removal; and with the new rows: every server state and its double-click (Log in → wrong password → Login failed with polling stopped → right password; certificate No → Certificate → double-click asks again → Yes; mock stopped → Unreachable → restarted → retry), the graphs filling and lined up, the KVM Manager unchanged; the container terminal with a password and a token login: login line, size 111×37 then 88×31 after a window resize as stty reports it in the pty, UTF-8 both ways, `exit` closes the tab, the mock killed → tab kept, Reconnect while it is down says "Connection refused", after a restart Reconnect opens a new console in the same tab); against a real Proxmox VE 9.2 only the login, list and a console request (the user's; SPICE refused for a VM without SPICE, which led to the VNC consoles). Not done: two-factor logins (use a token), a paused VM shows as running (`/cluster/resources` doesn't tell), a VM's serial console as a terminal (xterm.js for VMs with a serial port), HA/storage/tasks, never tried against a real Proxmox VE (termproxy with an API token included: it sends the token's user, as the API returns it).
+- [x] **Sidebar as in VS Code**: a 48 px activity bar (`ActivityBar`: the current view's icon lit with an accent bar, the others dimmed until hovered; icons, all line icons in the text colour: Lucide's network, monitor-cog and panels-top-left for Connections, KVM Manager and Sessions; the Proxmox mark redrawn in Lucide's line style) switches the side panel between views, each with its title in small capitals and its actions as small buttons: Connections (search + tree; New), KVM Manager, Proxmox, Sessions (shown when a session first connects, if the sidebar is docked; the open tabs grouped by protocol, "RDP (2)"…; click switches and focuses the session, right-click → Reconnect/Disconnect). Open: a click switches the view, a double click collapses the panel. **Views on and off** as in VS Code: right-click on the activity bar lists the views with checkmarks; KVM Manager and Proxmox can be unticked (their icons go; a hidden Proxmox view isn't polled), Connections and Sessions are always on (ticked, greyed); remembered in `window/hiddenViews`; hiding the open view switches to Connections (a floating panel closes, a collapsed sidebar stays collapsed); ticking it again puts the icon back in its place. The same two as View → Show KVM Manager / Show Proxmox (after Show Sidebar; also in the toolbar's right-click menu), kept in step with the activity bar's menu. Verified under Xvfb: docked with the hidden view open, collapsed with it floating, after a restart, toggled from either menu. Collapsed: a click opens the view floating over the tabs, which keep their width (closed by a click elsewhere, Escape, the same icon, or opening a session); a double click docks it. The view, the collapsed state and the panel's width (300 px at first, VS Code's) are remembered (`window/sidebarView`, `window/sidebarCollapsed`, `window/sidebarWidth`). The panel keeps its width when the window resizes, maximizing and startup included (set before the window had its size, QSplitter spread the difference over both sides in proportion, so a maximized window came back with a wider panel); only dragging the divider changes it. No animation: views are switched often and VS Code doesn't animate it. View → Show Sidebar hides the activity bar and the panel. Translucency and blur are set apart for open (the icons and the panel, 85% by default) and collapsed (the icons alone, 100% = opaque by default); a floating panel is opaque, as blur only shows the desktop behind the window, not the session. Verified under Xvfb (modes, clicks, overlay over a console tab) and in a nested KWin over a striped window (open at 85%: the activity bar and the panel tinted and blurred alike; collapsed at 50% without blur: the activity bar alone see-through).
+- [x] **Settings dialog with pages** (Layout: sidebar opacity/blur; Font: main window font and SSH terminal font, each with "As the system", what is in use and a sample), applied at once, Close only. Fonts in `portal-mux.conf` (`font/main`, `font/terminal`); the terminal font is the default for SSH connections without their own font/size and is applied to open terminals too. The family list is built from `QFontDatabase` (fixed pitch for the terminal) plus the system and current family, because QFontComboBox's monospace filter misses Noto Sans Mono.
+- [x] **Window geometry and sidebar width** saved on close (`portal-mux.conf`, `window/geometry`, `window/splitter`) and restored on start; never restored into full screen. On Wayland the compositor decides the position.
+- [x] **~/.ssh/config hosts** as a read-only "SSH config" group (HostName/User/Port/IdentityFile/ProxyJump/Compression/ServerAliveInterval, `Host *` and `Include`, first value wins); Edit saves a copy as a normal connection; the file is never written.
+- [x] **Session menu + toolbar** as in KRDC, acting on the current tab: full screen (Ctrl+Shift+F; menu, toolbars, sidebar, tabs and status bar hidden, a toolbar slides in when the pointer touches the top edge), copy screenshot to clipboard, view only, clipboard sharing, show local cursor, grab all possible keys, scale to window, disconnect (Ctrl+W, any tab). Toggles start from the connection's settings and last for the session. Verified under Xvfb against Xvnc + xterm (Ctrl+W deletes a word remotely only while keys are grabbed, otherwise it disconnects); the Wayland inhibitor verified against a headless KWin (`inhibit_shortcuts` → `active`, no duplicate, destroy on release). Not done: KRDC's Meta+Shift+F19 for grab, "grab keys when entering full screen", Alt+Tab/Win capture on Windows and macOS.
+- [x] **Status bar**: on the left only the current tab's session state ("Windows 11: Connecting…" until connected, "Connected" for 3 s, Disconnected/Error until the tab changes; another tab's state never shows; switching tabs clears it) and action messages (KVM, Proxmox). On the right fixed cells, bordered in the separator shade (20% text on the window colour, restyled on theme change), with minimum widths so changing numbers don't shift them: protocol, address, size (remote screen, or a terminal's columns×rows), scale (1:1 or N%), fps, mode (view only, keys grabbed, a VM console's state), NUM (this computer's Num Lock, dimmed when off, polled every 0.5 s; hidden when unknown). Cells that don't apply are hidden. Verified on RDP (`RDP | 127.0.0.1:3390 | 1024×700 | 91% | 0 fps | NUM`).
+- [x] **App icon** (the P/M monogram from the Portal Mux icon pack, `data/icons/`; since 2026-11-17 the pastel-yellow pack: one solid yellow monogram on the dark navy tile, no gradient): the window and taskbar icon from Qt resources (16–256 px with the taskbar's 28 px; `setDesktopFileName("portal-mux")` for the Wayland app id), the hicolor tree installed to `share/icons/hicolor` and `Icon=portal-mux` in the desktop file, `portal-mux.rc` with `portal-mux.ico` for the Windows executable, `portal-mux.icns` as the macOS bundle icon. The pack's 1024 px master isn't in the repository. Verified on X11 (`_NET_WM_ICON` set, `WM_CLASS` portal-mux) and `desktop-file-validate`; Windows and macOS untested.
+- [x] **About dialog** (`About.cpp`, Help → About), laid out as spark-commander's: icon, name, version, one line, the licence's link; then "Made with the work of these projects" in a scrolling list, "Comes with it" (moonlight-common-c, ENet, nanors, scrcpy, Material Icon Theme, Tabler Icons, Lucide) and "Built on" (Qt 6, QtKeychain, KWindowSystem, FreeRDP, LibVNCClient, spice-gtk, GLib, libssh, libvterm, FFmpeg, OpenSSL, SDL 3, libvirt, wayland-protocols), each its name linked to its site, its licence and what it does here; libraries only in some builds are listed only when built in; the Proxmox trademark note at the end. A close button only in its title bar (no minimize or maximize), as the settings dialog.
+- [x] **Tree rows aligned** (`ElidingDelegate`, Connections, Sessions, Proxmox): Qt's item layout puts the text a pixel further right when it fits than when it's cut with "…", so one short name stood out; the delegate measures the text rect as if it never fit and draws the (cut) text itself. Verified by pixel: all rows start at the same column, cut or not.
+- [x] **SSH port forwarding** (SSH connection → Forwarding: "Local forwards (ssh -L)", "Remote forwards (ssh -R)", "SOCKS proxy port (ssh -D)"; `SshForwards`, pumped from the terminal session's own loop over the same SSH connection, jump hosts included): OpenSSH's `[bind:]port:host:hostport`, several separated by commas, IPv6 in brackets; local listeners on loopback unless a bind address is given (`*` = all), remote ones ask the server to bind its loopback (its GatewayPorts decides), the SOCKS proxy speaks SOCKS5 CONNECT without authentication (domain names resolved on the server side). What runs and what failed (port in use, server refused) shows dimmed at the top of the terminal; the session goes on either way. Verified through a private sshd with curl: each kind, a 30 MB file byte-identical through each (400–1200 MB/s on loopback). Unit tests for the parser. shortcut: blocking writes to local sockets and blocking connects for -R; not done: X11 forwarding.
+- [x] **Hardware video decoding** (Android and Moonlight → Display → "Hardware video decoding", on by default; `VideoDecoder`): FFmpeg's device for the platform (VA-API, D3D11VA, VideoToolbox) when its decoder supports it for the codec; the GPU format is chosen in `get_format`, and FFmpeg falls back to software when the GPU refuses a stream (a 64×48 test clip does); frames are copied back (`av_hwframe_transfer_data`) and converted to BGRX by swscale, now threaded (`sws_scale_frame`, a thread per core — software decoding gains too). Measured on an RX 5700 XT: 4K H.264 at 80 Mbit/s 64 fps on the GPU against 49 in software with a third less CPU; an easy 1080p clip is quicker in software, both far above 60 fps. Not tested in a live Android/Moonlight session. shortcut: no zero-copy (GL/Vulkan rendering).
+- [x] **Keychain lookups time out** after 20 s and connect without a stored password (the login prompt then asks): a crashed or stuck keychain service left connecting hanging forever.
+- [x] **Telnet and serial** (`Protocol::Telnet` port 23, `Protocol::Serial`; `StreamTerminalSession` + `telnet::Protocol`): a byte stream into the terminal. Telnet negotiates as PuTTY does: offers window size (NAWS, sent again on resize) and terminal type (TTYPE, the connection's "Terminal type"), asks for suppress-go-ahead, accepts echo and binary, refuses the rest without reply loops (an answer to our own offer gets no reply); IAC doubling, CR NUL; "Raw TCP" turns negotiation off (console servers). No login fields: telnet logs in inside the terminal. `telnet://host:port` links, quick connect and the command line. Serial: the Host field becomes Device (suggesting `/dev/ttyUSB*`, `/dev/ttyACM*`, `/dev/serial/by-id/*`), speed 1200–921600, data bits, parity, stop bits, flow control (RTS/CTS, XON/XOFF), opened exclusively (`TIOCEXCL`); "Permission denied" names the dialout group. Connecting runs on the worker (a slow host doesn't freeze the window; closing the tab interrupts the connect). POSIX only for now, as the local terminal. Verified: a test telnet server running bash on a pty (negotiation log: WILL NAWS, WILL TTYPE, DO SGA, DO ECHO, NAWS 121×37 then 86×28 on resize, TTYPE xterm-256color; `tput cols/lines` matched), and a socat pty pair with a fake device (banner, echo both ways). Unit tests for the telnet protocol. Connections without a password field (telnet, serial, local, Android, Moonlight) no longer ask the keychain for one.
+- [x] **VM serial console** (KVM Manager → Serial Console; `LibvirtConsoleSession`): `virDomainOpenConsole` on a non-blocking stream driven by libvirt's events on the UI thread (no thread, no polling); a terminal tab per VM, "<VM> (serial)", Reconnect opens it again; closes when the VM stops. Needs a console device in the VM and a getty in the guest. Verified with a throwaway VM with `<bios useserial='yes'/>`: SeaBIOS's text on the console, locally and on a remote host.
+- [x] **libvirt hosts over SSH** (KVM Manager → +): `qemu+ssh://` hosts beside this computer (`[libvirtHosts]` in portal-mux.conf); "user@host" or a ~/.ssh/config name becomes `qemu+ssh://…/system`. libvirt runs your system ssh with `no_tty=1`: keys, agent and ~/.ssh/config, never a password prompt (the host's key must be known). The connection opens off the UI thread (ssh may take seconds). With remote hosts the list groups VMs under host rows ("— connecting…", "— not reachable", the error in the tooltip); Edit/Remove on a host row (removal closes its consoles). A remote VM's display goes through an SSH tunnel to that host (its listen address is usually its localhost); a `keyfile=` in the URI is used for the tunnel too; the tunnel's host key is checked against ~/.ssh/known_hosts and the app's own. Status bar "host · …". shortcut: listing and CPU samples of a remote host still query on the UI thread. Verified against this computer through a private sshd on 127.0.0.1:2223 (throwaway keys; libvirt's ssh through a wrapper with `-F /dev/null` and scratch known_hosts, since OpenSSH takes ~ from passwd, not $HOME): the list, a remote VM's SPICE display through the tunnel (host key prompt), its serial console, removal.
+- [x] **SPICE USB redirection** (Session → USB Devices…): this computer's USB devices from spice-glib's device manager, ticked = redirected; ticking connects (after `can_redirect_device`), unticking gives it back, errors in a dialog; auto-connect of newly plugged devices off. A VM without USB redirectors gets a hint (Add Hardware → USB Redirection, SPICE channel). Generic in `DisplaySession` (`canRedirectUsb`, `usbDevices`, `redirectUsb`), forwarded through SSH tunnels. Verified: the hint on a VM without redirectors, the device list on one with two; no device was redirected in tests (the list holds the user's own keyboard/mouse receivers, webcam and disk) — **untested end to end**, try with a spare USB stick; device access may need a udev rule.
+- [x] **Detach and reattach tabs** (tab context menu or Session → Detach Tab): the session moves into its own window (the same page, nothing reconnects) with a toolbar: Attach, Full Screen, Screenshot, Clipboard, Grab Keys, Send Keys, USB, Scale, Disconnect; closing the window attaches it again (no session lost by a stray ✕); Disconnect ends it. The session actions follow the active window (`currentPage()`: the focus window, or the window a focused menu belongs to). The main window's closing ends detached sessions too. Verified under Xvfb: detach, typing in the detached terminal, Attach, Disconnect closing the window; a SPICE console detached. Untested without a window manager: closing the window with its ✕, full screen of a detached window. Sessions lists a detached session under its protocol as "<name> (detached)": a click brings its window to the front; right-click → Show Window, Attach to the Main Window, Disconnect (Reconnect stays in the window: a reconnect would put the session back into a tab). Verified under Xvfb: listed, the right row current, click focuses the window, Attach and Disconnect from the menu.
+- [x] **Lock keys follow this computer**: on connect and whenever a session's view gets focus, RDP gets a synchronize event (`freerdp_input_send_focus_in_event`, as mstsc) and SPICE `spice_inputs_channel_set_key_locks` with this computer's Num/Caps/Scroll Lock (`LockKeys.cpp`: Linux reads the keyboard LEDs in `/sys/class/leds`, which the compositor or X server sets; Windows `GetKeyState`; macOS none). Without it a remote that started with Num Lock off got toggled together with the local one forever. VNC needs none (keysyms; QEMU syncs itself). Verified on RDP with gdb on a FreeRDP shadow server: each focus-in delivers flags 0x2 (Num Lock on). SPICE untested.
+- [x] **Local terminal** ("Local terminal (this computer)" in New Connection): your login shell (`-bash`, as a terminal emulator starts it) or a command through `/bin/sh`, in a chosen folder (default home), on a pseudo-terminal (`forkpty`; `src/local/LocalTerminalSession.cpp`), in the same terminal widget as SSH with its font, scrollback and `TERM` settings. Leaving the shell closes the tab; closing the tab hangs up the shell (SIGHUP, SIGKILL after half a second), which ends its jobs too. Everything the child needs is prepared before the fork (exec-safe child); the pipe and the terminal are close-on-exec, so shells don't inherit them. Verified: shell, folder, `TERM`, size, `exit`, closing with a background job. Not on Windows yet (needs ConPTY).
+- [x] **Shell choice for the local terminal** (General → Shell): your login shell (the default, its path shown), or one found on this computer: `/etc/shells` (skipping nologin, false, git-shell), then zsh, fish, nu, dash, ksh, mksh, tcsh, xonsh, elvish and pwsh on PATH (often not listed); one entry per real folder, so `/bin/bash` and `/usr/bin/bash` on a merged /usr appear once. Started as a login shell (`-zsh`); a "Run command" runs with it (`zsh -c …`), the default still `/bin/sh -c`. Status bar "this computer · zsh". Found once per start. Verified: sh, bash and tmux listed here, sh started as `-sh`.
+- [x] **Layout**: under the menu bar a 1 px line in a separator's shade (20% text on the window colour; not in full screen); the sidebar (activity bar + panel) runs from there to the window's bottom; the work area beside it has its own toolbar (the session's actions, Quick connect on the right), the tabs and the status bar. The toolbar is part of that layout, not a QMainWindow toolbar, so it can't be moved, floated or rearranged; when the work area is too narrow for its labels it shows icons only (tooltips keep the names), so nothing goes into a » menu. No Connections toolbar: New, Connect, Edit and Delete are in the File menu, the tree's menu and the view's +.
+- [x] View → Show Toolbar, Show Sidebar, Show Status Bar, Show Tab Bar; remembered in `portal-mux.conf` (`view/toolBar`, `view/sidebar`, `view/statusBar`, `view/tabBar`). Full screen hides them regardless and restores the choice. Right-clicking a toolbar or the menu bar offers the same four toggles (instead of Qt's per-toolbar list, which would bypass them).
+- [x] Connecting (double-click/Enter or Connect) to an RDP connection that already has a tab shows that tab instead of opening a second session, which would only log the first one out. Other protocols open a new tab each time.
+- [x] Cancelling a login or trust prompt closes the tab; so does leaving an SSH shell (`exit`). A dropped SSH connection keeps the tab with its error; RDP, VNC, SPICE, Android and Moonlight tabs close once their error dialog is dismissed with Close (the default).
+- [x] **Reconnect**: the error dialog has a Reconnect button (SSH too); a session that ended without an error (a stopped VM, a remote logoff) dims its last picture under a "Session ended — Reconnect" button; Session → Reconnect works on any remote or terminal tab. The new session takes the old tab's place, with the connection as it was opened (a password typed at a prompt is asked again). RDP also reconnects by itself after a network drop (`autoReconnect`, on by default): back into the same session with the server's auto-reconnect cookie, 5 tries 2 s apart, the picture dimmed under "Reconnecting…" meanwhile. Not FreeRDP's `client_auto_reconnect_ex()`: in 3.33 it sleeps the connect timeout between up to 20 tries without looking at a disconnect, so closing the tab froze the window for minutes. Verified: drop through a socat proxy (back in the same tab, typing works), server gone (error after 9 s, Reconnect after restarting it), closing the tab while retrying (0.3 s), SSH drop, stopped SPICE VM.
+- [x] **Send Keys** (Session menu, session toolbar, full-screen bar): Ctrl+Alt+Del, Print Screen, Ctrl+Alt+F1…F12, pressed in order and released in reverse, with XT scancodes and X11 keysyms. Verified through an RDP shadow server with an X key logger.
+- [x] **Quick connect** (the work area's toolbar, on the right): host, `user@host:port` or an `rdp://`, `vnc://`, `spice://`, `ssh://` address, with a protocol box for addresses without one; connects without saving (`Addresses.cpp`).
+- [x] **Search over the connection tree** (Ctrl+F outside sessions): name or address, groups kept when a child matches or their name does; the first match is selected, Enter connects, Down goes to the tree, Escape clears.
+- [x] **Command line, links and files**: `portal-mux [address...]` takes the same addresses as quick connect plus `.rdp` (UTF-16 or UTF-8; address, port, DOMAIN\user, gateway, audio, clipboard, printers, smart cards, console, load balance info, start program) and `.vnc`/`.tigervnc` files (RealVNC `Host`, TigerVNC `ServerName`, `host:display` / `host::port`); passwords in them are machine-encrypted and not read. `data/portal-mux.desktop` registers `rdp://`, `vnc://`, `spice://` and the `.rdp`/`.vnc` types (`data/portal-mux-mime.xml`); installed by `cmake --install`. Each start is its own window (no hand-over to a running one yet).
+- [x] **Wake-on-LAN** (`wakeOnLan`, every protocol but Android): magic packet to 255.255.255.255:9 before connecting, again every 3 s, until the connection's port answers (at most two minutes, dialog after 1.5 s with seconds and Cancel); not waited for behind a jump host. Verified with strace (102 bytes to the broadcast address) and the wait/cancel against a closed port. Not done: subnet-directed broadcast for hosts behind a router.
+- [x] **Commands before connecting and after disconnecting** (`preCommand`, `postCommand`, every protocol): run by `/bin/sh -c` (`cmd /c` on Windows) with `PORTAL_MUX_NAME`, `PORTAL_MUX_HOST`, `PORTAL_MUX_PORT`, `PORTAL_MUX_USER`; connecting waits for the first (dialog after 0.5 s with Cancel; a non-zero exit shows its stderr and asks "Connect anyway?", default No); the second runs detached when the tab closes, also when Portal Mux quits. A reconnect runs neither. Order: command, Wake-on-LAN, connect. Verified with logging commands.
+- [x] **Translucent sidebar** (Settings → Configure): opacity in 5% steps + blur, stored in `portal-mux.conf`. Verified on KWin 6.8 Wayland (nested, `ext_background_effect_v1`) incl. the opaque fallback when the compositor cannot blur. Windows 10: see-through only (verified); every blur variant also blurs the native title bar and draws its text on a white box, so blur there needs our own title bar or Windows 11's system backdrop (untested). macOS (NSVisualEffectView) written but untested.
+
+- [x] **Icons as in the author's other apps** (`src/app/Icons.cpp`, `third_party/icons/`, Qt resources): the sidebar's views and the connection groups use the Material Icon Theme's coloured folders (as spark-commander) and, for Proxmox, its logo redrawn as a line icon (the About dialog names the trademark), protocols, VM states and actions use Tabler's line icons (as Water Data Studio), drawn in the theme's text colour (dimmed when disabled) or a state colour, through Qt's SVG image plugin. The toolbars and menus keep the desktop theme's icons.
+- [x] **Fit to window** ("scale") is the default window mode for every protocol: the remote desktop takes the tab's size where the protocol can (RDP's display control unless the connection fixes width/height, VNC's ExtendedDesktopSize, SPICE through the guest agent), and what can't follow is scaled with its proportions kept, so it fills the tab when the remote follows and has bars only when it can't. Scaled 1:1, only the changed rectangles repaint. "Resize the remote desktop, no scaling" and "1:1 with scrollbars" remain. Verified with Xvnc (1024×768 became the tab's 1232×669, no bars); RDP's part is the same request through display control, verified earlier with xrdp. SPICE: confirmed by the user with a Windows 11 guest (spice-guest-tools, agent running) after the fix that marks display 0 enabled before sending the monitor configuration (`spice_main_channel_update_display_enabled`, as remote-viewer's widget does); without it the guest kept its resolution.
+
+### Known gaps in what exists
+- Keyboard scancodes and layout detection are Linux-only (`src/app/Keymap.cpp`).
+- Sockets (SSH, VNC tunnel, adb client) use POSIX APIs; Windows needs Winsock equivalents.
+- While a remote view or terminal has focus, every key goes to the remote side (menu shortcuts included).
+- VNC connect/handshake can only time out (10 s), not be interrupted; RDP and SSH connects are interruptible.
+- VNC and SSH workers poll every 10–20 ms instead of waking on a pipe.
+- Quick connect and Reconnect don't keep a password typed at a prompt; saved connections get theirs from the keychain.
+- The sidebar's translucency and blur are verified in a nested KWin only, not on the real Plasma desktop.
+- On KDE, QMessageBox shows KDE's own message dialog, which focuses the first button and lets Enter press it, whatever the default button (Enter forced a VM off). Questions with a dangerous answer set `QMessageBox::Option::DontUseNativeDialog`; the trust prompt is a plain QDialog.
+
+---
+
+## 8. Risks and open questions
+
+| Item | Impact | Mitigation |
+|---|---|---|
+| spice-gtk on Windows/macOS | Packaging effort (was: Phase 4 delay) | Prebuilt in MSYS2 and MacPorts; remaining work is bundling GLib/GStreamer |
+| Rolling package repos (MSYS2, Homebrew) | Build breaks or changes without code changes | CI caches the dependency set, refreshes on purpose; MacPorts for macOS releases |
+| MinGW instead of MSVC on Windows | No Visual Studio debugger | gdb/lldb via Qt Creator or VS Code |
+| Minimum macOS version | Bundled dylibs only run on the build machine's macOS and newer | Build releases on the oldest supported macOS |
+| Framebuffer performance at 4K | Laggy UI | Switch `RemoteView` to `QOpenGLWidget` / QRhi |
+| RDP file clipboard | Large per-OS effort | Ship drive redirection first |
+| Wayland shortcut capture | Alt+Tab goes to local desktop | Direct Wayland protocol call, Phase 5 |
+| macOS CI agent | Needs Mac hardware | Decide: own Mac mini vs hosted runner |
+| macOS notarization | Needs Apple Developer account; every dylib signed | Plan before first public macOS release |
+| Project name | Branding, repo, app ID | Decide before first public release |
+
+---
+
+## 9. Alternatives considered
+
+- **wxWidgets 3.2** (Phase 0 was first built with it): real native controls. Dropped: wxGTK converts the whole bitmap on every repaint (no conversion-free path for the framebuffer), weaker Wayland support, smaller ecosystem.
+- **vcpkg**: no `libvncserver`, `libvterm` or `spice-gtk` port; overlay ports needed, and SPICE built with MSVC is untested upstream (its Windows builds use MinGW).
+- **Conan**: Conan Center has none of FreeRDP, LibVNCServer, spice-gtk, libvterm.
+- **Rust + GPUI + IronRDP + vnc-rs**: all permissive, pure Rust, easy builds. Not chosen: IronRDP is well behind FreeRDP, there is no Rust SPICE client, and using the C libraries from Rust means writing FFI bindings for FreeRDP's large API.
+- **GTK 4**: spice-gtk and gtk-vnc ship GTK widgets, but GTK looks foreign and is hard to package on Windows/macOS.
+- **IUP**: pure C, has tree; weak on macOS (GTK, no Cocoa).
+- **libui-ng**: native on all 3 OS, but no tree view and pre-1.0.
+- **xterm.js in Qt WebEngine** for the terminal: kept as fallback only.
+
+---
+
+## 10. Reference material
+
+- FreeRDP: `client/SDL` (modern cross-platform reference client), `client/common` (shared clipboard/file helpers)
+- LibVNCServer repo: `examples/client` (SDL viewer)
+- virt-viewer / remote-viewer: SPICE client usage of spice-glib
+- Remmina (GTK, Linux only): integrates FreeRDP, LibVNCClient, SPICE and SSH — the only one covering all four protocols; its Flathub manifest builds the same libraries
+- KRDC (KDE, Qt): FreeRDP 3 + LibVNCClient — closest to our stack for RDP and VNC (no SPICE, no SSH)
+- GIMP, Inkscape: Windows builds from MSYS2
+
+---
+
+## 11. Test environment
+
+### Test VMs (libvirt, NAT network 192.168.122.0/24)
+- **Windows 10 Mi** (192.168.122.111): RDP with NLA. Verified: login, cert prompt, keyboard/mouse, text and file clipboard both ways, drive redirection, dynamic resolution. Windows 10 allows one interactive session: disconnect the console session first (`tsdiscon 1` via the QEMU guest agent), otherwise session arbitration ends the test login after 30 s; restore with `tscon 1 /dest:console`. Tests used a temporary local account, removed afterwards; commands inside the RDP session were run as interactive scheduled tasks created through the guest agent.
+- **Xubuntu 24.04** (192.168.122.178): xrdp + xorgxrdp installed for full-session tests (file clipboard, drive redirection, dynamic resize verified). SPICE console on host port 5903; its active VT shows a greeter, so the SPICE agent's clipboard remains untested there (resize: confirmed with a Windows 11 guest).
+
+### Local test servers (Linux)
+
+All run as the normal user, bound to loopback (one to the docker bridge for the unencrypted test), with throwaway credentials:
+
+| Protocol | Server | Notes |
+|---|---|---|
+| RDP | `HOME=<scratch> freerdp-shadow-cli /bind-address:127.0.0.1 /port:3390 /sam-file:…` on an Xvfb display | NLA via `winpr-hash -u USER -p PASS -f sam`; no clipboard support. Without `/bind-address` it listens on every interface; with the real HOME it writes `~/.config/freerdp/shadow/`. `-auth` for no login. Network drops: put `socat TCP-LISTEN:3391,fork,bind=127.0.0.1 TCP:127.0.0.1:3390` in front and kill its child. |
+| RDP | `xrdp -n -c xrdp.ini -p 3391` with an `autorun` section to `libvnc.so` → Xvnc | TLS, clipboard (Latin-1 via VNC), dynamic resize |
+| VNC | `Xvnc :N -rfbport … -SecurityTypes VncAuth` / `TLSVnc` | TigerVNC; ExtendedDesktopSize, UTF-8 clipboard |
+| SSH | `/usr/sbin/sshd -D -f sshd_config` (Port 2223, `UsePAM no`, own HostKey/AuthorizedKeysFile) | key-only; `internal-sftp` |
+| SPICE | `qemu-system-x86_64 -nodefaults -vga qxl -usb -device usb-tablet -spice port=5930,addr=127.0.0.1,disable-ticketing=on` | BIOS screen only (no guest OS) |
+| Telnet | a small Python server: `socket.create_server(("127.0.0.1", 2323))`, sends DO NAWS/DO TTYPE/WILL ECHO/WILL SGA, runs bash on a pty, applies NAWS with TIOCSWINSZ, logs what arrives | for negotiation and resize |
+| Serial | `socat pty,raw,echo=0,link=A pty,raw,echo=0,link=B` and a script on B as the device | the pair doesn't survive the app closing A: restart it |
+| libvirt over SSH | private sshd (above) on 127.0.0.1:2223 with a throwaway client key; `qemu+ssh://user@127.0.0.1:2223/system?command=<wrapper>&keyfile=<key>` where the wrapper runs `ssh -F /dev/null -o UserKnownHostsFile=<scratch> -o IdentitiesOnly=yes "$@"` | lists this computer's VMs: act only on a throwaway VM |
+| Proxmox VE | `python3 -I tests/proxmox_mock.py --dir <scratch>` (API and vncwebsocket on 127.0.0.1:18006, spiceproxy on 13128) + `qemu-system-x86_64 -nodefaults -vga qxl -display none -m 128 -object secret,id=spw,data=t1ck3t -spice tls-port=15931,addr=127.0.0.1,x509-dir=<scratch>,password-secret=spw -object secret,id=vpw,data=PVEVNC:6 -vnc 127.0.0.1:20,password-secret=vpw` | VMs 100 and 110 have SPICE, 101 gets a VNC console; container 200's console is termproxy over the vncwebsocket, a `bash` in a pty started in `<scratch>` (localhost, ticket checked). Node load and guest CPU change on every list, so the graphs move. The mock makes a CA and a server certificate (subject as Proxmox's) used by the API and QEMU's TLS port; logins `root@pam`/`pvepass`, token `root@pam!rdc`/`tok-secret`, `tfa@pam` asks for a second factor; guest state in memory. The isolated session has no wallet: KWallet's wizard comes up (Cancel) and the password isn't kept across restarts. |
+
+Run the client with its own `XDG_CONFIG_HOME`/`XDG_DATA_HOME` and under `dbus-run-session` so tests never touch the real config or keyring. KVM Manager tests press their buttons on libvirt's test driver, never on real VMs: `PORTAL_MUX_LIBVIRT_URI=test:///path/node.xml`, a `<node>` of `<domain type='test'>` with `<test:runstate>` (1 running, 3 paused, 5 shut off); its state lives as long as the connection. Translucency: a nested `kwin_wayland --virtual --socket <name>` over a striped window, screenshots with `spectacle -b -n -f -o` (`KWIN_SCREENSHOT_NO_PERMISSION_CHECKS=1`); `XDG_RUNTIME_DIR` must be short, as a Wayland socket path is limited to 108 bytes. `PORTAL_MUX_DEBUG=1` prints LibVNCClient's log.

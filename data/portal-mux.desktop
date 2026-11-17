@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Portal Mux
+GenericName=Remote Desktop Client
+Comment=Connect to computers with RDP, VNC, SPICE and SSH
+Exec=portal-mux %U
+Icon=portal-mux
+Terminal=false
+Categories=Qt;Network;RemoteAccess;
+MimeType=x-scheme-handler/rdp;x-scheme-handler/vnc;x-scheme-handler/spice;x-scheme-handler/telnet;application/x-rdp;application/x-krdc;application/x-vnc;
+Keywords=RDP;VNC;SPICE;SSH;remote;desktop;
