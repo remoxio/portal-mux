@@ -2,8 +2,7 @@
 
 #include <rfb/rfbclient.h>
 
-#include <arpa/inet.h>
-#include <sys/socket.h>
+#include "core/Net.h"
 
 #include <cstdarg>
 #include <cstdio>

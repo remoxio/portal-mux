@@ -8,6 +8,7 @@
 #include "app/Icons.h"
 #include "app/KrdcImport.h"
 #include "app/LockKeys.h"
+#include "app/Look.h"
 #include "app/MonitorWindow.h"
 #include "app/ProxmoxView.h"
 #include "app/Keymap.h"
@@ -858,7 +859,7 @@ void MainWindow::showEvent(QShowEvent* event)
 
 QFont MainWindow::terminalFont() const
 {
-    QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    QFont font = look::systemFont(QFontDatabase::FixedFont);
     if (const QString saved = settings_->value(QStringLiteral("font/terminal")).toString(); !saved.isEmpty()) font.fromString(saved);
     return font;
 }
@@ -924,7 +925,7 @@ void MainWindow::openSettings()
 
     auto fontBox = [this, &dialog](const QString& title, const QString& hint, const QString& key, QFontDatabase::SystemFont kind,
                                    std::function<void(const QFont&)> apply) {
-        const QFont system = QFontDatabase::systemFont(kind);
+        const QFont system = look::systemFont(kind);
         auto* group = new QGroupBox(title);
         QFont current = system;
         const QString saved = settings_->value(key).toString();
@@ -1008,13 +1009,15 @@ void MainWindow::openSettings()
         for (QWidget* section : sections) layout->addWidget(section);
         layout->addStretch();
         stack->addWidget(page);
-        new QListWidgetItem(QIcon::fromTheme(QLatin1String(icon)), name, pages);
+        new QListWidgetItem(icons::lucide(icon), name, pages);
     };
-    addPage("preferences-desktop", tr("Layout"), {sidebar});
-    addPage("preferences-desktop-font", tr("Font"), {mainFont, sshFont});
+    addPage("panels-top-left", tr("Layout"), {sidebar});
+    addPage("type", tr("Font"), {mainFont, sshFont});
     connect(pages, &QListWidget::currentRowChanged, stack, &QStackedWidget::setCurrentIndex);
     pages->setCurrentRow(0);
-    pages->setFixedWidth(pages->sizeHintForColumn(0) + 4 * pages->frameWidth() + 24);
+    pages->setFrameShape(QFrame::NoFrame);
+    pages->viewport()->setAutoFillBackground(false);
+    pages->setFixedWidth(std::max(160, pages->sizeHintForColumn(0) + 32));
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);

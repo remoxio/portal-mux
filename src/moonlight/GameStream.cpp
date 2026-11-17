@@ -7,11 +7,7 @@
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 
-#include <fcntl.h>
-#include <netdb.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "core/Net.h"
 
 #include <cctype>
 #include <cerrno>
@@ -116,35 +112,31 @@ int connectTcp(const std::string& host, int port, int timeoutSeconds, Cancel& ca
     }
     int fd = -1;
     for (addrinfo* a = addrs; a && fd < 0 && !cancel.cancelled; a = a->ai_next) {
-        fd = ::socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+        fd = int(::socket(a->ai_family, a->ai_socktype, a->ai_protocol));
         if (fd < 0) continue;
         cancel.fd = fd;
-        const int flags = fcntl(fd, F_GETFL);
-        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-        int rc = ::connect(fd, a->ai_addr, a->ai_addrlen);
-        if (rc != 0 && errno == EINPROGRESS) {
+        net::setNonBlocking(fd, true);
+        int rc = ::connect(fd, a->ai_addr, int(a->ai_addrlen));
+        int soError = rc != 0 ? net::lastError() : 0;
+        if (rc != 0 && net::connectPending(soError)) {
             pollfd p{fd, POLLOUT, 0};
-            int soError = ETIMEDOUT;
-            socklen_t len = sizeof soError;
-            if (poll(&p, 1, 10'000) == 1) getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &len);
+            soError = poll(&p, 1, 10'000) == 1 ? net::socketError(fd) : net::timedOut;
             rc = soError ? -1 : 0;
-            errno = soError;
         }
         if (rc != 0) {
-            *error = "Cannot connect to " + host + ":" + std::to_string(port) + ": " + std::strerror(errno);
+            *error = "Cannot connect to " + host + ":" + std::to_string(port) + ": " + net::errorText(soError);
             cancel.fd = -1;
-            ::close(fd);
+            net::closeSocket(fd);
             fd = -1;
             continue;
         }
-        fcntl(fd, F_SETFL, flags);
-        timeval tv{timeoutSeconds, 0}; // 0 = no timeout
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+        net::setNonBlocking(fd, false);
+        net::setReceiveTimeout(fd, timeoutSeconds);
     }
     freeaddrinfo(addrs);
     if (fd >= 0 && cancel.cancelled) {
         cancel.fd = -1;
-        ::close(fd);
+        net::closeSocket(fd);
         fd = -1;
     }
     return fd;
@@ -299,7 +291,7 @@ static bool exchange(const Host& host, const Identity& id, bool https, const std
         ~Closer()
         {
             cancel.fd = -1;
-            ::close(fd);
+            net::closeSocket(fd);
         }
     } closer{fd, cancel};
 
@@ -311,11 +303,11 @@ static bool exchange(const Host& host, const Identity& id, bool https, const std
     char buf[16384];
     if (!https) {
         for (size_t at = 0; at < req.size();) {
-            const ssize_t n = ::send(fd, req.data() + at, req.size() - at, MSG_NOSIGNAL);
+            const long n = ::send(fd, req.data() + at, int(req.size() - at), MSG_NOSIGNAL);
             if (n <= 0) return failed("The host closed the connection.");
             at += size_t(n);
         }
-        for (ssize_t n; (n = ::recv(fd, buf, sizeof buf, 0)) > 0;) raw.append(buf, size_t(n));
+        for (long n; (n = ::recv(fd, buf, sizeof buf, 0)) > 0;) raw.append(buf, size_t(n));
     } else {
         SslCtxPtr ctx(SSL_CTX_new(TLS_client_method()));
         X509Ptr cert = readCert(id.certPem);

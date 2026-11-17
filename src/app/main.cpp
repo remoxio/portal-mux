@@ -1,10 +1,16 @@
+#include "app/Look.h"
 #include "app/MainWindow.h"
 
 #include <QAbstractEventDispatcher>
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QIcon>
+#include <QStyleHints>
 #include <QTimer>
+
+#ifdef _WIN32
+#include <BreezeIcons>
+#endif
 
 #include <glib.h>
 
@@ -17,6 +23,17 @@ int main(int argc, char* argv[])
     QIcon icon;
     for (int size : {16, 22, 24, 28, 32, 48, 64, 96, 128, 256}) icon.addFile(QStringLiteral(":/hicolor/%1x%1/apps/portal-mux.png").arg(size));
     QApplication::setWindowIcon(icon);
+    look::apply();
+#ifdef _WIN32
+    // Breeze, as on KDE
+    BreezeIcons::initIcons();
+    auto followScheme = [] {
+        QIcon::setThemeName(QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark ? QStringLiteral("breeze-dark")
+                                                                                                  : QStringLiteral("breeze"));
+    };
+    followScheme();
+    QObject::connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, &app, followScheme);
+#endif
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Remote desktop client for RDP, VNC, SPICE and SSH."));
     parser.addHelpOption();

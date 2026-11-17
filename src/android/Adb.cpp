@@ -1,9 +1,6 @@
 #include "android/Adb.h"
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "core/Net.h"
 
 #include <cerrno>
 #include <cstdio>
@@ -45,7 +42,7 @@ bool Socket::readAll(void* buf, size_t n)
 long Socket::readSome(void* buf, size_t n)
 {
     for (;;) {
-        const ssize_t r = ::recv(fd_, buf, n, 0);
+        const long r = ::recv(fd_, static_cast<char*>(buf), int(n), 0);
         if (r < 0 && errno == EINTR) continue;
         return long(r);
     }
@@ -55,7 +52,7 @@ bool Socket::writeAll(const void* buf, size_t n)
 {
     auto* p = static_cast<const char*>(buf);
     while (n > 0) {
-        const ssize_t r = ::send(fd_, p, n, MSG_NOSIGNAL);
+        const long r = ::send(fd_, p, int(n), MSG_NOSIGNAL);
         if (r < 0 && errno == EINTR) continue;
         if (r <= 0) return false;
         p += r;
@@ -71,7 +68,7 @@ void Socket::shutdown()
 
 void Socket::close()
 {
-    if (fd_ >= 0) ::close(std::exchange(fd_, -1));
+    if (fd_ >= 0) net::closeSocket(std::exchange(fd_, -1));
 }
 
 std::string findAdb(const std::string& configured)
@@ -98,7 +95,7 @@ static int serverPort()
 
 static Socket tryConnect()
 {
-    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    const int fd = int(::socket(AF_INET, SOCK_STREAM, 0));
     if (fd < 0) return {};
 #ifdef SO_NOSIGPIPE
     const int one = 1;
@@ -109,7 +106,7 @@ static Socket tryConnect()
     addr.sin_port = htons(uint16_t(serverPort()));
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0) {
-        ::close(fd);
+        net::closeSocket(fd);
         return {};
     }
     return Socket(fd);
@@ -118,10 +115,14 @@ static Socket tryConnect()
 static Socket connectServer(const std::string& adb, std::string* error)
 {
     if (Socket s = tryConnect(); s.valid()) return s;
+#ifdef _WIN32
+    const int rc = std::system(("\"" + adb + "\" start-server >NUL 2>&1").c_str());
+#else
     std::string quoted = "'";
     for (char c : adb) quoted += c == '\'' ? std::string("'\\''") : std::string(1, c);
     quoted += "'";
     const int rc = std::system((quoted + " start-server >/dev/null 2>&1").c_str());
+#endif
     if (Socket s = tryConnect(); s.valid()) return s;
     *error = rc == 0 ? "The adb server did not start." : "Could not start the adb server with \"" + adb +
                                                              "\". Install the Android platform tools or set the adb "

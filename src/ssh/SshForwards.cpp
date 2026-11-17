@@ -2,12 +2,7 @@
 
 #include <libssh/libssh.h>
 
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "core/Net.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -77,12 +72,15 @@ static int listenOn(const std::string& bind, int port, std::string& error)
         error = gai_strerror(rc);
         return -1;
     }
-    int fd = socket(addrs->ai_family, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    int fd = int(socket(addrs->ai_family, SOCK_STREAM | SOCK_CLOEXEC, 0));
+#ifndef _WIN32 // Windows: lets others steal the port
     const int on = 1;
     if (fd >= 0) setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
-    if (fd < 0 || ::bind(fd, addrs->ai_addr, addrs->ai_addrlen) != 0 || listen(fd, 16) != 0) {
-        error = std::strerror(errno);
-        if (fd >= 0) ::close(fd);
+#endif
+    if (fd >= 0) net::setNonBlocking(fd, true);
+    if (fd < 0 || ::bind(fd, addrs->ai_addr, int(addrs->ai_addrlen)) != 0 || listen(fd, 16) != 0) {
+        error = net::errorText(net::lastError());
+        if (fd >= 0) net::closeSocket(fd);
         fd = -1;
     }
     freeaddrinfo(addrs);
@@ -92,7 +90,7 @@ static int listenOn(const std::string& bind, int port, std::string& error)
 SshForwards::~SshForwards()
 {
     for (Pipe& p : pipes_) close(p);
-    for (const Listener& l : listeners_) ::close(l.fd);
+    for (const Listener& l : listeners_) net::closeSocket(l.fd);
     for (const ForwardSpec& r : remote_) ssh_channel_cancel_forward(session_, r.bind.empty() ? "localhost" : r.bind.c_str(), r.port);
 }
 
@@ -135,8 +133,8 @@ void SshForwards::addPollFds(std::vector<pollfd>& fds) const
 static bool writeAll(int fd, const char* data, size_t size)
 {
     while (size > 0) {
-        const ssize_t n = ::write(fd, data, size);
-        if (n < 0 && (errno == EAGAIN || errno == EINTR)) {
+        const long n = ::send(fd, data, int(size), MSG_NOSIGNAL);
+        if (n < 0 && (net::wouldBlock(net::lastError()) || net::lastError() == EINTR)) {
             pollfd p{fd, POLLOUT, 0};
             if (poll(&p, 1, 1000) <= 0) return false; // the peer stopped reading
             continue;
@@ -151,8 +149,12 @@ static bool writeAll(int fd, const char* data, size_t size)
 void SshForwards::accept(const Listener& listener)
 {
     for (;;) {
-        const int fd = accept4(listener.fd, nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK);
+        const int fd = int(::accept(listener.fd, nullptr, nullptr));
         if (fd < 0) return;
+#ifndef _WIN32
+        fcntl(fd, F_SETFD, FD_CLOEXEC);
+#endif
+        net::setNonBlocking(fd, true);
         if (listener.spec.kind == 'D') {
             pipes_.push_back({fd, nullptr, 1, {}});
             continue;
@@ -162,7 +164,7 @@ void SshForwards::accept(const Listener& listener)
             pipes_.push_back({fd, channel});
         } else {
             if (channel) ssh_channel_free(channel);
-            ::close(fd);
+            net::closeSocket(fd);
         }
     }
 }
@@ -206,7 +208,7 @@ void SshForwards::socks(Pipe& p)
 
 void SshForwards::close(Pipe& p)
 {
-    if (p.fd >= 0) ::close(p.fd);
+    if (p.fd >= 0) net::closeSocket(p.fd);
     p.fd = -1;
     if (p.channel) {
         ssh_channel_close(p.channel);
@@ -227,9 +229,9 @@ void SshForwards::pump()
         hints.ai_socktype = SOCK_STREAM;
         int fd = -1;
         if (r != remote_.end() && getaddrinfo(r->host.c_str(), std::to_string(r->hostPort).c_str(), &hints, &addrs) == 0) {
-            fd = socket(addrs->ai_family, SOCK_STREAM | SOCK_CLOEXEC, 0);
-            if (fd >= 0 && ::connect(fd, addrs->ai_addr, addrs->ai_addrlen) != 0) {
-                ::close(fd);
+            fd = int(socket(addrs->ai_family, SOCK_STREAM | SOCK_CLOEXEC, 0));
+            if (fd >= 0 && ::connect(fd, addrs->ai_addr, int(addrs->ai_addrlen)) != 0) {
+                net::closeSocket(fd);
                 fd = -1;
             }
             freeaddrinfo(addrs);
@@ -239,15 +241,15 @@ void SshForwards::pump()
             ssh_channel_free(channel);
             continue;
         }
-        fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+        net::setNonBlocking(fd, true);
         pipes_.push_back({fd, channel});
     }
     char buffer[65536];
     for (size_t i = 0; i < pipes_.size(); ++i) {
         Pipe& p = pipes_[i];
         for (;;) { // local → server
-            const ssize_t n = p.fd >= 0 ? ::read(p.fd, buffer, sizeof buffer) : -1;
-            if (n < 0 && errno == EAGAIN) break;
+            const long n = p.fd >= 0 ? ::recv(p.fd, buffer, sizeof buffer, 0) : -1;
+            if (n < 0 && net::wouldBlock(net::lastError())) break;
             if (n <= 0) {
                 close(p);
                 break;

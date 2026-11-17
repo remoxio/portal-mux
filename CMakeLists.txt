@@ -13,6 +13,9 @@ if(UNIX AND NOT APPLE)
     find_package(KF6WindowSystem 6 CONFIG REQUIRED) # blur behind the sidebar (KWin's blur protocol)
     find_package(Qt6 REQUIRED COMPONENTS WaylandClient GuiPrivate) # "Grab all possible keys" on Wayland
 endif()
+if(WIN32)
+    find_package(KF6BreezeIcons CONFIG REQUIRED) # Windows has no icon theme
+endif()
 find_package(Qt6Keychain CONFIG REQUIRED)
 find_package(FreeRDP 3 CONFIG REQUIRED)
 find_package(FreeRDP-Client 3 CONFIG REQUIRED)
@@ -73,6 +76,10 @@ target_compile_definitions(rdbackends PRIVATE SCRCPY_SERVER_VERSION="${SCRCPY_SE
 if(UNIX AND NOT APPLE)
     target_link_libraries(rdbackends PRIVATE util) # forkpty (glibc before 2.34 keeps it in libutil)
 endif()
+if(WIN32)
+    target_link_libraries(rdbackends PUBLIC ws2_32)
+    target_compile_definitions(rdbackends PRIVATE WIN32) # libvncclient tests WIN32
+endif()
 target_link_libraries(rdbackends PUBLIC rdcore freerdp freerdp-client winpr LibVNCServer::vncclient ssh PkgConfig::SPICE
     PkgConfig::FFMPEG moonlight-common-c OpenSSL::SSL OpenSSL::Crypto)
 
@@ -91,6 +98,7 @@ qt_add_executable(portal-mux WIN32 MACOSX_BUNDLE
     src/app/KeyboardGrab.cpp
     src/app/KrdcImport.cpp
     src/app/LockKeys.cpp
+    src/app/Look.cpp
     src/app/MainWindow.cpp
     src/app/MonitorWindow.cpp
     src/app/PanelTree.cpp
@@ -127,7 +135,7 @@ if(UNIX AND NOT APPLE)
     target_compile_definitions(portal-mux PRIVATE PORTAL_MUX_WAYLAND)
     target_link_libraries(portal-mux PRIVATE Qt6::WaylandClient Qt6::GuiPrivate)
 endif()
-if(UNIX AND NOT APPLE)
+if(NOT APPLE)
     pkg_check_modules(LIBVIRT IMPORTED_TARGET libvirt) # optional: running local VMs in the connection list
     if(LIBVIRT_FOUND)
         target_sources(portal-mux PRIVATE src/app/DomainXml.cpp src/app/LibvirtConsole.cpp src/app/LibvirtVms.cpp src/app/VmConsole.cpp src/app/VmView.cpp)
@@ -154,6 +162,7 @@ target_link_libraries(portal-mux PRIVATE
     Qt6Keychain::Qt6Keychain
     $<TARGET_NAME_IF_EXISTS:Qt6::DBus>
     $<TARGET_NAME_IF_EXISTS:KF6::WindowSystem>
+    $<TARGET_NAME_IF_EXISTS:KF6::BreezeIcons>
     PkgConfig::VTERM
     SDL3::SDL3
 )

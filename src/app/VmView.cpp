@@ -164,10 +164,11 @@ VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings
     });
     connect(tree_, &QTreeWidget::currentItemChanged, this, &VmView::updateActions);
 
-    addHost(tr("This computer"), [] {
-        const char* uri = std::getenv("PORTAL_MUX_LIBVIRT_URI"); // test:///<file>: fake VMs for UI tests
-        return std::string(uri && *uri ? uri : "qemu:///system");
-    }());
+    const char* testUri = std::getenv("PORTAL_MUX_LIBVIRT_URI"); // test:///<file>: fake VMs for UI tests
+#ifdef _WIN32
+    local_ = testUri && *testUri;
+#endif
+    if (local_) addHost(tr("This computer"), testUri && *testUri ? testUri : "qemu:///system");
     const int n = settings_->beginReadArray(QStringLiteral("libvirtHosts"));
     std::vector<std::pair<QString, std::string>> saved;
     for (int i = 0; i < n; ++i) {
@@ -197,9 +198,10 @@ void VmView::addHost(const QString& name, const std::string& uri)
 void VmView::save() const
 {
     settings_->remove(QStringLiteral("libvirtHosts"));
-    settings_->beginWriteArray(QStringLiteral("libvirtHosts"), int(hosts_.size()) - 1);
-    for (size_t i = 1; i < hosts_.size(); ++i) {
-        settings_->setArrayIndex(int(i) - 1);
+    const size_t first = local_ ? 1 : 0;
+    settings_->beginWriteArray(QStringLiteral("libvirtHosts"), int(hosts_.size() - first));
+    for (size_t i = first; i < hosts_.size(); ++i) {
+        settings_->setArrayIndex(int(i - first));
         settings_->setValue(QStringLiteral("name"), hosts_[i]->name());
         settings_->setValue(QStringLiteral("uri"), hosts_[i]->uri());
     }
@@ -293,7 +295,7 @@ void VmView::rebuild()
         if (QTreeWidgetItem* top = tree_->topLevelItem(i); top->childCount() && !top->isExpanded())
             collapsed.insert(hostOf(top));
     tree_->clear();
-    const bool grouped = hosts_.size() > 1; // with remote hosts: a panel per host
+    const bool grouped = hosts_.size() > 1 || !local_; // a panel per host
     for (LibvirtVms* host : hosts_) {
         QTreeWidgetItem* parent = nullptr;
         if (grouped) {
@@ -323,8 +325,9 @@ void VmView::rebuild()
     if (!tree_->currentItem() && tree_->topLevelItemCount()) tree_->setCurrentItem(tree_->topLevelItem(0));
 
     QString note; // one host: its state above the list; several: in their rows
-    const LibvirtVms* local = hosts_.front();
+    if (hosts_.empty()) note = tr("Add a KVM host with +: libvirt over SSH (qemu+ssh://).");
     if (!grouped) {
+        const LibvirtVms* local = hosts_.front();
         if (local->connecting() && !local->connected()) note = tr("Connecting to libvirt (%1)…").arg(local->uri());
         else if (!local->connected()) note = tr("libvirt (%1) is not reachable; trying again every 5 seconds.").arg(local->uri());
         else if (local->readOnly()) note = tr("Read-only access to %1: the VMs are listed but cannot be started or stopped.").arg(local->uri());

@@ -2,11 +2,7 @@
 
 #include <libssh/libssh.h>
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "core/Net.h"
 
 #include <vector>
 
@@ -37,7 +33,7 @@ SshConnection::Params SshTunnel::parse(const std::string& spec)
 int SshTunnel::listen(int preferredPort)
 {
     for (int port : {preferredPort, 0}) {
-        const int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        const int fd = int(socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0));
         if (fd < 0) return 0;
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
@@ -50,7 +46,7 @@ int SshTunnel::listen(int preferredPort)
             localPort_ = ntohs(addr.sin_port);
             return localPort_;
         }
-        close(fd);
+        net::closeSocket(fd);
     }
     return 0;
 }
@@ -71,7 +67,7 @@ void SshTunnel::stop()
         ssh_->abort();
         worker_.join();
     }
-    if (listenFd_ >= 0) close(listenFd_);
+    if (listenFd_ >= 0) net::closeSocket(listenFd_);
     listenFd_ = -1;
 }
 
@@ -89,7 +85,7 @@ void SshTunnel::run(std::stop_token stop, std::function<void()> onReady, std::fu
     };
     std::vector<Pipe> pipes;
     auto closePipe = [](Pipe& p) {
-        close(p.fd);
+        net::closeSocket(p.fd);
         ssh_channel_close(p.channel);
         ssh_channel_free(p.channel);
         p.fd = -1;
@@ -105,18 +101,21 @@ void SshTunnel::run(std::stop_token stop, std::function<void()> onReady, std::fu
         const size_t polled = pipes.size(); // an accept below appends a pipe that has no pollfd yet
 
         if (fds[0].revents & POLLIN) {
-            const int client = accept4(listenFd_, nullptr, nullptr, SOCK_CLOEXEC);
+            const int client = int(accept(listenFd_, nullptr, nullptr));
+#ifndef _WIN32
+            if (client >= 0) fcntl(client, F_SETFD, FD_CLOEXEC);
+#endif
             ssh_channel channel = client >= 0 ? ssh_channel_new(session) : nullptr;
             if (channel && ssh_channel_open_forward(channel, targetHost_.c_str(), targetPort_, "127.0.0.1", localPort_) == SSH_OK) {
                 pipes.push_back({client, channel});
             } else {
                 if (channel) ssh_channel_free(channel);
-                if (client >= 0) close(client);
+                if (client >= 0) net::closeSocket(client);
             }
         }
         for (size_t i = 0; i < polled; ++i) {
             if (!(fds[i + 2].revents & (POLLIN | POLLHUP | POLLERR))) continue;
-            const ssize_t n = read(pipes[i].fd, buffer, sizeof buffer);
+            const long n = recv(pipes[i].fd, buffer, sizeof buffer, 0);
             if (n <= 0 || ssh_channel_write(pipes[i].channel, buffer, uint32_t(n)) < 0) closePipe(pipes[i]);
         }
         for (Pipe& p : pipes) {
@@ -124,7 +123,7 @@ void SshTunnel::run(std::stop_token stop, std::function<void()> onReady, std::fu
             int n;
             while ((n = ssh_channel_read_nonblocking(p.channel, buffer, sizeof buffer, 0)) > 0) {
                 for (int off = 0; off < n;) {
-                    const ssize_t w = write(p.fd, buffer + off, size_t(n - off));
+                    const long w = send(p.fd, buffer + off, n - off, MSG_NOSIGNAL);
                     if (w <= 0) {
                         n = SSH_ERROR;
                         break;

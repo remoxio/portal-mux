@@ -3,11 +3,7 @@
 #include <libssh/callbacks.h>
 #include <libssh/libssh.h>
 
-#include <fcntl.h>
-#include <netdb.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "core/Net.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -131,32 +127,30 @@ bool SshConnection::connectSocket(const std::function<bool()>& cancelled)
     int fd = -1;
     std::string why = "no address";
     for (addrinfo* a = addrs; a && fd < 0 && !cancelled(); a = a->ai_next) {
-        fd = socket(a->ai_family, a->ai_socktype | SOCK_CLOEXEC, a->ai_protocol);
+        fd = int(socket(a->ai_family, a->ai_socktype | SOCK_CLOEXEC, a->ai_protocol));
         if (fd < 0) continue;
         {
             std::lock_guard lock(fdMutex_);
             fd_ = fd;
         }
-        fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-        int rc = ::connect(fd, a->ai_addr, a->ai_addrlen);
-        if (rc < 0 && errno == EINPROGRESS) {
+        net::setNonBlocking(fd, true);
+        int rc = ::connect(fd, a->ai_addr, int(a->ai_addrlen));
+        int soError = rc < 0 ? net::lastError() : 0;
+        if (rc < 0 && net::connectPending(soError)) {
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
             pollfd pfd{fd, POLLOUT, 0};
             while ((rc = poll(&pfd, 1, 100)) == 0 && !cancelled() && std::chrono::steady_clock::now() < deadline) {}
-            int soError = rc > 0 ? 0 : ETIMEDOUT;
-            socklen_t len = sizeof soError;
-            if (rc > 0) getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &len);
+            soError = rc > 0 ? net::socketError(fd) : net::timedOut;
             rc = soError ? -1 : 0;
-            errno = soError;
         }
         if (rc == 0) {
-            fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK);
+            net::setNonBlocking(fd, false);
             break;
         }
-        why = strerror(errno);
+        why = net::errorText(soError);
         std::lock_guard lock(fdMutex_);
         fd_ = -1;
-        close(fd);
+        net::closeSocket(fd);
         fd = -1;
     }
     freeaddrinfo(addrs);
@@ -164,7 +158,8 @@ bool SshConnection::connectSocket(const std::function<bool()>& cancelled)
         error_ = cancelled() ? "" : "Cannot connect to " + hostName + ": " + why;
         return false;
     }
-    ssh_options_set(session_, SSH_OPTIONS_FD, &fd); // libssh owns and closes it from here on
+    socket_t sock = fd; // 64-bit on Windows
+    ssh_options_set(session_, SSH_OPTIONS_FD, &sock); // libssh owns and closes it from here on
     return true;
 }
 

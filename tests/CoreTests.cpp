@@ -301,7 +301,9 @@ static void gameStreamTests()
     std::string error;
     assert(g::loadIdentity(dir.string(), first, &error) && first.uniqueId.size() == 16);
     assert(first.certPem.starts_with("-----BEGIN CERTIFICATE-----") && first.keyPem.find("PRIVATE KEY") != std::string::npos);
+#ifndef _WIN32 // no group bits on Windows
     assert((fs::status(dir / "key.pem").permissions() & fs::perms::group_read) == fs::perms::none);
+#endif
     assert(g::loadIdentity(dir.string(), second, &error) && second.certPem == first.certPem && second.uniqueId == first.uniqueId);
     fs::remove_all(dir);
 
@@ -388,13 +390,13 @@ static void telnetTests()
     assert(p.receive(cmd(t::DO, t::WindowSize), text) == naws); // the answer to our offer: no WILL again, the size
     assert(p.receive(cmd(t::DO, t::TerminalType) + cmd(t::WILL, t::SuppressGoAhead), text).empty());
     const S send = S{char(t::IAC), char(t::SB), char(t::TerminalType), 1, char(t::IAC), char(t::SE)};
-    assert(p.receive(send, text) == S{char(t::IAC), char(t::SB), char(t::TerminalType), 0} + "xterm-256color" + S{char(t::IAC), char(t::SE)});
+    assert((p.receive(send, text) == S{char(t::IAC), char(t::SB), char(t::TerminalType), 0} + "xterm-256color" + S{char(t::IAC), char(t::SE)}));
     assert(p.receive(cmd(t::WILL, t::Echo), text) == cmd(t::DO, t::Echo));
     assert(p.receive(cmd(t::WILL, t::Echo), text).empty()); // no loop
     assert(p.receive(cmd(t::DO, 34), text) == cmd(t::WONT, 34) && p.receive(cmd(t::WILL, 5), text) == cmd(t::DONT, 5));
     assert(text.empty());
     // width 255 has an IAC byte: doubled
-    assert(p.resize(255, 50) == S{char(t::IAC), char(t::SB), char(t::WindowSize), 0, char(255), char(255), 0, 50, char(t::IAC), char(t::SE)});
+    assert((p.resize(255, 50) == S{char(t::IAC), char(t::SB), char(t::WindowSize), 0, char(255), char(255), 0, 50, char(t::IAC), char(t::SE)}));
     assert(p.receive(S("a\xff\xff" "b\r", 5) + S(1, '\0') + "c\r\n" + S{char(t::IAC), char(241)} + "d", text).empty());
     assert(text == S("a\xff" "b\rc\r\nd"));
     text.clear();

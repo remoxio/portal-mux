@@ -186,7 +186,7 @@ sudo dnf install libvirt-devel   # optional: the "Virtual machines" group (Linux
 
 **Windows** — install MSYS2, then in the **UCRT64** shell:
 ```bash
-pacman -S --needed mingw-w64-ucrt-x86_64-{toolchain,cmake,ninja,qt6-base,qt6-multimedia,qt6-websockets,qtkeychain-qt6,freerdp,libvncserver,libssh,libvterm,spice-gtk,ffmpeg,sdl3}
+pacman -S --needed mingw-w64-ucrt-x86_64-{toolchain,cmake,ninja,pkgconf,openssl,qt6-base,qt6-svg,qt6-multimedia,qt6-websockets,qtkeychain-qt6,breeze-icons,freerdp,libvncserver,libssh,libvterm,spice-gtk,ffmpeg,sdl3,libvirt}
 ```
 
 **macOS** — MacPorts (used for releases):

@@ -1,5 +1,7 @@
 #include "terminal/TerminalView.h"
 
+#include "app/Look.h"
+
 #include <QApplication>
 #include <QClipboard>
 #include <QFontDatabase>
@@ -176,7 +178,7 @@ TerminalView::~TerminalView()
 
 void TerminalView::configure(const QString& fontFamily, int fontSize, int scrollbackLines)
 {
-    font_ = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    font_ = look::systemFont(QFontDatabase::FixedFont);
     if (!fontFamily.isEmpty()) font_.setFamily(fontFamily);
     if (fontSize > 0) font_.setPointSize(fontSize);
     font_.setStyleHint(QFont::Monospace);

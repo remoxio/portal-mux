@@ -40,7 +40,8 @@ private:
     void save() const;
 
     QSettings* settings_;
-    std::vector<LibvirtVms*> hosts_; // this computer first
+    std::vector<LibvirtVms*> hosts_; // this computer first, if local_
+    bool local_ = true;
     QTreeWidget* tree_;
     QLabel* note_; // libvirt not reachable, read-only, no VMs
     QAction *open_, *serial_, *start_, *pause_, *shutdown_, *reboot_, *save_, *forceOff_, *reset_, *addHost_, *editHost_, *removeHost_;

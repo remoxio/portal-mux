@@ -4,7 +4,7 @@
 
 #include <libssh/libssh.h>
 
-#include <poll.h>
+#include "core/Net.h"
 
 #include <chrono>
 

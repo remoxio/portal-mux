@@ -19,8 +19,13 @@
 using rdc::Connection;
 
 // ssh can't ask for a password here: keys, agent or nothing
-static std::string openUri(const std::string& uri)
+static std::string openUri(std::string uri)
 {
+#ifdef _WIN32
+    // libvirt cannot run ssh on Windows
+    if (const size_t at = uri.find("+ssh://"); at != std::string::npos) uri.replace(at, 7, "+libssh://");
+    return uri;
+#endif
     if (uri.find("+ssh://") == std::string::npos || uri.find("no_tty") != std::string::npos) return uri;
     return uri + (uri.find('?') == std::string::npos ? "?no_tty=1" : "&no_tty=1");
 }
