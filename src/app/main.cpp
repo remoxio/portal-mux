@@ -4,8 +4,11 @@
 #include <QAbstractEventDispatcher>
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QDialog>
 #include <QIcon>
+#include <QLayout>
 #include <QTimer>
+#include <QWindow>
 
 #ifdef _WIN32
 #include <BreezeIcons>
@@ -13,6 +16,42 @@
 #endif
 
 #include <glib.h>
+
+namespace {
+
+// dialogs: a close button only
+class DialogFrames : public QObject {
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        auto* dialog = qobject_cast<QDialog*>(watched);
+        if (!dialog || !dialog->isWindow()) return false;
+        if (event->type() == QEvent::Show) {
+            const Qt::WindowFlags flags =
+                (dialog->windowFlags() | Qt::CustomizeWindowHint) & ~(Qt::WindowMinMaxButtonsHint | Qt::WindowContextHelpButtonHint);
+            dialog->overrideWindowFlags(flags);
+            if (QWindow* window = dialog->windowHandle()) window->setFlags(flags);
+            fit(dialog);
+        } else if (event->type() == QEvent::LayoutRequest && dialog->isVisible()) {
+            QTimer::singleShot(0, dialog, [dialog] { fit(dialog); });
+        }
+        return false;
+    }
+
+private:
+    static void fit(QDialog* dialog) // KWin on Wayland ignores the flags: a fixed size hides maximize
+    {
+        if (!QGuiApplication::platformName().startsWith(QLatin1String("wayland")) || !dialog->layout() ||
+            QByteArray(dialog->metaObject()->className()).contains("FileDialog"))
+            return;
+        dialog->setFixedSize(dialog->size().expandedTo(dialog->layout()->totalMinimumSize()));
+    }
+};
+
+} // namespace
 
 int main(int argc, char* argv[])
 {
@@ -31,6 +70,7 @@ int main(int argc, char* argv[])
     KIconTheme::forceThemeForTests(QStringLiteral("breeze")); // initTheme() without its Breeze palette
     QIcon::setThemeName(QStringLiteral("KIconEngine"));
 #endif
+    app.installEventFilter(new DialogFrames(&app));
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Remote desktop client for RDP, VNC, SPICE and SSH."));
     parser.addHelpOption();

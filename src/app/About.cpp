@@ -62,7 +62,6 @@ QString tr(const char* text) { return QApplication::translate("About", text); }
 void showAbout(QWidget* parent)
 {
     QDialog dialog(parent);
-    dialog.setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
     dialog.setWindowTitle(tr("About Portal Mux"));
     const QString dim = dialog.palette().color(QPalette::PlaceholderText).name();
 

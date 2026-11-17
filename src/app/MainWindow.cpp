@@ -889,7 +889,6 @@ void MainWindow::configureTerminal(TerminalView* terminal)
 void MainWindow::openSettings()
 {
     QDialog dialog(this);
-    dialog.setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
     dialog.setWindowTitle(tr("Configure Portal Mux"));
 
     auto* sidebar = new QGroupBox(tr("Sidebar"));

@@ -111,7 +111,7 @@ VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings
     tree_->setFrameShape(QFrame::NoFrame);
     setUpPanels(tree_, new VmDelegate(tree_));
     tree_->setContextMenuPolicy(Qt::ActionsContextMenu);
-    note_ = new QLabel;
+    note_ = new QLabel(tr("Add a KVM host with +: libvirt over SSH (qemu+ssh://)."));
     note_->setWordWrap(true);
     note_->setContentsMargins(10, 6, 10, 6);
     note_->hide();
@@ -295,22 +295,26 @@ void VmView::rebuild()
         if (QTreeWidgetItem* top = tree_->topLevelItem(i); top->childCount() && !top->isExpanded())
             collapsed.insert(hostOf(top));
     tree_->clear();
-    const bool grouped = hosts_.size() > 1 || !local_; // a panel per host
     for (LibvirtVms* host : hosts_) {
-        QTreeWidgetItem* parent = nullptr;
-        if (grouped) {
-            parent = new QTreeWidgetItem(tree_, {host->name()});
-            parent->setIcon(0, icons::tabler("server"));
-            parent->setData(0, PanelDelegate::HeaderRole, hostState(host));
-            parent->setData(0, PanelDelegate::HeaderColorRole, host->connected() || host->connecting() ? palette().color(QPalette::Disabled, QPalette::Text)
-                                                                                                    : QColor(0xda, 0x44, 0x53));
-            parent->setData(0, HostRole, QVariant::fromValue(quintptr(host)));
-            parent->setToolTip(0, host->uri() + (host->lastError().isEmpty() ? QString() : QLatin1Char('\n') + host->lastError()));
-            if (host == keepHost && keep.empty()) tree_->setCurrentItem(parent);
+        auto* parent = new QTreeWidgetItem(tree_, {host->name()});
+        parent->setIcon(0, icons::tabler("server"));
+        parent->setData(0, PanelDelegate::HeaderRole, hostState(host));
+        parent->setData(0, PanelDelegate::HeaderColorRole, host->connected() || host->connecting() ? palette().color(QPalette::Disabled, QPalette::Text)
+                                                                                                : QColor(0xda, 0x44, 0x53));
+        parent->setData(0, HostRole, QVariant::fromValue(quintptr(host)));
+        const QString tip = host->uri() + (host->lastError().isEmpty() ? QString() : QLatin1Char('\n') + host->lastError());
+        parent->setToolTip(0, tip);
+        if (host == keepHost && keep.empty()) tree_->setCurrentItem(parent);
+        const QString hint = !host->connected() && !host->connecting() ? tr("Trying again every 5 seconds")
+                             : host->connected() && host->vms().empty() ? tr("No virtual machines")
+                                                                        : QString();
+        if (!hint.isEmpty()) {
+            auto* item = new QTreeWidgetItem(parent, {hint});
+            item->setData(0, HostRole, QVariant::fromValue(quintptr(host)));
+            item->setToolTip(0, tip);
         }
         for (const Vm& vm : host->vms()) {
-            auto* item = parent ? new QTreeWidgetItem(parent, {QString::fromStdString(vm.name)})
-                                : new QTreeWidgetItem(tree_, {QString::fromStdString(vm.name)}); // drawn by VmDelegate; the text for type-ahead
+            auto* item = new QTreeWidgetItem(parent, {QString::fromStdString(vm.name)}); // drawn by VmDelegate; the text for type-ahead
             item->setData(0, Qt::UserRole, QString::fromStdString(vm.uuid));
             item->setData(0, HostRole, QVariant::fromValue(quintptr(host)));
             QString tip = QString::fromStdString(vm.name) + QLatin1Char('\n') + stateText(vm.state);
@@ -320,22 +324,10 @@ void VmView::rebuild()
             item->setToolTip(0, tip + QLatin1Char('\n') + tr("The graph: its CPU use over the last 80 seconds"));
             if (host == keepHost && vm.uuid == keep) tree_->setCurrentItem(item);
         }
-        if (parent) parent->setExpanded(!collapsed.count(host));
+        parent->setExpanded(!collapsed.count(host));
     }
     if (!tree_->currentItem() && tree_->topLevelItemCount()) tree_->setCurrentItem(tree_->topLevelItem(0));
-
-    QString note; // one host: its state above the list; several: in their rows
-    if (hosts_.empty()) note = tr("Add a KVM host with +: libvirt over SSH (qemu+ssh://).");
-    if (!grouped) {
-        const LibvirtVms* local = hosts_.front();
-        if (local->connecting() && !local->connected()) note = tr("Connecting to libvirt (%1)…").arg(local->uri());
-        else if (!local->connected()) note = tr("libvirt (%1) is not reachable; trying again every 5 seconds.").arg(local->uri());
-        else if (local->readOnly()) note = tr("Read-only access to %1: the VMs are listed but cannot be started or stopped.").arg(local->uri());
-        else if (local->vms().empty()) note = tr("No virtual machines in %1.").arg(local->uri());
-    }
-    note_->setText(note);
-    note_->setVisible(!note.isEmpty());
-
+    note_->setVisible(hosts_.empty());
     updateActions();
 }
 
