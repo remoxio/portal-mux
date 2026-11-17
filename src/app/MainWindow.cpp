@@ -592,6 +592,7 @@ MainWindow::MainWindow(QWidget* parent)
     centralLayout->addWidget(splitter, 1);
     setCentralWidget(central);
     central->installEventFilter(this);
+    activityBar_->installEventFilter(this);
     if (restoreGeometry(settings_->value(QStringLiteral("window/geometry")).toByteArray()))
         setWindowState(windowState() & ~Qt::WindowFullScreen);
 
@@ -599,7 +600,7 @@ MainWindow::MainWindow(QWidget* parent)
         setAttribute(Qt::WA_TranslucentBackground);
         for (QWidget* w : std::initializer_list<QWidget*>{menuBar(), work, sessionBar_, status_, tabs_, splitter->handle(1)})
             w->setAutoFillBackground(true);
-        for (QWidget* w : std::initializer_list<QWidget*>{activityBar_, views_}) w->installEventFilter(this);
+        views_->installEventFilter(this);
     }
 
     connect(newAction, &QAction::triggered, this, [this] {
@@ -1036,8 +1037,12 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     if (watched == centralWidget() && event->type() == QEvent::Paint && centralWidget()->layout()->contentsMargins().top() > 0) {
         QPainter(centralWidget()).fillRect(0, 0, centralWidget()->width(), 1, lineColor());
     }
-    if (watched == views_ && event->type() == QEvent::Paint && sidebarMode_ == SidebarMode::Overlay)
-        QPainter(views_).fillRect(views_->width() - 1, 0, 1, views_->height(), lineColor());
+    // the sidebar's border over the session: the floating panel's, or the bar's when collapsed
+    if (event->type() == QEvent::Paint && ((watched == views_ && sidebarMode_ == SidebarMode::Overlay) ||
+                                           (watched == activityBar_ && sidebarMode_ == SidebarMode::Collapsed))) {
+        auto* w = static_cast<QWidget*>(watched);
+        QPainter(w).fillRect(w->width() - 1, 0, 1, w->height(), lineColor());
+    }
     if (watched == sessionBar_ && event->type() == QEvent::Resize) {
         if (sessionBar_->toolButtonStyle() == Qt::ToolButtonTextBesideIcon) sessionBarTextWidth_ = sessionBar_->sizeHint().width();
         const auto style = sessionBar_->width() >= sessionBarTextWidth_ ? Qt::ToolButtonTextBesideIcon : Qt::ToolButtonIconOnly;
@@ -1995,7 +2000,7 @@ void MainWindow::setSidebar(SidebarMode mode, int view)
     const bool floating = views_->parentWidget() != splitter_;
     if (mode == SidebarMode::Overlay && !floating) {
         views_->setParent(centralWidget());
-        views_->setContentsMargins(0, 0, 1, 0); // its border over the session: painted in eventFilter
+        views_->setContentsMargins(0, 0, 1, 0); // room for its border
         qApp->installEventFilter(this);
     } else if (mode != SidebarMode::Overlay && floating) {
         qApp->removeEventFilter(this);
@@ -2005,6 +2010,7 @@ void MainWindow::setSidebar(SidebarMode mode, int view)
     const bool docking = mode == SidebarMode::Docked && sidebarMode_ != SidebarMode::Docked;
     sidebarMode_ = mode;
     activityBar_->setCurrent(mode == SidebarMode::Collapsed ? -1 : views_->currentIndex());
+    activityBar_->update();
     applySidebarLayout();
     if (docking) splitter_->setSizes({panelWidth_, std::max(0, splitter_->width() - panelWidth_ - splitter_->handleWidth())});
 }
