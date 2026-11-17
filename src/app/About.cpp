@@ -4,8 +4,8 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFrame>
-#include <QHBoxLayout>
 #include <QLabel>
+#include <QPixmap>
 #include <QScrollArea>
 #include <QVBoxLayout>
 
@@ -65,27 +65,23 @@ void showAbout(QWidget* parent)
     dialog.setWindowTitle(tr("About Portal Mux"));
     const QString dim = dialog.palette().color(QPalette::PlaceholderText).name();
 
-    auto* icon = new QLabel;
-    icon->setPixmap(QApplication::windowIcon().pixmap(72, 72));
-    icon->setAlignment(Qt::AlignTop);
-    auto* name = new QLabel(QStringLiteral("Portal Mux"));
-    QFont big = name->font();
-    big.setPointSizeF(big.pointSizeF() * 1.6);
-    big.setWeight(QFont::DemiBold);
-    name->setFont(big);
+    const bool dark = dialog.palette().color(QPalette::Window).lightness() < 128;
+    const qreal dpr = dialog.devicePixelRatioF();
+    QPixmap lockup = QPixmap(dark ? QStringLiteral(":/brand/lockup-dark.png") : QStringLiteral(":/brand/lockup-light.png"))
+                         .scaledToHeight(qRound(56 * dpr), Qt::SmoothTransformation);
+    lockup.setDevicePixelRatio(dpr);
+    auto* name = new QLabel;
+    name->setPixmap(lockup);
+    name->setAccessibleName(QStringLiteral("Portal Mux"));
     auto* facts = new QLabel(tr("<span style='color:%1'>Version %2</span><br>Remote access to computers, VMs, phones and game "
                                 "hosts, free software.<br>Licence: <a href='https://www.gnu.org/licenses/gpl-3.0.html'>GNU General "
                                 "Public License 3.0 or later</a>")
                                  .arg(dim, QApplication::applicationVersion()));
     facts->setOpenExternalLinks(true);
-    auto* about = new QVBoxLayout;
-    about->setSpacing(4);
-    about->addWidget(name);
-    about->addWidget(facts);
-    auto* header = new QHBoxLayout;
-    header->setSpacing(16);
-    header->addWidget(icon);
-    header->addLayout(about, 1);
+    auto* header = new QVBoxLayout;
+    header->setSpacing(10);
+    header->addWidget(name);
+    header->addWidget(facts);
 
     auto* line = new QFrame;
     line->setFrameShape(QFrame::HLine);

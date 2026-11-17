@@ -123,6 +123,7 @@ foreach(size 16 22 24 28 32 48 64 96 128 256)
     list(APPEND window_icons data/icons/hicolor/${size}x${size}/apps/portal-mux.png)
 endforeach()
 qt_add_resources(portal-mux window_icon PREFIX "/" BASE data/icons FILES ${window_icons}) # :/hicolor/<size>/apps/portal-mux.png
+qt_add_resources(portal-mux brand PREFIX "/" BASE data FILES data/brand/lockup-dark.png data/brand/lockup-light.png)
 if(WIN32)
     target_sources(portal-mux PRIVATE data/icons/portal-mux.rc)
 endif()
