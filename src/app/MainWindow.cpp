@@ -1036,6 +1036,8 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     if (watched == centralWidget() && event->type() == QEvent::Paint && centralWidget()->layout()->contentsMargins().top() > 0) {
         QPainter(centralWidget()).fillRect(0, 0, centralWidget()->width(), 1, lineColor());
     }
+    if (watched == views_ && event->type() == QEvent::Paint && sidebarMode_ == SidebarMode::Overlay)
+        QPainter(views_).fillRect(views_->width() - 1, 0, 1, views_->height(), lineColor());
     if (watched == sessionBar_ && event->type() == QEvent::Resize) {
         if (sessionBar_->toolButtonStyle() == Qt::ToolButtonTextBesideIcon) sessionBarTextWidth_ = sessionBar_->sizeHint().width();
         const auto style = sessionBar_->width() >= sessionBarTextWidth_ ? Qt::ToolButtonTextBesideIcon : Qt::ToolButtonIconOnly;
@@ -1993,11 +1995,11 @@ void MainWindow::setSidebar(SidebarMode mode, int view)
     const bool floating = views_->parentWidget() != splitter_;
     if (mode == SidebarMode::Overlay && !floating) {
         views_->setParent(centralWidget());
-        views_->setFrameShape(QFrame::StyledPanel);
+        views_->setContentsMargins(0, 0, 1, 0); // its border over the session: painted in eventFilter
         qApp->installEventFilter(this);
     } else if (mode != SidebarMode::Overlay && floating) {
         qApp->removeEventFilter(this);
-        views_->setFrameShape(QFrame::NoFrame);
+        views_->setContentsMargins(0, 0, 0, 0);
         splitter_->insertWidget(0, views_);
     }
     const bool docking = mode == SidebarMode::Docked && sidebarMode_ != SidebarMode::Docked;
