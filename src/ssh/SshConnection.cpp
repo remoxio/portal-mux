@@ -127,7 +127,7 @@ bool SshConnection::connectSocket(const std::function<bool()>& cancelled)
     int fd = -1;
     std::string why = "no address";
     for (addrinfo* a = addrs; a && fd < 0 && !cancelled(); a = a->ai_next) {
-        fd = int(socket(a->ai_family, a->ai_socktype | SOCK_CLOEXEC, a->ai_protocol));
+        fd = net::openSocket(a->ai_family, a->ai_socktype, a->ai_protocol);
         if (fd < 0) continue;
         {
             std::lock_guard lock(fdMutex_);

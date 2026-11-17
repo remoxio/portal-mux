@@ -208,7 +208,7 @@ ctest --preset linux
 
 - Release build: add `-DCMAKE_BUILD_TYPE=Release` to the configure line.
 - The `macos` preset assumes MacPorts (`/opt/local`, Qt in `/opt/local/libexec/qt6`). With Homebrew: `cmake --preset macos -DCMAKE_PREFIX_PATH=$(brew --prefix)`.
-- Only the `linux` preset has been built so far; the Windows and macOS presets are untested.
+- Built so far: `linux`, `windows-msys2`, and `macos` with Homebrew (macOS 26, arm64).
 
 ### 6.3 Packaging notes
 

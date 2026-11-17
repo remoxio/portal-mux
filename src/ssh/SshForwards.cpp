@@ -72,7 +72,7 @@ static int listenOn(const std::string& bind, int port, std::string& error)
         error = gai_strerror(rc);
         return -1;
     }
-    int fd = int(socket(addrs->ai_family, SOCK_STREAM | SOCK_CLOEXEC, 0));
+    int fd = net::openSocket(addrs->ai_family, SOCK_STREAM, 0);
 #ifndef _WIN32 // Windows: lets others steal the port
     const int on = 1;
     if (fd >= 0) setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
@@ -229,7 +229,7 @@ void SshForwards::pump()
         hints.ai_socktype = SOCK_STREAM;
         int fd = -1;
         if (r != remote_.end() && getaddrinfo(r->host.c_str(), std::to_string(r->hostPort).c_str(), &hints, &addrs) == 0) {
-            fd = int(socket(addrs->ai_family, SOCK_STREAM | SOCK_CLOEXEC, 0));
+            fd = net::openSocket(addrs->ai_family, SOCK_STREAM, 0);
             if (fd >= 0 && ::connect(fd, addrs->ai_addr, int(addrs->ai_addrlen)) != 0) {
                 net::closeSocket(fd);
                 fd = -1;

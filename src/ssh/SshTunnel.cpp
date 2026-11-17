@@ -33,7 +33,7 @@ SshConnection::Params SshTunnel::parse(const std::string& spec)
 int SshTunnel::listen(int preferredPort)
 {
     for (int port : {preferredPort, 0}) {
-        const int fd = int(socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0));
+        const int fd = net::openSocket(AF_INET, SOCK_STREAM, 0);
         if (fd < 0) return 0;
         sockaddr_in addr{};
         addr.sin_family = AF_INET;

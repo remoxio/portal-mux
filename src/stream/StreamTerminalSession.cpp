@@ -1,6 +1,8 @@
 #include "stream/StreamTerminalSession.h"
 
 #ifndef _WIN32
+#include "core/Net.h"
+
 #include <fcntl.h>
 #include <netdb.h>
 #include <poll.h>
@@ -8,6 +10,11 @@
 #include <sys/socket.h>
 #include <termios.h>
 #include <unistd.h>
+
+#ifndef B460800 // macOS: speed_t is the rate itself, and stops at B230400
+#define B460800 460800
+#define B921600 921600
+#endif
 #endif
 
 #include <cerrno>
@@ -64,8 +71,9 @@ int StreamTerminalSession::openSocket(std::string& error)
     int fd = -1;
     std::string why = "no address";
     for (addrinfo* a = addrs; a && fd < 0; a = a->ai_next) {
-        fd = socket(a->ai_family, a->ai_socktype | SOCK_CLOEXEC | SOCK_NONBLOCK, a->ai_protocol);
+        fd = net::openSocket(a->ai_family, a->ai_socktype, a->ai_protocol);
         if (fd < 0) continue;
+        net::setNonBlocking(fd, true);
         int rc = ::connect(fd, a->ai_addr, a->ai_addrlen);
         if (rc < 0 && errno == EINPROGRESS) { // the wake pipe interrupts it: closing the tab doesn't wait
             pollfd fds[2] = {{fd, POLLOUT, 0}, {wake_[0], POLLIN, 0}};

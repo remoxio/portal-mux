@@ -70,6 +70,18 @@ inline void setReceiveTimeout(int fd, int seconds)
 }
 #endif
 
+// close-on-exec; macOS lacks SOCK_CLOEXEC: set right after
+inline int openSocket(int family, int type, int protocol)
+{
+#ifdef SOCK_CLOEXEC
+    return int(socket(family, type | SOCK_CLOEXEC, protocol));
+#else
+    const int fd = socket(family, type, protocol);
+    if (fd >= 0) fcntl(fd, F_SETFD, FD_CLOEXEC);
+    return fd;
+#endif
+}
+
 inline std::string errorText(int error) { return std::system_category().message(error); }
 
 inline int socketError(int fd)
