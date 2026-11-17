@@ -8,27 +8,35 @@
 #include <QPainter>
 #include <QPalette>
 #include <QPixmap>
+#include <QWidget>
 
 namespace {
 
-// SVG recoloured at paint time, so it follows palette changes
+// SVG recoloured at paint time, from the painted widget's palette
 class TintedSvgEngine : public QIconEngine {
 public:
     TintedSvgEngine(QByteArray svg, QColor color) : svg_(std::move(svg)), color_(color) {}
 
     QIconEngine* clone() const override { return new TintedSvgEngine(svg_, color_); }
 
-    void paint(QPainter* painter, const QRect& rect, QIcon::Mode mode, QIcon::State state) override
+    void paint(QPainter* painter, const QRect& rect, QIcon::Mode mode, QIcon::State) override
     {
-        const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
-        painter->drawPixmap(rect, scaledPixmap(rect.size(), mode, state, dpr));
+        const QPaintDevice* device = painter->device();
+        const auto* widget = dynamic_cast<const QWidget*>(device);
+        painter->drawPixmap(rect, render(rect.size(), mode, device ? device->devicePixelRatioF() : 1.0,
+                                         widget ? widget->palette() : QApplication::palette()));
     }
 
     QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override { return scaledPixmap(size, mode, state, 1.0); }
 
     QPixmap scaledPixmap(const QSize& size, QIcon::Mode mode, QIcon::State, qreal scale) override
     {
-        const QPalette palette = QApplication::palette();
+        return render(size, mode, scale, QApplication::palette());
+    }
+
+private:
+    QPixmap render(const QSize& size, QIcon::Mode mode, qreal scale, const QPalette& palette) const
+    {
         QColor color = color_.isValid() ? color_
                      : mode == QIcon::Selected ? palette.color(QPalette::HighlightedText)
                                                : palette.color(QPalette::WindowText);
@@ -53,7 +61,6 @@ public:
         return pixmap;
     }
 
-private:
     QByteArray svg_;
     QColor color_;
 };

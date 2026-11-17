@@ -841,6 +841,18 @@ bool MainWindow::applySidebar()
         }
         w->setAutoFillBackground(true);
     }
+#ifdef Q_OS_MACOS
+    // AppKit's sidebar selection: faint, text unchanged
+    const QColor faint = tint.lightness() < 128 ? QColor(255, 255, 255, 31) : QColor(0, 0, 0, 26);
+    const QColor text = QApplication::palette().color(QPalette::Text);
+    for (QTreeView* list : views_->findChildren<QTreeView*>()) {
+        QPalette palette = list->palette();
+        if (palette.color(QPalette::Highlight) == faint && palette.color(QPalette::HighlightedText) == text) continue;
+        palette.setColor(QPalette::Highlight, faint);
+        palette.setColor(QPalette::HighlightedText, text);
+        list->setPalette(palette);
+    }
+#endif
     return !waiting;
 }
 
@@ -1967,7 +1979,10 @@ void MainWindow::updateSessionActions()
 void MainWindow::changeEvent(QEvent* event)
 {
     QMainWindow::changeEvent(event);
-    if (event->type() == QEvent::PaletteChange) styleStatusCells();
+    if (event->type() == QEvent::PaletteChange) {
+        styleStatusCells();
+        if (isVisible()) applySidebar(); // the tint was taken from the old palette
+    }
     if (event->type() == QEvent::WindowStateChange && isFullScreen() != fullScreenPoll_.isActive())
         applyFullScreen(isFullScreen()); // also when the window manager switched it
 }
