@@ -186,7 +186,7 @@ sudo dnf install libvirt-devel   # optional: the "Virtual machines" group (Linux
 
 **Windows** — install MSYS2, then in the **UCRT64** shell:
 ```bash
-pacman -S --needed mingw-w64-ucrt-x86_64-{toolchain,cmake,ninja,pkgconf,openssl,qt6-base,qt6-svg,qt6-multimedia,qt6-websockets,qtkeychain-qt6,breeze-icons,freerdp,libvncserver,libssh,libvterm,spice-gtk,ffmpeg,sdl3,libvirt}
+pacman -S --needed mingw-w64-ucrt-x86_64-{toolchain,cmake,ninja,pkgconf,openssl,qt6-base,qt6-svg,qt6-multimedia,qt6-websockets,qtkeychain-qt6,kiconthemes,freerdp,libvncserver,libssh,libvterm,spice-gtk,ffmpeg,sdl3,libvirt}
 ```
 
 **macOS** — MacPorts (used for releases):
@@ -215,7 +215,7 @@ ctest --preset linux
 - `cmake --install build/linux --prefix ~/.local` (or a package's prefix) installs `bin/portal-mux`, `share/portal-mux/scrcpy-server`, the desktop entry and the mime types; then `update-mime-database ~/.local/share/mime` and `update-desktop-database ~/.local/share/applications`. Making Portal Mux the default for `rdp://` etc. stays the user's choice (`xdg-mime default portal-mux.desktop x-scheme-handler/rdp`).
 
 - **Linux**: Flatpak builds FreeRDP, LibVNCServer, spice-gtk as manifest modules (Remmina's Flathub manifest does the same; reuse it).
-- **Windows**: `windeployqt` + copy the remaining MinGW DLLs (`ldd`/`ntldd`); installer with Inno Setup or WiX.
+- **Windows**: `windeployqt` + copy the remaining MinGW DLLs (`ldd`/`ntldd`), and `plugins/kiconthemes6/` as `kiconthemes6/`; installer with Inno Setup or WiX.
 - **macOS**: libraries are built for the build machine's macOS version → build releases on the oldest macOS supported. `macdeployqt` + fix remaining dylib paths; sign and notarize every bundled dylib.
 - MSYS2 and Homebrew are rolling releases: CI caches the installed dependency set and refreshes it on purpose, not on every build.
 

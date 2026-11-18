@@ -15,6 +15,7 @@ if(UNIX AND NOT APPLE)
 endif()
 if(WIN32)
     find_package(KF6BreezeIcons CONFIG REQUIRED) # Windows has no icon theme
+    find_package(KF6IconThemes CONFIG REQUIRED)
 endif()
 find_package(Qt6Keychain CONFIG REQUIRED)
 find_package(FreeRDP 3 CONFIG REQUIRED)
@@ -163,6 +164,7 @@ target_link_libraries(portal-mux PRIVATE
     $<TARGET_NAME_IF_EXISTS:Qt6::DBus>
     $<TARGET_NAME_IF_EXISTS:KF6::WindowSystem>
     $<TARGET_NAME_IF_EXISTS:KF6::BreezeIcons>
+    $<TARGET_NAME_IF_EXISTS:KF6::IconThemes>
     PkgConfig::VTERM
     SDL3::SDL3
 )

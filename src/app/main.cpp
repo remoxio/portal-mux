@@ -5,11 +5,11 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QIcon>
-#include <QStyleHints>
 #include <QTimer>
 
 #ifdef _WIN32
 #include <BreezeIcons>
+#include <KIconTheme>
 #endif
 
 #include <glib.h>
@@ -25,14 +25,11 @@ int main(int argc, char* argv[])
     QApplication::setWindowIcon(icon);
     look::apply();
 #ifdef _WIN32
-    // Breeze, as on KDE
+    // Breeze, recoloured from the palette by KIconThemes' engine, as on KDE
     BreezeIcons::initIcons();
-    auto followScheme = [] {
-        QIcon::setThemeName(QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark ? QStringLiteral("breeze-dark")
-                                                                                                  : QStringLiteral("breeze"));
-    };
-    followScheme();
-    QObject::connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, &app, followScheme);
+    QCoreApplication::addLibraryPath(QCoreApplication::applicationDirPath() + QStringLiteral("/kiconthemes6"));
+    KIconTheme::forceThemeForTests(QStringLiteral("breeze")); // initTheme() without its Breeze palette
+    QIcon::setThemeName(QStringLiteral("KIconEngine"));
 #endif
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Remote desktop client for RDP, VNC, SPICE and SSH."));
