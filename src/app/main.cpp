@@ -59,9 +59,11 @@ int main(int argc, char* argv[])
     QApplication::setApplicationName(QStringLiteral("portal-mux"));
     QApplication::setApplicationVersion(QStringLiteral(PROJECT_VERSION));
     QApplication::setDesktopFileName(QStringLiteral("portal-mux")); // Wayland app id: the launcher's icon
+#ifndef Q_OS_MACOS // there it would replace the Dock's icon, the bundle's has the background
     QIcon icon;
     for (int size : {16, 22, 24, 28, 32, 48, 64, 96, 128, 256}) icon.addFile(QStringLiteral(":/hicolor/%1x%1/apps/portal-mux.png").arg(size));
     QApplication::setWindowIcon(icon);
+#endif
     look::apply();
 #ifdef _WIN32
     // Breeze, recoloured from the palette by KIconThemes' engine, as on KDE
