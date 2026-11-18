@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QDialog>
 #include <QEvent>
+#include <QGraphicsDropShadowEffect>
 #include <QMenu>
 #include <QMenuBar>
 #include <QPainter>
@@ -48,7 +49,9 @@ public:
         case PM_ExclusiveIndicatorHeight:
             return 20;
         case PM_MenuPanelWidth:
-            return 1;
+            return qobject_cast<const QMenu*>(widget) ? shadow + 1 : 1;
+        case PM_SubMenuOverlap:
+            return shadow;
         case PM_MenuHMargin:
             return 0;
         case PM_MenuVMargin:
@@ -72,9 +75,9 @@ public:
             if (const auto* item = qstyleoption_cast<const QStyleOptionMenuItem*>(option)) {
                 if (item->menuItemType == QStyleOptionMenuItem::Separator) return {size.width(), 3};
                 int w = size.width() + 2 * (4 + 11);
-                if (item->menuHasCheckableItems) w += 28;
+                if (item->menuHasCheckableItems) w += 32;
                 if (item->maxIconWidth > 0) w += 28;
-                if (item->text.contains(QLatin1Char('	'))) w += 24;
+                if (item->text.contains(QLatin1Char('\t'))) w += 24;
                 if (item->menuItemType == QStyleOptionMenuItem::SubMenu) w += 24 + 12;
                 return {w, std::max(size.height() + 9, 28) + 4};
             }
@@ -109,15 +112,21 @@ public:
             widget->setAttribute(Qt::WA_TranslucentBackground);
             widget->setWindowFlag(Qt::FramelessWindowHint);
             widget->setWindowFlag(Qt::NoDropShadowWindowHint);
+            auto* effect = new QGraphicsDropShadowEffect(widget);
+            effect->setBlurRadius(2 * shadow);
+            effect->setOffset(0, 2);
+            effect->setColor(QColor(0, 0, 0, 0x60));
+            widget->setGraphicsEffect(effect);
             widget->installEventFilter(this);
         }
     }
 
     bool eventFilter(QObject* watched, QEvent* event) override
     {
-        // under the menu bar item's highlight, which is inset by 5
+        // the panel, not its shadow, where Qt puts the menu; under a menu bar item's highlight, inset by 5
         auto* menu = static_cast<QMenu*>(watched);
-        if (event->type() == QEvent::Show && qobject_cast<QMenuBar*>(menu->parentWidget())) menu->move(menu->pos() + QPoint(5, 0));
+        if (event->type() == QEvent::Show)
+            menu->move(menu->pos() + QPoint(qobject_cast<QMenuBar*>(menu->parentWidget()) ? 5 - shadow : -shadow, -shadow));
         return false;
     }
 
@@ -129,7 +138,7 @@ public:
         p->setRenderHint(QPainter::Antialiasing);
         p->setPen(QColor(0, 0, 0, dark ? 0x33 : 0x0f));
         p->setBrush(dark ? QColor(0x2c, 0x2c, 0x2c) : QColor(0xf9, 0xf9, 0xf9));
-        p->drawRoundedRect(QRectF(option->rect).adjusted(0.5, 0.5, -0.5, -0.5), 8, 8);
+        p->drawRoundedRect(QRectF(option->rect).adjusted(shadow + 0.5, shadow + 0.5, -shadow - 0.5, -shadow - 0.5), 8, 8);
         p->restore();
     }
 
@@ -216,16 +225,16 @@ private:
         glyphs.setPixelSize(12);
         int x = r.left() + 15;
         if (item->menuHasCheckableItems) {
-            if (item->checked && item->checkType == QStyleOptionMenuItem::Exclusive) {
-                p->setPen(Qt::NoPen);
-                p->setBrush(text);
-                p->drawEllipse(QPointF(x + 8, r.center().y() + 0.5), 3, 3);
-            } else if (item->checked) {
-                p->setFont(glyphs);
-                p->setPen(text);
-                p->drawText(QRect(x, r.top(), 16, r.height()), Qt::AlignCenter, QStringLiteral(u"")); // CheckMark
+            if (item->checkType != QStyleOptionMenuItem::NotCheckable) { // the check box control's look
+                QStyleOptionButton box;
+                box.QStyleOption::operator=(*item);
+                box.state = (item->state & State_Enabled) | (item->checked ? State_On : State_Off);
+                box.rect = QRect(x, r.center().y() - 9, 20, 20);
+                box.styleObject = nullptr;
+                proxy()->drawPrimitive(item->checkType == QStyleOptionMenuItem::Exclusive ? PE_IndicatorRadioButton : PE_IndicatorCheckBox,
+                                       &box, p, widget);
             }
-            x += 28;
+            x += 32;
         }
         if (item->maxIconWidth > 0) {
             item->icon.paint(p, QRect(x, r.center().y() - 7, 16, 16), Qt::AlignCenter, enabled ? QIcon::Normal : QIcon::Disabled,
@@ -235,13 +244,13 @@ private:
         const QRect textRect(x, r.top(), r.right() - 15 - x, r.height());
         int flags = Qt::AlignVCenter | Qt::TextShowMnemonic | Qt::TextSingleLine;
         if (!proxy()->styleHint(SH_UnderlineShortcut, item, widget)) flags |= Qt::TextHideMnemonic;
-        const qsizetype tab = item->text.indexOf(QLatin1Char('	'));
+        const qsizetype tab = item->text.indexOf(QLatin1Char('\t'));
         p->setFont(item->font);
         p->setPen(text);
         p->drawText(textRect, flags | Qt::AlignLeft, item->text.left(tab));
         if (item->menuItemType == QStyleOptionMenuItem::SubMenu) {
             p->setFont(glyphs);
-            p->drawText(textRect, Qt::AlignVCenter | Qt::AlignRight, QStringLiteral(u"")); // ChevronRight
+            p->drawText(textRect, Qt::AlignVCenter | Qt::AlignRight, QStringLiteral(u"\uE76C")); // ChevronRight
         } else if (tab >= 0) {
             QColor secondary = text;
             secondary.setAlphaF(text.alphaF() * 0.7);
@@ -250,6 +259,8 @@ private:
         }
         p->restore();
     }
+
+    static constexpr int shadow = 12; // menus' margin for it
 
     static constexpr int listShift = 12; // Qt's 4 px item margin to WinUI's 16
 
