@@ -385,10 +385,17 @@ MainWindow::MainWindow(QWidget* parent)
     addToggle(tabBarAction_, tr("Show Ta&b Bar"), "tabBar");
     view->addSeparator();
     view->addAction(tr("Open Test &Pattern"), this, &MainWindow::openTestPattern);
-    QMenu* settings = menuBar()->addMenu(tr("&Settings"));
-    settings->addAction(QIcon::fromTheme(QStringLiteral("configure")), tr("&Configure Portal Mux…"), QKeySequence::Preferences, this,
+    QMenu* settings = menuBar()->addMenu(tr("&Configuration"));
+    settings->addAction(QIcon::fromTheme(QStringLiteral("configure")), tr("&Settings…"), QKeySequence::Preferences, this,
                         &MainWindow::openSettings)
         ->setMenuRole(QAction::PreferencesRole);
+    // placeholder; ApplicationSpecificRole: in the app menu on macOS
+    settings->addAction(QIcon::fromTheme(QStringLiteral("configure-shortcuts")), tr("S&hortcuts…"), this, [this] {
+        QMessageBox::information(this, tr("Shortcuts"), tr("Configurable shortcuts are coming."));
+    })->setMenuRole(QAction::ApplicationSpecificRole);
+#ifdef Q_OS_MACOS
+    settings->menuAction()->setVisible(false); // both items are in the app menu
+#endif
     QMenu* help = menuBar()->addMenu(tr("&Help"));
     help->addAction(tr("&About Portal Mux"), this, [this] { showAbout(this); })->setMenuRole(QAction::AboutRole);
 
@@ -889,7 +896,7 @@ void MainWindow::configureTerminal(TerminalView* terminal)
 void MainWindow::openSettings()
 {
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("Configure Portal Mux"));
+    dialog.setWindowTitle(tr("Settings"));
 
     auto* sidebar = new QGroupBox(tr("Sidebar"));
     auto* box = new QVBoxLayout(sidebar);
