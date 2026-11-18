@@ -3,7 +3,6 @@
 #include <QApplication>
 #include <QDialog>
 #include <QEvent>
-#include <QGraphicsDropShadowEffect>
 #include <QMenu>
 #include <QMenuBar>
 #include <QPainter>
@@ -112,11 +111,6 @@ public:
             widget->setAttribute(Qt::WA_TranslucentBackground);
             widget->setWindowFlag(Qt::FramelessWindowHint);
             widget->setWindowFlag(Qt::NoDropShadowWindowHint);
-            auto* effect = new QGraphicsDropShadowEffect(widget);
-            effect->setBlurRadius(2 * shadow);
-            effect->setOffset(0, 2);
-            effect->setColor(QColor(0, 0, 0, 0x60));
-            widget->setGraphicsEffect(effect);
             widget->installEventFilter(this);
         }
     }
@@ -138,7 +132,16 @@ public:
         p->setRenderHint(QPainter::Antialiasing);
         p->setPen(QColor(0, 0, 0, dark ? 0x33 : 0x0f));
         p->setBrush(dark ? QColor(0x2c, 0x2c, 0x2c) : QColor(0xf9, 0xf9, 0xf9));
-        p->drawRoundedRect(QRectF(option->rect).adjusted(shadow + 0.5, shadow + 0.5, -shadow - 0.5, -shadow - 0.5), 8, 8);
+        const QRectF panel = QRectF(option->rect).adjusted(shadow + 0.5, shadow + 0.5, -shadow - 0.5, -shadow - 0.5);
+        p->save();
+        p->setBrush(Qt::NoBrush);
+        for (int i = 1; i <= shadow; ++i) { // 1 px rings fading out; QGraphicsDropShadowEffect blanks reopened popups
+            const qreal fade = 1.0 - qreal(i) / (shadow + 1);
+            p->setPen(QColor(0, 0, 0, qRound(0x50 * fade * fade)));
+            p->drawRoundedRect(panel.adjusted(-i, -i, i, i), 8 + i, 8 + i);
+        }
+        p->restore();
+        p->drawRoundedRect(panel, 8, 8);
         p->restore();
     }
 
