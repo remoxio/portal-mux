@@ -6,6 +6,7 @@
 #include <QProxyStyle>
 #include <QSettings>
 #include <QStyleOption>
+#include <QTreeView>
 
 #include <algorithm>
 #include <initializer_list>
@@ -52,10 +53,27 @@ public:
         case CT_PushButton:
             s.setHeight(std::max(s.height(), 32));
             break;
+        case CT_ItemViewItem: // TreeViewItem 28 + 2·2, ListViewItem 40 with 16 + 12 padding
+            if (qobject_cast<const QTreeView*>(widget)) {
+                s.setHeight(std::max(s.height(), 32));
+            } else {
+                s.setHeight(std::max(s.height(), 40));
+                s.rwidth() += 2 * listShift;
+            }
+            break;
         default:
             break;
         }
         return s;
+    }
+
+    QRect subElementRect(SubElement element, const QStyleOption* option, const QWidget* widget) const override
+    {
+        QRect r = QProxyStyle::subElementRect(element, option, widget);
+        if ((element == SE_ItemViewItemDecoration || element == SE_ItemViewItemText || element == SE_ItemViewItemCheckIndicator) &&
+            widget && !qobject_cast<const QTreeView*>(widget))
+            r.translate(listShift, 0);
+        return r;
     }
 
     // group boxes as WinUI cards
@@ -99,6 +117,8 @@ public:
     }
 
 private:
+    static constexpr int listShift = 12; // Qt's 4 px item margin to WinUI's 16
+
     static QFont titleFont(const QWidget* widget)
     {
         QFont font = widget ? widget->font() : QApplication::font();
