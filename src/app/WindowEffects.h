@@ -4,7 +4,6 @@ class QRegion;
 class QWidget;
 
 // Compositor blur behind a translucent window: KWin protocol, NSVisualEffectView on macOS.
-// Windows: see-through only for now.
 namespace windowEffects {
 
 // Ask before the window is created (macOS: before menuBar()): translucency is requested at creation.

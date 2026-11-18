@@ -932,7 +932,11 @@ void MainWindow::openSettings()
         note = tr("This desktop cannot show what is behind a window.");
         sidebar->setEnabled(false);
     } else if (!windowEffects::blurAvailable()) {
+#ifdef Q_OS_WIN
+        note = tr("This desktop does not blur: Transparency effects are off, or it is a Remote Desktop session.");
+#else
         note = tr("This desktop does not offer blur.");
+#endif
     }
     if (!note.isEmpty()) box->addWidget(new QLabel(note));
 
