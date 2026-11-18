@@ -35,6 +35,8 @@ public:
         case PM_LayoutHorizontalSpacing:
         case PM_LayoutVerticalSpacing:
             return 12;
+        case PM_ToolBarIconSize:
+            return 22; // as KDE; Breeze draws other icons at 24
         default:
             return QProxyStyle::pixelMetric(metric, option, widget);
         }
