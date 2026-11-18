@@ -42,6 +42,7 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent = nullptr);
 
+    void quickConnect();
     bool openAddress(const QString& text, rdc::Protocol fallback = rdc::Protocol::RDP);
 
 protected:

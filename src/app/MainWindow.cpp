@@ -46,6 +46,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFontDatabase>
+#include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -350,7 +351,9 @@ MainWindow::MainWindow(QWidget* parent)
     connect(qApp, &QGuiApplication::focusWindowChanged, this, [this] { updateSessionActions(); }); // actions follow the active window
 
     QMenu* file = menuBar()->addMenu(tr("&File"));
-    file->addActions({newAction, editAction_, deleteAction_, connectAction_, sftpAction_});
+    file->addAction(newAction);
+    file->addAction(QIcon::fromTheme(QStringLiteral("network-connect")), tr("&Quick Connection…"), this, &MainWindow::quickConnect);
+    file->addActions({editAction_, deleteAction_, connectAction_, sftpAction_});
     file->addSeparator();
     file->addAction(tr("&Import from KRDC…"), this, &MainWindow::importFromKrdc);
     file->addSeparator();
@@ -411,24 +414,6 @@ MainWindow::MainWindow(QWidget* parent)
     connect(sessionBar_, &QWidget::customContextMenuRequested, this, [this](const QPoint& at) {
         std::unique_ptr<QMenu> menu(createPopupMenu());
         menu->exec(sessionBar_->mapToGlobal(at));
-    });
-    auto* spacer = new QWidget;
-    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    sessionBar_->addWidget(spacer);
-    auto* quickProtocol = new QComboBox;
-    for (Protocol p : {Protocol::RDP, Protocol::VNC, Protocol::SPICE, Protocol::SSH, Protocol::Telnet})
-        quickProtocol->addItem(QString::fromLatin1(protocolName(p)).toUpper(), int(p));
-    quickProtocol->setToolTip(tr("Protocol for an address that names none"));
-    auto* quick = new QLineEdit;
-    quick->setPlaceholderText(tr("Quick connect"));
-    quick->setToolTip(tr("Connect without saving: host, user@host:port, or an rdp://, vnc://, spice:// or ssh:// address"));
-    quick->setClearButtonEnabled(true);
-    quick->setMinimumWidth(quick->fontMetrics().averageCharWidth() * 14);
-    quick->setMaximumWidth(quick->fontMetrics().averageCharWidth() * 36);
-    sessionBar_->addWidget(quickProtocol);
-    sessionBar_->addWidget(quick);
-    connect(quick, &QLineEdit::returnPressed, this, [this, quick, quickProtocol] {
-        if (openAddress(quick->text(), Protocol(quickProtocol->currentData().toInt()))) quick->clear();
     });
     status_ = new QStatusBar;
     auto cell = [this](const QString& widest) {
@@ -891,6 +876,38 @@ void MainWindow::configureTerminal(TerminalView* terminal)
     const int size = terminal->property("ownFontSize").toInt();
     terminal->configure(family.isEmpty() ? font.family() : family, size > 0 ? size : font.pointSize(),
                         terminal->property("scrollback").toInt());
+}
+
+void MainWindow::quickConnect()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Quick Connection"));
+    auto* protocol = new QComboBox;
+    for (Protocol p : {Protocol::RDP, Protocol::VNC, Protocol::SPICE, Protocol::SSH, Protocol::Telnet})
+        protocol->addItem(QString::fromLatin1(protocolName(p)).toUpper(), int(p));
+    protocol->setCurrentIndex(std::max(0, protocol->findData(settings_->value(QStringLiteral("quick/protocol")).toInt())));
+    protocol->setToolTip(tr("Protocol for an address that names none"));
+    auto* address = new QLineEdit;
+    address->setPlaceholderText(tr("host or user@host:port"));
+    address->setToolTip(tr("Connect without saving: host, user@host:port, or an rdp://, vnc://, spice:// or ssh:// address"));
+    address->setMinimumWidth(address->fontMetrics().averageCharWidth() * 44);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel);
+    QPushButton* go = buttons->addButton(tr("&Connect"), QDialogButtonBox::AcceptRole);
+    go->setDefault(true);
+    go->setEnabled(false);
+    connect(address, &QLineEdit::textChanged, go, [go](const QString& text) { go->setEnabled(!text.trimmed().isEmpty()); });
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+        settings_->setValue(QStringLiteral("quick/protocol"), protocol->currentData());
+        if (openAddress(address->text(), Protocol(protocol->currentData().toInt()))) dialog.accept();
+    });
+    auto* form = new QFormLayout;
+    form->addRow(tr("&Protocol:"), protocol);
+    form->addRow(tr("&Address:"), address);
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->addLayout(form);
+    layout->addWidget(buttons);
+    dialog.exec();
 }
 
 void MainWindow::openSettings()
