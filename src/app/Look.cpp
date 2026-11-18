@@ -5,6 +5,7 @@
 #include <QPainter>
 #include <QProxyStyle>
 #include <QSettings>
+#include <QStyleHints>
 #include <QStyleOption>
 #include <QTreeView>
 
@@ -74,6 +75,22 @@ public:
             widget && !qobject_cast<const QTreeView*>(widget))
             r.translate(listShift, 0);
         return r;
+    }
+
+    // checked tool buttons: the icon in the text's colour, on the accent
+    void drawControl(ControlElement element, const QStyleOption* option, QPainter* p, const QWidget* widget) const override
+    {
+        const auto* tool = qstyleoption_cast<const QStyleOptionToolButton*>(option);
+        if (element != CE_ToolButtonLabel || !tool || !(tool->state & State_On) || !(tool->state & State_Enabled) || tool->icon.isNull())
+            return QProxyStyle::drawControl(element, option, p, widget);
+        QPixmap pixmap = tool->icon.pixmap(tool->iconSize, p->device()->devicePixelRatio());
+        QPainter tint(&pixmap);
+        tint.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        tint.fillRect(pixmap.rect(), QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark ? Qt::black : Qt::white);
+        tint.end();
+        QStyleOptionToolButton label(*tool);
+        label.icon = QIcon(pixmap);
+        QProxyStyle::drawControl(element, &label, p, widget);
     }
 
     // group boxes as WinUI cards
