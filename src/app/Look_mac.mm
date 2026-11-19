@@ -4,10 +4,12 @@
 #include <QFocusFrame>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QIcon>
 #include <QLineEdit>
 #include <QPainter>
 #include <QPainterPath>
 #include <QProxyStyle>
+#include <QStyleHints>
 #include <QStyleOption>
 #include <QTabBar>
 #include <QTabWidget>
@@ -32,6 +34,7 @@ public:
 
     int pixelMetric(PixelMetric metric, const QStyleOption* option, const QWidget* widget) const override
     {
+        if (metric == PM_ToolBarIconSize) return 22; // Breeze's, as on KDE and Windows
         if (metric == PM_TabBarTabOverlap && tabView(widget)) return 0;
         if (metric == PM_TabBarBaseOverlap && tabView(widget)) return tabHeight / 2; // the bar sits on the pane's edge
         if ((metric == PM_LayoutLeftMargin || metric == PM_LayoutTopMargin || metric == PM_LayoutRightMargin || metric == PM_LayoutBottomMargin) &&
@@ -261,6 +264,14 @@ void applyMac()
 {
     QApplication::setStyle(new MacStyle(QApplication::style()->name()));
     QCoreApplication::installTranslator(new AppMenuText(qApp));
+    // Breeze from the resources, as on the other systems; Qt alone maps a few names to SF Symbols
+    QIcon::setThemeSearchPaths({QStringLiteral(":/icons")});
+    auto follow = [] {
+        QIcon::setThemeName(QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark ? QStringLiteral("breeze-dark")
+                                                                                                   : QStringLiteral("breeze"));
+    };
+    follow();
+    QObject::connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, qApp, follow);
 }
 
 } // namespace look

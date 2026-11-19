@@ -149,6 +149,10 @@ else()
     message(STATUS "libvirt not found: no \"Virtual machines\" group")
 endif()
 if(APPLE)
+    file(GLOB_RECURSE breeze_icons RELATIVE "${PROJECT_SOURCE_DIR}" CONFIGURE_DEPENDS
+         "${PROJECT_SOURCE_DIR}/third_party/icons/breeze/*.svg" "${PROJECT_SOURCE_DIR}/third_party/icons/breeze-dark/*.svg")
+    qt_add_resources(portal-mux breeze PREFIX "/" BASE third_party
+                     FILES ${breeze_icons} third_party/icons/breeze/index.theme third_party/icons/breeze-dark/index.theme) # macOS has no icon theme
     enable_language(OBJCXX)
     target_sources(portal-mux PRIVATE src/app/Look_mac.mm src/app/WindowEffects_mac.mm data/icons/portal-mux.icns)
     set_source_files_properties(data/icons/portal-mux.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)

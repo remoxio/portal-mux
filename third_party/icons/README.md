@@ -24,6 +24,13 @@ https://github.com/tabler/tabler-icons/tree/v3.52.0/icons/outline. `LICENSE`: MI
 https://github.com/lucide-icons/lucide/tree/1.62.0/icons. `LICENSE`: ISC, and MIT for its Feather-derived icons,
 the chevrons among them. Drawn with `currentColor` like the Tabler icons.
 
+## breeze/, breeze-dark/: Breeze 6.32.0 (LGPL 3.0 or later), macOS only
+
+The theme icons the app asks for (`QIcon::fromTheme`), at 16, 22 and 32 px, from KDE's breeze-icons 6.32.0 `icons/`
+(https://download.kde.org/stable/frameworks/6.32/), so macOS shows the icons Linux and Windows do. `breeze-dark` is made
+as breeze-icons' own `generate-symbolic-dark` does: the stylesheet's Text colour `#fcfcfc`, Background `#2a2e32`.
+Each folder has a short `index.theme`; `breeze/COPYING-ICONS` is the licence.
+
 ## brands/: the Proxmox mark
 
 `proxmox-line.svg` (the sidebar's Proxmox tab and the server rows) is drawn for Portal Mux: the logo's four chevrons
