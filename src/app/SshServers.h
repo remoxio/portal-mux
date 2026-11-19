@@ -21,15 +21,15 @@ struct SshServer {
 };
 std::vector<SshServer> loadSshServers(QSettings* settings);
 std::optional<SshServer> findSshServer(QSettings* settings, const QString& id);
-std::string sshServerSecret(const QString& id); // its password's name in the keychain
+std::string sshServerSecret(const QString& id); // its password's name in secrets
 
-// Settings → SSH Servers; passwords reach the keychain on apply()
+// Settings → SSH Servers; passwords are saved on apply()
 class SshServersPage : public QWidget {
     Q_OBJECT
 public:
     explicit SshServersPage(QSettings* settings, QWidget* parent = nullptr);
 
-    bool pending() const { return !passwords_.isEmpty() || !forgotten_.isEmpty(); } // keychain changes apply() makes
+    bool pending() const { return !passwords_.isEmpty() || !forgotten_.isEmpty(); } // password changes apply() makes
     void apply();
 
 signals:

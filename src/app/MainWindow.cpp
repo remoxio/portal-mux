@@ -114,7 +114,7 @@ static std::vector<std::string> secretKeys(rdc::Protocol protocol)
     using rdc::Protocol;
     std::vector<std::string> keys;
     if (protocol == Protocol::RDP || protocol == Protocol::VNC || protocol == Protocol::SPICE || protocol == Protocol::SSH)
-        keys.push_back(""); // the others have no password field: no keychain request
+        keys.push_back(""); // the others have no password field
     for (const rdc::PropertyDef& d : rdc::properties(protocol))
         if (d.kind == rdc::PropertyKind::Secret) keys.push_back(d.key);
     return keys;
@@ -138,7 +138,7 @@ static void readSecrets(QObject* context, QSettings* settings, Connection c, std
 {
     struct State {
         Connection c;
-        std::vector<std::pair<std::string, std::string>> sources; // keychain name, option ("": the password)
+        std::vector<std::pair<std::string, std::string>> sources; // secret's name, option ("": the password)
         size_t next = 0;
         std::function<void(Connection)> done;
         std::function<void()> step;
@@ -1157,6 +1157,7 @@ void MainWindow::openSettings()
     addPage("type", tr("Font"), {mainFont, sshFont});
     auto* sshServers = new SshServersPage(settings_);
     addPage("server", tr("SSH Servers"), {sshServers});
+    addPage("lock", tr("Passwords"), {secrets::page()});
     connect(pages, &QListWidget::currentRowChanged, stack, &QStackedWidget::setCurrentIndex);
     pages->setCurrentRow(0);
 
@@ -1315,8 +1316,8 @@ void MainWindow::editConnection(Connection connection)
     for (const auto& [key, value] : dialog.secrets())
         secrets::write(keychainKey(id, key), value, this, [this](QString error) {
             if (!error.isEmpty())
-                QMessageBox::warning(this, tr("Keychain"),
-                                     tr("The password could not be stored in the system keychain: %1\n"
+                QMessageBox::warning(this, tr("Passwords"),
+                                     tr("The password was not saved: %1\n"
                                         "You will be asked for it when connecting.")
                                          .arg(error));
         });

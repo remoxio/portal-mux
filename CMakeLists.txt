@@ -111,6 +111,7 @@ qt_add_executable(portal-mux WIN32 MACOSX_BUNDLE
     src/app/ProxmoxView.cpp
     src/app/RemoteView.cpp
     src/app/SftpView.cpp
+    src/app/Secrets.cpp
     src/app/SshServers.cpp
     src/app/WebSocketTunnel.cpp
     src/app/WindowEffects.cpp

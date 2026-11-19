@@ -33,7 +33,7 @@ const Part shipped[] = {
 
 const Part libraries[] = {
     {"Qt 6", QT_TRANSLATE_NOOP("About", "The window, network, websockets and sound"), "LGPL 3.0", "https://www.qt.io"},
-    {"QtKeychain", QT_TRANSLATE_NOOP("About", "Passwords in the system's keychain"), "BSD 3-Clause", "https://github.com/frankosterfeld/qtkeychain"},
+    {"QtKeychain", QT_TRANSLATE_NOOP("About", "The saved passwords' key in the system's keychain"), "BSD 3-Clause", "https://github.com/frankosterfeld/qtkeychain"},
 #ifdef Q_OS_LINUX
     {"KWindowSystem", QT_TRANSLATE_NOOP("About", "Blur behind the sidebar on KDE Plasma"), "LGPL 2.1 or later",
      "https://invent.kde.org/frameworks/kwindowsystem"},

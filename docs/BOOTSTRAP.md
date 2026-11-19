@@ -11,7 +11,7 @@ Project name: **Portal Mux** (`portal-mux` for the binary, install paths, config
 - One app for the common remote protocols: **RDP, VNC, SPICE, SSH**, each on the best free library available.
 - Runs on **Linux (X11 + Wayland), Windows, macOS**.
 - **Platform look** on every platform (Qt 6 Widgets with the platform style).
-- Connection manager: saved connections, groups, credentials in the OS keychain.
+- Connection manager: saved connections, groups, credentials encrypted with a master password (its key in the OS keychain).
 - File transfer: RDP drive redirection first, then RDP clipboard file copy-paste; SFTP for SSH (and as a side channel for VNC hosts).
 - Open source, **GPL-3.0-or-later**.
 
@@ -31,7 +31,7 @@ Non-goals for v1: RemoteApp (RAIL), USB redirection other than SPICE's, gaming/l
 | SSH | libssh | SSH, SFTP, port forwarding |
 | Telnet, serial | own (sockets, termios) | RFC 854 options: window size, terminal type; raw TCP; serial line settings |
 | Terminal emulation | libvterm + own Qt terminal widget | Fallback: xterm.js in Qt WebEngine (heavy) |
-| Credentials | QtKeychain | Windows Credential Manager / macOS Keychain / libsecret |
+| Credentials | AES-256-GCM in `passwords.json` (OpenSSL), its key in QtKeychain | Windows Credential Manager / macOS Keychain / libsecret |
 | Connection file | JSON via `QJsonDocument` | No extra dependency |
 | Connection properties | One schema table per protocol (`src/core/Properties.cpp`) | Drives the tabbed dialog, the JSON `options`, defaults and secrets (keychain `<id>/<property>`) |
 | Dependencies | **OS package managers**, no vcpkg/Conan | Linux: distro (dev), Flatpak (release) · Windows: MSYS2 UCRT64 · macOS: MacPorts (release), Homebrew (dev) |
@@ -122,7 +122,7 @@ Defined in `src/core/Session.h`:
 - RDP: certificate verification with trust-on-first-use store and a fingerprint dialog. Never auto-accept silently; the only exception is the per-connection "Always trust" opt-in (ticked on the prompt or under Security).
 - SSH: `known_hosts` handling via libssh, same TOFU dialog.
 - VNC: warn when the connection is unencrypted; offer "connect via SSH tunnel".
-- Passwords only in QtKeychain, never in the connection file.
+- Passwords only in `passwords.json`, encrypted, never in the connection file.
 
 ---
 
@@ -154,7 +154,7 @@ portal-mux/
     └── macos/
 ```
 
-Connection storage: one JSON file in `QStandardPaths::AppConfigLocation`, passwords referenced by key into QtKeychain.
+Connection storage: one JSON file in `QStandardPaths::AppConfigLocation`, passwords referenced by key into `passwords.json` (`secrets`).
 
 ---
 
@@ -234,6 +234,7 @@ Status on Linux, 2026-11-14. "verified" = tested end to end against the local te
 
 ### Phase 1 — RDP core
 - [x] ConnectionStore (JSON, atomic save, `.broken` backup on parse error) + QtKeychain passwords + connection dialog — verified
+- [x] **Master password** (`Secrets.cpp`, as spark-commander's): saved passwords are AES-256-GCM (OpenSSL; the entry's name as associated data) in `passwords.json` beside `portal-mux.conf`, owner-only. The key is PBKDF2-HMAC-SHA256 of the master password (600 000 rounds, random salt) and is kept in the keychain (`passwords-key`), so the master password is asked for only where that is missing (another computer, a reset keychain): reading a password then asks to unlock. The first password saved asks to choose one. Settings → Passwords: the count, Set/Change (re-encrypts) and Unlock. Keychain entries from before move in when read once there is a master password; writing or removing a password deletes its old entry. Verified on macOS 26 in Qt's test paths: first save, locked with a wrong then the right password, change, next start without a prompt.
 - [x] NLA/CredSSP and TLS login, certificate TOFU dialog (stored per host:port, changed-certificate warning) — verified
 - [x] "Always trust" per connection: a checkbox on the certificate prompt saves it to the connection (yes only); Security tab shows/undoes it; then unknown, mismatched and changed certificates (also the gateway's) are accepted without asking and stored — verified against freerdp-shadow-cli
 - [x] Dirty-rect rendering (GDI + GFX), keyboard (XT scancodes, Linux), mouse, remote cursor shapes — verified
@@ -257,7 +258,7 @@ Status on Linux, 2026-11-14. "verified" = tested end to end against the local te
 - [x] `TerminalView` (libvterm): 256/truecolor, bold/italic/underline, wide chars, scrollback, selection (primary + Ctrl+Shift+C/V), bracketed paste — verified
 - [x] Terminal mouse and extras: programs that ask for the mouse (mc, htop, vim) get clicks, drags and the wheel (libvterm encodes them in the mode they asked for); Shift+mouse still selects locally and Shift+right-click opens the menu; the wheel sends arrow keys to full-screen programs without mouse support (less, man), as Konsole; double-click selects a word (Konsole's word characters), triple-click a line; right-click menu Copy/Paste/Find; the title the shell sets goes to the tab tooltip and the window title; the bell marks a background tab (and the Active list) until it is shown and asks the taskbar for attention; Find (Ctrl+Shift+F) over scrollback and screen, case-insensitive, newest first, Enter older / Shift+Enter newer, wraps around. Mouse reporting is switched off when the session ends, so text can be selected again. Verified over SSH with mc (click, wheel, Quit button), less, double/triple click, find and title. Not done: Ctrl+click links, matches across wrapped lines, highlighting every match.
 - [x] SFTP browser: list, navigate, upload, download (atomic `.part` rename) — verified
-- [x] SSH tunnel / jump host for RDP, VNC, SPICE (stable local port per connection) — verified with RDP and VNC. The jump host is chosen from Settings → SSH Servers (its address, user, key, and its password from the keychain); an imported `[user@]host[:port]` still works, a removed server says so when connecting
+- [x] SSH tunnel / jump host for RDP, VNC, SPICE (stable local port per connection) — verified with RDP and VNC. The jump host is chosen from Settings → SSH Servers (its address, user, key, and its saved password); an imported `[user@]host[:port]` still works, a removed server says so when connecting
 
 ### Phase 4 — SPICE + Proxmox
 - [x] spice-client-glib session on its own GMainContext/GMainLoop thread — verified

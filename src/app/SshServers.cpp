@@ -229,7 +229,7 @@ void SshServersPage::edit(int row)
     password->setPlaceholderText(tr("Ask when connecting"));
     if (!adding && !passwords_.contains(s.id))
         secrets::read(sshServerSecret(s.id), password, [password](const QString& stored) {
-            if (!stored.isEmpty()) password->setPlaceholderText(tr("Stored in the keychain"));
+            if (!stored.isEmpty()) password->setPlaceholderText(tr("Saved"));
         });
     auto* keyFile = new QLineEdit(s.keyFile);
     keyFile->setPlaceholderText(tr("Empty = SSH agent and ~/.ssh default keys"));
@@ -320,7 +320,7 @@ void SshServersPage::apply()
         // qApp: OK closes the dialog
         secrets::write(sshServerSecret(it.key()), it.value(), qApp, [page = QPointer<SshServersPage>(this)](const QString& error) {
             if (!error.isEmpty())
-                QMessageBox::warning(page, tr("Keychain"), tr("The password could not be stored in the system keychain: %1").arg(error));
+                QMessageBox::warning(page, tr("Passwords"), tr("The password was not saved: %1").arg(error));
         });
     passwords_.clear();
     forgotten_.clear();

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/Secrets.h"
 #include "core/Connection.h"
 
 #include <QString>
@@ -9,7 +10,7 @@
 
 class QObject;
 
-// Saved connections in one JSON file; passwords live in the keychain
+// Saved connections in one JSON file; passwords are in secrets
 class ConnectionStore {
 public:
     explicit ConnectionStore(QString path) : path_(std::move(path)) {}
@@ -31,10 +32,3 @@ private:
 };
 
 const char* protocolName(rdc::Protocol p);
-
-namespace secrets {
-// `done` runs on the UI thread; empty = no password
-void read(const std::string& id, QObject* context, std::function<void(QString password)> done);
-void write(const std::string& id, const QString& password, QObject* context, std::function<void(QString error)> done);
-void remove(const std::string& id);
-} // namespace secrets

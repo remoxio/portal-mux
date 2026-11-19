@@ -16,13 +16,13 @@ Monochrome line icons for actions, protocols and VM states, unmodified, from
 https://github.com/tabler/tabler-icons/tree/v3.52.0/icons/outline. `LICENSE`: MIT. They draw with
 `currentColor`, which Portal Mux replaces with the theme's text colour (or a state colour) when it renders them.
 
-## lucide/: Lucide 1.62.0 (ISC; MIT for the chevrons)
+## lucide/: Lucide 1.62.0 (ISC; MIT for the chevrons and the lock)
 
 `network.svg`, `monitor-cog.svg` and `panels-top-left.svg` (the Connections, KVM Manager and Sessions views), `server.svg`
-(Settings → SSH Servers) and
+(Settings → SSH Servers), `lock.svg` (Settings → Passwords) and
 `chevron-down.svg`, `chevron-up.svg` (folding the Proxmox view's panels), unmodified, from
 https://github.com/lucide-icons/lucide/tree/1.62.0/icons. `LICENSE`: ISC, and MIT for its Feather-derived icons,
-the chevrons among them. Drawn with `currentColor` like the Tabler icons.
+the chevrons and the lock among them. Drawn with `currentColor` like the Tabler icons.
 
 ## breeze/, breeze-dark/: Breeze 6.32.0 (LGPL 3.0 or later), macOS only
 

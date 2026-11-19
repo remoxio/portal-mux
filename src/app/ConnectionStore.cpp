@@ -7,12 +7,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
-#include <QTimer>
 #include <QUuid>
 
-#include <qt6keychain/keychain.h>
 
-#include <memory>
 #include <utility>
 
 #include <algorithm>
@@ -119,7 +116,7 @@ const Connection* ConnectionStore::find(const std::string& id) const
 
 std::string ConnectionStore::upsert(Connection connection)
 {
-    connection.password.clear(); // secrets only in the keychain
+    connection.password.clear(); // in secrets
     for (const rdc::PropertyDef& d : rdc::properties(connection.protocol))
         if (d.kind == rdc::PropertyKind::Secret) connection.options.erase(d.key);
     if (connection.id.empty()) connection.id = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
@@ -136,46 +133,3 @@ void ConnectionStore::remove(const std::string& id)
 {
     std::erase_if(connections_, [&](const Connection& c) { return c.id == id; });
 }
-
-static const QString keychainService = QStringLiteral("portal-mux");
-
-namespace secrets {
-
-void read(const std::string& id, QObject* context, std::function<void(QString)> done)
-{
-    auto once = std::make_shared<std::function<void(QString)>>(std::move(done));
-    auto finish = [once](const QString& value) {
-        if (auto f = std::exchange(*once, nullptr)) f(value);
-    };
-    // a keychain that never answers (crashed, stuck) must not block connecting: then no stored password
-    QTimer::singleShot(20000, context, [finish] { finish({}); });
-    auto* job = new QKeychain::ReadPasswordJob(keychainService);
-    job->setAutoDelete(true);
-    job->setKey(QString::fromStdString(id));
-    QObject::connect(job, &QKeychain::Job::finished, context, [job, finish] {
-        finish(job->error() == QKeychain::NoError ? job->textData() : QString());
-    });
-    job->start();
-}
-
-void write(const std::string& id, const QString& password, QObject* context, std::function<void(QString)> done)
-{
-    auto* job = new QKeychain::WritePasswordJob(keychainService);
-    job->setAutoDelete(true);
-    job->setKey(QString::fromStdString(id));
-    job->setTextData(password);
-    QObject::connect(job, &QKeychain::Job::finished, context, [job, done = std::move(done)] {
-        done(job->error() == QKeychain::NoError ? QString() : job->errorString());
-    });
-    job->start();
-}
-
-void remove(const std::string& id)
-{
-    auto* job = new QKeychain::DeletePasswordJob(keychainService);
-    job->setAutoDelete(true);
-    job->setKey(QString::fromStdString(id));
-    job->start();
-}
-
-} // namespace secrets

@@ -300,7 +300,7 @@ void ProxmoxView::storeSecret(ProxmoxClient* client, const QString& secret)
     client->setSecret(secret);
     secrets::write(keychainKey(client->server().id), secret, this, [this](QString error) {
         if (!error.isEmpty())
-            QMessageBox::warning(this, tr("Keychain"), tr("The password could not be stored in the system keychain: %1").arg(error));
+            QMessageBox::warning(this, tr("Passwords"), tr("The password was not saved: %1").arg(error));
     });
 }
 
