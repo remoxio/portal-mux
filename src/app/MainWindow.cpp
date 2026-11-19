@@ -67,6 +67,7 @@
 #include <QProgressBar>
 #include <QProgressDialog>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSlider>
@@ -75,6 +76,7 @@
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QStyleHints>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTcpSocket>
@@ -115,6 +117,19 @@ static std::vector<std::string> secretKeys(rdc::Protocol protocol)
     for (const rdc::PropertyDef& d : rdc::properties(protocol))
         if (d.kind == rdc::PropertyKind::Secret) keys.push_back(d.key);
     return keys;
+}
+
+// Settings → Layout → Appearance; as the system unless chosen
+static void applyColorScheme(const QSettings* settings)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    const QString chosen = settings->value(QStringLiteral("appearance/colorScheme")).toString();
+    QGuiApplication::styleHints()->setColorScheme(chosen == QLatin1String("light")  ? Qt::ColorScheme::Light
+                                                  : chosen == QLatin1String("dark") ? Qt::ColorScheme::Dark
+                                                                                    : Qt::ColorScheme::Unknown);
+#else
+    Q_UNUSED(settings)
+#endif
 }
 
 static void readSecrets(QObject* context, Connection c, std::function<void(Connection)> done)
@@ -281,6 +296,7 @@ MainWindow::MainWindow(QWidget* parent)
     // before menuBar(): on macOS it creates the native window
     if (windowEffects::translucencyPossible()) setAttribute(Qt::WA_TranslucentBackground);
     if (QFont font; font.fromString(settings_->value(QStringLiteral("font/main")).toString())) QApplication::setFont(font);
+    applyColorScheme(settings_);
     resize(1280, 800);
     QDir().mkpath(configDir_);
 
@@ -961,7 +977,7 @@ void MainWindow::openSettings()
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Settings"));
     // the pages change settings at once, so they show; Cancel puts back these as last applied
-    const QStringList groups = {QStringLiteral("sidebar"), QStringLiteral("font"), QStringLiteral("sshServers")};
+    const QStringList groups = {QStringLiteral("appearance"), QStringLiteral("sidebar"), QStringLiteral("font"), QStringLiteral("sshServers")};
     auto current = [this, groups] {
         QMap<QString, QVariant> values;
         for (const QString& key : settings_->allKeys())
@@ -969,6 +985,26 @@ void MainWindow::openSettings()
         return values;
     };
     QMap<QString, QVariant> applied = current();
+
+    auto* appearance = new QGroupBox(tr("Appearance"));
+    auto* schemes = new QHBoxLayout(appearance);
+    const QString scheme = settings_->value(QStringLiteral("appearance/colorScheme")).toString();
+    for (const auto& [value, name] : std::initializer_list<std::pair<QString, QString>>{
+             {QString(), tr("As the system")}, {QStringLiteral("light"), tr("Light")}, {QStringLiteral("dark"), tr("Dark")}}) {
+        auto* radio = new QRadioButton(name);
+        radio->setChecked(scheme == value);
+        schemes->addWidget(radio);
+        connect(radio, &QRadioButton::toggled, &dialog, [this, value](bool on) {
+            if (!on) return;
+            if (value.isEmpty()) settings_->remove(QStringLiteral("appearance/colorScheme"));
+            else settings_->setValue(QStringLiteral("appearance/colorScheme"), value);
+            applyColorScheme(settings_);
+        });
+    }
+    schemes->addStretch();
+#if QT_VERSION < QT_VERSION_CHECK(6, 8, 0)
+    appearance->hide(); // Qt can't choose before 6.8
+#endif
 
     auto* sidebar = new QGroupBox(tr("Sidebar"));
     auto* box = new QVBoxLayout(sidebar);
@@ -985,14 +1021,13 @@ void MainWindow::openSettings()
         label->setBuddy(slider);
         auto* value = new QLabel(tr("%1%").arg(slider->value() * 5));
         value->setMinimumWidth(value->fontMetrics().horizontalAdvance(tr("%1%").arg(100)));
-        auto* blur = new QCheckBox(tr("Blur"));
-        blur->setToolTip(tr("Blur the desktop behind it"));
+        auto* blur = new QCheckBox(tr("Blur the desktop behind it"));
         blur->setChecked(sidebarBlur(expanded));
         blur->setEnabled(windowEffects::blurAvailable());
         grid->addWidget(label, row, 0);
         grid->addWidget(slider, row, 1);
         grid->addWidget(value, row, 2);
-        grid->addWidget(blur, row, 3);
+        grid->addWidget(blur, row + 1, 1, 1, 2);
         auto apply = [this, slider, blur, value, expanded] {
             value->setText(tr("%1%").arg(slider->value() * 5));
             settings_->setValue(expanded ? QStringLiteral("sidebar/opacity") : QStringLiteral("sidebar/collapsedOpacity"), slider->value() * 5);
@@ -1003,7 +1038,7 @@ void MainWindow::openSettings()
         connect(blur, &QCheckBox::toggled, &dialog, apply);
     };
     addMode(0, tr("Open"), tr("The icon column and the panel"), true);
-    addMode(1, tr("Collapsed"), tr("The icon column alone. A panel opened over the session with a click is always opaque."), false);
+    addMode(2, tr("Collapsed"), tr("The icon column alone. A panel opened over the session with a click is always opaque."), false);
     grid->setColumnStretch(1, 1);
     QString note;
     if (!testAttribute(Qt::WA_TranslucentBackground)) {
@@ -1114,7 +1149,7 @@ void MainWindow::openSettings()
         stack->addWidget(page);
         new QListWidgetItem(icons::lucide(icon), name, pages);
     };
-    addPage("panels-top-left", tr("Layout"), {sidebar});
+    addPage("panels-top-left", tr("Layout"), {appearance, sidebar});
     addPage("type", tr("Font"), {mainFont, sshFont});
     auto* sshServers = new SshServersPage(settings_);
     addPage("server", tr("SSH Servers"), {sshServers});
@@ -1138,6 +1173,7 @@ void MainWindow::openSettings()
     for (QObject* control : stack->findChildren<QObject*>()) {
         if (auto* slider = qobject_cast<QSlider*>(control)) connect(slider, &QSlider::valueChanged, &dialog, changed);
         if (auto* check = qobject_cast<QCheckBox*>(control)) connect(check, &QCheckBox::toggled, &dialog, changed);
+        if (auto* radio = qobject_cast<QRadioButton*>(control)) connect(radio, &QRadioButton::toggled, &dialog, changed);
         if (auto* combo = qobject_cast<QComboBox*>(control)) connect(combo, &QComboBox::currentTextChanged, &dialog, changed);
         if (auto* button = qobject_cast<QPushButton*>(control)) connect(button, &QPushButton::clicked, &dialog, changed);
     }
@@ -1165,6 +1201,7 @@ void MainWindow::openSettings()
     // Cancel, Escape or the close button
     for (const QString& group : groups) settings_->remove(group);
     for (auto it = applied.cbegin(); it != applied.cend(); ++it) settings_->setValue(it.key(), it.value());
+    applyColorScheme(settings_);
     applySidebar();
     QFont font = look::systemFont(QFontDatabase::GeneralFont);
     if (const QString saved = settings_->value(QStringLiteral("font/main")).toString(); !saved.isEmpty()) font.fromString(saved);
