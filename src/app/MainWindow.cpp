@@ -21,6 +21,9 @@
 #include "app/PageRail.h"
 #include "app/SftpView.h"
 #include "app/SshServers.h"
+#ifdef Q_OS_MACOS
+#include "app/TitleBar.h"
+#endif
 #include "app/WindowEffects.h"
 #include "core/Properties.h"
 #include "core/TestPatternSession.h"
@@ -113,6 +116,12 @@ static std::vector<std::string> secretKeys(rdc::Protocol protocol)
         if (d.kind == rdc::PropertyKind::Secret) keys.push_back(d.key);
     return keys;
 }
+
+#ifdef Q_OS_MACOS
+static constexpr bool lineAtTop = false; // the title bar is the window's top
+#else
+static constexpr bool lineAtTop = true;  // under the menu bar
+#endif
 
 static void readSecrets(QObject* context, Connection c, std::function<void(Connection)> done)
 {
@@ -269,6 +278,12 @@ MainWindow::MainWindow(QWidget* parent)
       settings_(new QSettings(configDir_ + QStringLiteral("/portal-mux.conf"), QSettings::IniFormat, this))
 {
     setWindowTitle(QStringLiteral("Portal Mux"));
+#ifdef Q_OS_MACOS
+    // the toolbar in the title bar, as spark-commander's
+    setWindowFlag(Qt::ExpandedClientAreaHint);
+    setWindowFlag(Qt::NoTitleBarBackgroundHint);
+    setAttribute(Qt::WA_ContentsMarginsRespectsSafeArea, false);
+#endif
     // before menuBar(): on macOS it creates the native window
     if (windowEffects::translucencyPossible()) setAttribute(Qt::WA_TranslucentBackground);
     if (QFont font; font.fromString(settings_->value(QStringLiteral("font/main")).toString())) QApplication::setFont(font);
@@ -405,9 +420,22 @@ MainWindow::MainWindow(QWidget* parent)
     sessionBar_ = new QToolBar(tr("Session"));
     sessionBar_->setMovable(false);
     sessionBar_->setFloatable(false);
+#ifdef Q_OS_MACOS
+    // icons in capsules, in the title bar
+    sessionBar_->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    sessionBar_->setProperty("capsules", true);
+    sessionBar_->addActions({fullScreenAction_, scaleAction_});
+    sessionBar_->addSeparator();
+    sessionBar_->addActions({screenshotAction_, clipboardAction_});
+    sessionBar_->addSeparator();
+    sessionBar_->addActions({grabKeysAction_, sendKeysMenu_->menuAction()});
+    sessionBar_->addSeparator();
+    sessionBar_->addAction(disconnectAction_);
+#else
     sessionBar_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     sessionBar_->addActions({fullScreenAction_, screenshotAction_, clipboardAction_, grabKeysAction_, sendKeysMenu_->menuAction(),
                              scaleAction_, disconnectAction_});
+#endif
     sessionBar_->installEventFilter(this);
     sessionBar_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(sessionBar_, &QWidget::customContextMenuRequested, this, [this](const QPoint& at) {
@@ -556,7 +584,12 @@ MainWindow::MainWindow(QWidget* parent)
     workLayout->setContentsMargins(0, 0, 0, 0);
     workLayout->setSpacing(0);
     tabs_ = new QTabWidget;
+#ifdef Q_OS_MACOS
+    titleBar_ = new TitleBar(sessionBar_);
+    workLayout->addWidget(titleBar_);
+#else
     workLayout->addWidget(sessionBar_);
+#endif
     workLayout->addWidget(tabs_, 1);
     workLayout->addWidget(status_);
     tabs_->setTabsClosable(true);
@@ -580,7 +613,7 @@ MainWindow::MainWindow(QWidget* parent)
     splitter->setSizes({panelWidth_, 1000});
     auto* central = new QWidget;
     auto* centralLayout = new QHBoxLayout(central);
-    centralLayout->setContentsMargins(0, 1, 0, 0);
+    centralLayout->setContentsMargins(0, lineAtTop ? 1 : 0, 0, 0);
     centralLayout->setSpacing(0); // meet: one rectangle to blur
     centralLayout->addWidget(activityBar_);
     centralLayout->addWidget(splitter, 1);
@@ -595,6 +628,13 @@ MainWindow::MainWindow(QWidget* parent)
             w->setAutoFillBackground(true);
         views_->installEventFilter(this);
     }
+#ifdef Q_OS_MACOS
+    sessionBar_->setAutoFillBackground(false); // over the title bar's capsules
+    views_->installEventFilter(this); // its top moves the window
+    windowEffects::unifiedTitleBar(this);
+    connect(windowHandle(), &QWindow::safeAreaMarginsChanged, this, &MainWindow::applyTitleBar);
+    applyTitleBar();
+#endif
 
     connect(newAction, &QAction::triggered, this, [this] {
         Connection c;
@@ -1138,9 +1178,18 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     if (event->type() == QEvent::Paint && ((watched == views_ && sidebarMode_ == SidebarMode::Overlay) ||
                                            (watched == activityBar_ && sidebarMode_ == SidebarMode::Collapsed))) {
         auto* w = static_cast<QWidget*>(watched);
-        QPainter(w).fillRect(w->width() - 1, 0, 1, w->height(), lineColor());
+        const int top = w->contentsMargins().top(); // below the title bar's strip (macOS)
+        QPainter(w).fillRect(w->width() - 1, top, 1, w->height() - top, lineColor());
     }
-    if (watched == sessionBar_ && event->type() == QEvent::Resize) {
+#ifdef Q_OS_MACOS
+    // the title bar's height at their top moves the window
+    if ((watched == activityBar_ || watched == views_) &&
+        (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick) &&
+        static_cast<QMouseEvent*>(event)->position().y() < static_cast<QWidget*>(watched)->contentsMargins().top() &&
+        TitleBar::movesWindow(this, event))
+        return true;
+#endif
+    if (watched == sessionBar_ && event->type() == QEvent::Resize && sessionBar_->property("capsules").isNull()) {
         if (sessionBar_->toolButtonStyle() == Qt::ToolButtonTextBesideIcon) sessionBarTextWidth_ = sessionBar_->sizeHint().width();
         const auto style = sessionBar_->width() >= sessionBarTextWidth_ ? Qt::ToolButtonTextBesideIcon : Qt::ToolButtonIconOnly;
         if (style != sessionBar_->toolButtonStyle()) sessionBar_->setToolButtonStyle(style);
@@ -2116,8 +2165,20 @@ void MainWindow::setSidebar(SidebarMode mode, int view)
     if (docking) splitter_->setSizes({panelWidth_, std::max(0, splitter_->width() - panelWidth_ - splitter_->handleWidth())});
 }
 
+void MainWindow::applyTitleBar()
+{
+#ifdef Q_OS_MACOS
+    const int top = isFullScreen() || !windowHandle() ? 0 : windowEffects::titleBarHeight(this);
+    titleBar_->setFixedHeight(top);
+    titleBar_->setVisible(top > 0);
+    activityBar_->setContentsMargins(0, top, 0, 0);
+    views_->setContentsMargins(0, top, views_->parentWidget() == splitter_ ? 0 : 1, 0);
+#endif
+}
+
 void MainWindow::applySidebarLayout()
 {
+    applyTitleBar();
     const bool shown = sidebarAction_->isChecked() && !isFullScreen();
     activityBar_->setVisible(shown);
     views_->setVisible(shown && sidebarMode_ != SidebarMode::Collapsed);
@@ -2145,7 +2206,7 @@ void MainWindow::applyFullScreen(bool on)
              {tabs_->tabBar(), tabBarAction_}})
         w->setVisible(!on && shown->isChecked());
     if (on && sidebarMode_ == SidebarMode::Overlay) setSidebar(SidebarMode::Collapsed, -1);
-    centralWidget()->layout()->setContentsMargins(0, on ? 0 : 1, 0, 0);
+    centralWidget()->layout()->setContentsMargins(0, on || !lineAtTop ? 0 : 1, 0, 0);
     applySidebarLayout();
     fullScreenAction_->setText(on ? tr("Leave &Full Screen Mode") : tr("Switch to &Full Screen Mode"));
     fullScreenAction_->setIconText(on ? tr("Leave Full Screen") : tr("Full Screen"));

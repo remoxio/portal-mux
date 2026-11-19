@@ -98,6 +98,7 @@ private:
     void showView(QWidget* page, bool on); // its activity bar icon; a hidden view's open panel switches to the first
     void setSidebar(SidebarMode mode, int view);
     void applySidebarLayout();
+    void applyTitleBar();
     void openTestPattern();
     std::string knownHostsFile() const;
     void addSessionTab(QWidget* page, const QString& name, const QString& toolTip, int at = -1);
@@ -134,6 +135,7 @@ private:
     QAction *toolBarAction_, *sidebarAction_, *statusBarAction_, *tabBarAction_;
     QAction *usbAction_, *detachAction_, *relaunchAction_;
     QList<QAction*> viewToggles_; // View menu: Show KVM Manager, Show Proxmox
+    QWidget* titleBar_ = nullptr; // macOS
     QToolBar* sessionBar_;
     int sessionBarTextWidth_ = 0;
     QStatusBar* status_;
