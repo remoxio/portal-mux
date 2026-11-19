@@ -6,8 +6,7 @@
 class QAudioSink;
 class QIODevice;
 
-// Plays 16-bit PCM; UI thread only
-// Queue capped at ~120 ms: excess is dropped, so latency can't grow
+// 16-bit PCM, UI thread only; beyond ~120 ms queued is dropped
 class AudioPlayer : public QObject {
 public:
     explicit AudioPlayer(QObject* parent = nullptr) : QObject(parent) {}

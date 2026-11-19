@@ -46,7 +46,7 @@ bool TitleBar::eventFilter(QObject* watched, QEvent* event)
     return QWidget::eventFilter(watched, event);
 }
 
-// a capsule behind each run of buttons between separators, as spark-commander's toolbar
+// a capsule behind each run of buttons between separators
 void TitleBar::paintEvent(QPaintEvent*)
 {
     if (!bar_->isVisible()) return;

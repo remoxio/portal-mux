@@ -20,8 +20,7 @@ struct ForwardSpec {
 // OpenSSH's -L/-R form: [bind:]port:host:hostport, separated by commas or spaces; IPv6 in brackets
 std::vector<ForwardSpec> parseForwards(char kind, const std::string& text, std::string* error);
 
-// Port forwards over one SSH session, pumped from that session's worker thread.
-// shortcut: blocking writes to local sockets and blocking connects for -R; a slow peer stalls the others
+// Port forwards on the session's worker; shortcut: blocking local I/O, a slow peer stalls the rest
 class SshForwards {
 public:
     explicit SshForwards(ssh_session session) : session_(session) {}

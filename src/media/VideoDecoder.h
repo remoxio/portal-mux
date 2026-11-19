@@ -14,8 +14,7 @@ struct SwsContext;
 
 namespace rdc {
 
-// H.264/H.265/AV1 to BGRX; on the GPU (VA-API, D3D11VA, VideoToolbox) when asked and it can, else in software.
-// shortcut: GPU frames are copied back and converted on the CPU; zero-copy needs GL/Vulkan rendering
+// H.264/H.265/AV1 to BGRX, on the GPU when possible; shortcut: frames copied back to the CPU
 class VideoDecoder {
 public:
     enum class Codec { H264, H265, AV1 };

@@ -21,8 +21,7 @@ struct SessionListener {
     virtual ~SessionListener() = default;
     virtual void onStateChanged(SessionState state) = 0;
     virtual void onError(std::string message) = 0;
-    // Blocking; false if declined or the view is closing.
-    // `always`: non-null offers "Always trust".
+    // Blocking; false if declined or closing; `always` offers "Always trust"
     virtual bool askTrust(const std::string& title, const std::string& details, bool* always = nullptr) = 0;
     virtual bool askCredentials(const std::string& prompt, Credentials& creds) = 0;
 };
@@ -56,12 +55,12 @@ public:
     virtual void sendClipboardText(const std::string& text) = 0;
     virtual void sendClipboardUris(const std::string&) {}
     virtual void pullClipboard() {} // hosts that can't announce a change: asked when the user leaves the view
-    // copies local files to the remote side (SPICE: into the guest via its agent); `done` gets an error or nothing, on the UI thread
+    // local files to the remote side (SPICE: via its agent); `done`: an error or empty, UI thread
     virtual void relaunchAtSize(int, int) {} // Moonlight: quits the app on the host and starts it again at this size
     virtual bool canSendFiles() const { return false; }
     virtual void sendFiles(const std::vector<std::string>&, std::function<void(std::string)> done) { done("Not supported."); }
     virtual void syncLocks(uint8_t /*LockKey bits*/) {}
-    // this computer's USB devices the remote side can take (SPICE); `done` gets an error or nothing, on the UI thread
+    // local USB devices the remote side can take (SPICE); `done` as above
     struct UsbDevice {
         std::string id, name;
         bool redirected = false;

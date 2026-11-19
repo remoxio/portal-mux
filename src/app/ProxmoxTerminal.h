@@ -11,7 +11,7 @@
 class QSslCertificate;
 class QWebSocket;
 
-// A container's console as Proxmox's xterm.js gets it: termproxy behind the vncwebsocket. UI thread.
+// A container's console: termproxy behind the vncwebsocket, as xterm.js. UI thread.
 class ProxmoxTerminal : public rdc::TerminalSession {
 public:
     ProxmoxTerminal(rdc::TerminalListener& listener, QNetworkRequest request, QByteArray login,

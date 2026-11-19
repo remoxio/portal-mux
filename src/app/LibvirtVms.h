@@ -12,8 +12,7 @@
 #include <string>
 #include <vector>
 
-// Every VM of one libvirt host (this computer, or qemu+ssh://), with state and, while running, its display;
-// kept current from libvirt events, reconnected every 5 s while unreachable
+// One libvirt host's VMs, kept current by its events; reconnects every 5 s
 class LibvirtVms : public QObject {
     Q_OBJECT
 

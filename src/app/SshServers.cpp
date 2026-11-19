@@ -32,7 +32,7 @@ namespace {
 
 constexpr int iconSize = 20, gap = 10, maxRows = 8;
 
-// the name over user@host, as System Settings' rows; a line between rows
+// name over user@host, a line between rows
 class ServerRow : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;

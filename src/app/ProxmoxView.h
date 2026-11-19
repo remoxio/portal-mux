@@ -18,7 +18,7 @@ class QLabel;
 class QSettings;
 class QTreeWidget;
 
-// Sidebar view: Proxmox servers, their guests, power actions and consoles (SPICE, else VNC over websocket; containers: a terminal).
+// Sidebar view: Proxmox servers, their guests, power actions and consoles
 class ProxmoxView : public QWidget {
     Q_OBJECT
 

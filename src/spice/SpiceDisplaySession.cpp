@@ -377,7 +377,7 @@ void SpiceDisplaySession::sendPointer(const PointerEvent& e)
     if (main_) g_object_get(main_, "mouse-mode", &mode, nullptr);
     if (mode == SPICE_MOUSE_MODE_CLIENT)
         spice_inputs_channel_position(inputs_, e.x, e.y, 0, e.buttons);
-    else // shortcut: server mode without pointer grab, relative motion from absolute positions drifts
+    else // shortcut: server mouse mode drifts without a grab
         spice_inputs_channel_motion(inputs_, e.x - lastPointer_.x, e.y - lastPointer_.y, e.buttons);
     static constexpr std::pair<uint8_t, int> buttons[] = {{PointerEvent::Left, SPICE_MOUSE_BUTTON_LEFT},
                                                           {PointerEvent::Middle, SPICE_MOUSE_BUTTON_MIDDLE},

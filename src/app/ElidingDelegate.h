@@ -4,7 +4,7 @@
 #include <QPainter>
 #include <QStyledItemDelegate>
 
-// Qt's item layout moves the text a pixel when it fits; measuring it as never fitting keeps rows aligned.
+// measured as never fitting: Qt shifts fitting text a pixel
 class ElidingDelegate : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;

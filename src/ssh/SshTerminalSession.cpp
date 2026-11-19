@@ -92,7 +92,7 @@ void SshTerminalSession::run(std::stop_token stop)
             ssh_send_ignore(ssh_->session(), "keepalive"); // keeps NAT/firewall state alive
             lastTraffic = std::chrono::steady_clock::now();
         }
-        // shortcut: 20 ms poll timeout also polls typed input, use ssh_event + wake fd if idle wakeups matter
+        // shortcut: typed input waits for the 20 ms poll
         std::vector<pollfd> fds{{ssh_get_fd(ssh_->session()), POLLIN, 0}};
         forwards.addPollFds(fds);
         poll(fds.data(), fds.size(), 20);

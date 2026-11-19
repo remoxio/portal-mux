@@ -2,8 +2,7 @@
 
 class QWidget;
 
-// Desktop shortcuts (Alt+Tab, Meta) reach `widget`
-// X11: grab; Wayland: shortcuts-inhibit protocol; else app-only
+// Desktop shortcuts reach `widget`: X11 grab, Wayland shortcuts-inhibit, else app-only
 namespace keyboardGrab {
 
 void set(QWidget* widget, bool on);

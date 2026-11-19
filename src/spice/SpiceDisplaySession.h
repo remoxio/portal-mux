@@ -13,8 +13,7 @@ typedef struct _GObject GObject;
 
 namespace rdc {
 
-// Runs on the GLib main-context thread: spice-glib emits signals there, a worker would race.
-// Clipboard and resize need spice-vdagent in the guest.
+// On the GLib main-context thread, where spice-glib signals; clipboard and resize need spice-vdagent
 class SpiceDisplaySession : public DisplaySession {
 public:
     SpiceDisplaySession(DisplayListener& listener, Connection connection);

@@ -10,8 +10,7 @@
 
 namespace rdc {
 
-// Telnet, raw TCP (Telnet with "raw") or a serial port (host = its device) into the terminal.
-// shortcut: POSIX only, like the local terminal; add Winsock and Win32 COM ports with the Windows port
+// Telnet, raw TCP or a serial port (host = its device); shortcut: POSIX only
 class StreamTerminalSession : public TerminalSession {
 public:
     StreamTerminalSession(TerminalListener& listener, Connection connection);

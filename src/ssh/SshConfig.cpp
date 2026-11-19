@@ -105,7 +105,7 @@ void parse(const fs::path& file, const fs::path& base, std::vector<Block>& block
                 std::vector<fs::path> files;
                 if (name.find_first_of("*?") == std::string::npos) {
                     files.push_back(pattern);
-                } else { // shortcut: wildcards only in the last path component, until config.d nests
+                } else { // shortcut: wildcards in the last component only
                     std::error_code ec;
                     for (const auto& entry : fs::directory_iterator(pattern.parent_path(), ec))
                         if (entry.is_regular_file() && glob(name.c_str(), entry.path().filename().string().c_str()))

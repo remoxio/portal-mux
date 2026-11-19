@@ -92,7 +92,7 @@ public:
             proxy()->drawItemText(p, tab->rect, flags, tab->palette, tab->state & State_Enabled, tab->text, QPalette::WindowText);
             return;
         }
-        // one segment of the bar: the track, rounded at the bar's ends, the selected one darker, lines between the others
+        // a segment: rounded at the bar's ends, the selected one darker
         const QRectF r = tab->rect;
         const bool first = tab->position == QStyleOptionTab::Beginning || tab->position == QStyleOptionTab::OnlyOneTab;
         const bool last = tab->position == QStyleOptionTab::End || tab->position == QStyleOptionTab::OnlyOneTab;
@@ -115,7 +115,7 @@ public:
         p->restore();
     }
 
-    // group boxes as spark-commander's: a small title over a rounded, faintly filled card
+    // group boxes as cards: a small title over a rounded box
     void drawCards(ComplexControl control, const QStyleOptionComplex* option, QPainter* p, const QWidget* widget) const
     {
         const auto* box = qstyleoption_cast<const QStyleOptionGroupBox*>(option);
@@ -295,7 +295,7 @@ void applyMac()
 {
     QApplication::setStyle(new MacStyle(QApplication::style()->name()));
     QCoreApplication::installTranslator(new AppMenuText(qApp));
-    // Breeze from the resources, as on the other systems; Qt alone maps a few names to SF Symbols
+    // bundled Breeze, as on the other systems
     QIcon::setThemeSearchPaths({QStringLiteral(":/icons")});
     auto follow = [] {
         QIcon::setThemeName(QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark ? QStringLiteral("breeze-dark")

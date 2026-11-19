@@ -14,16 +14,13 @@ class QWidget;
 
 namespace prompts {
 
-// For SessionListener::askTrust / askCredentials. UI thread only.
-// `always`: "Always trust" checkbox, set on yes
+// SessionListener's askTrust / askCredentials, UI thread; `always`: an "Always trust" box
 bool trust(QWidget* parent, const QString& title, const QString& details, bool* always = nullptr);
 bool credentials(QWidget* parent, const QString& prompt, rdc::Credentials& creds);
 
 } // namespace prompts
 
-// Blocks a worker thread on a UI-thread dialog.
-// close() wakes waiters with "declined", so views can join the worker.
-// `declined` runs on the UI thread when the user cancels.
+// Blocks a worker on a UI-thread dialog; close() wakes waiters as declined
 class PromptBridge {
 public:
     PromptBridge(QObject* context, std::function<void()> declined) : context_(context), declined_(std::move(declined)) {}

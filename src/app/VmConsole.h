@@ -10,8 +10,7 @@ class QLabel;
 class QStackedLayout;
 class QToolButton;
 
-// A VM's console tab: its display while running, a power button while off.
-// Follows the VM: reopens the display on start (or a new port), removes it on stop.
+// A VM's console tab: its display while running, a power button while off
 class VmConsole : public QWidget {
     Q_OBJECT
 

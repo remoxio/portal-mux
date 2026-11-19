@@ -16,8 +16,7 @@
 
 namespace rdc {
 
-// Moonlight game streaming (moonlight-common-c); its global state allows one stream at a time.
-// Sunshine on Windows needs the ViGEmBus driver for controllers.
+// Moonlight game streaming; one at a time (moonlight-common-c's global state)
 class MoonlightSession : public DisplaySession {
 public:
     MoonlightSession(DisplayListener& listener, Connection connection, std::string identityDir);

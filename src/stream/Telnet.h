@@ -9,7 +9,7 @@ namespace rdc::telnet {
 enum : unsigned char { SE = 240, SB = 250, WILL = 251, WONT = 252, DO = 253, DONT = 254, IAC = 255 };
 enum : unsigned char { Binary = 0, Echo = 1, SuppressGoAhead = 3, TerminalType = 24, WindowSize = 31 };
 
-// RFC 854 framing and option negotiation; we offer window size and terminal type, accept echo, SGA and binary.
+// RFC 854 framing and options: window size, terminal type, echo, SGA, binary
 class Protocol {
 public:
     explicit Protocol(std::string terminalType) : terminalType_(std::move(terminalType)) {}

@@ -778,8 +778,7 @@ bool RdpSession::applySettings()
     return ok;
 }
 
-// network dropped: reconnect with the server's cookie
-// not client_auto_reconnect_ex(): 3.33 sleeps up to 20x the connect timeout, stalling tab close
+// dropped: reconnect with the cookie; client_auto_reconnect_ex() stalls closing the tab
 bool RdpSession::reconnect(std::stop_token stop)
 {
     const UINT32 info = freerdp_error_info(context_->instance);

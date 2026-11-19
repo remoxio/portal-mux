@@ -35,6 +35,6 @@ std::optional<uint8_t> localLockKeys()
     if (!found) return std::nullopt;
     return locks;
 #else
-    return std::nullopt; // shortcut: macOS has no Num Lock; read Caps Lock via CGEventSource if needed
+    return std::nullopt; // shortcut: no Num Lock on macOS
 #endif
 }

@@ -5,8 +5,7 @@
 class QHBoxLayout;
 class QToolBar;
 
-// macOS: the window's top, opaque, as ForkLift's title bar: `bar` in it, clear of the traffic lights; its empty part
-// moves the window, a double-click zooms or minimises as the system's would
+// macOS: the title bar holding `bar`; empty space moves the window
 class TitleBar : public QWidget {
 public:
     explicit TitleBar(QToolBar* bar, QWidget* parent = nullptr);

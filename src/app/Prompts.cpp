@@ -15,8 +15,7 @@ namespace prompts {
 
 bool trust(QWidget* parent, const QString& title, const QString& details, bool* always)
 {
-    // Not QMessageBox: platform themes may activate the focused button on Enter.
-    // No is default and focused, Yes never takes focus (Alt+Y works).
+    // not QMessageBox: themes press the focused button on Enter; No is the default, Yes never focused
     QDialog dialog(parent);
     dialog.setWindowTitle(QObject::tr("Security"));
     auto* icon = new QLabel;

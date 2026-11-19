@@ -256,7 +256,7 @@ private:
     std::function<void(DetachedWindow*)> reattach_;
 };
 
-// the focus window, or the window a focused menu belongs to; updated before focusWindowChanged, unlike activeWindow()
+// set before focusWindowChanged, unlike activeWindow()
 static DetachedWindow* activeDetached()
 {
     for (QWindow* w = QGuiApplication::focusWindow(); w; w = w->transientParent()) // menu → detached → main window
@@ -426,7 +426,7 @@ MainWindow::MainWindow(QWidget* parent)
     settings->addAction(QIcon::fromTheme(QStringLiteral("configure")), tr("&Settings…"), QKeySequence::Preferences, this,
                         &MainWindow::openSettings)
         ->setMenuRole(QAction::PreferencesRole);
-    // placeholder; ApplicationSpecificRole: in the app menu on macOS, where this menu then hides
+    // placeholder; in the app menu on macOS
     settings->addAction(QIcon::fromTheme(QStringLiteral("configure-shortcuts")), tr("S&hortcuts…"), this, [this] {
         QMessageBox::information(this, tr("Shortcuts"), tr("Configurable shortcuts are coming."));
     })->setMenuRole(QAction::ApplicationSpecificRole);
@@ -976,7 +976,7 @@ void MainWindow::openSettings()
 {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Settings"));
-    // the pages change settings at once, so they show; Cancel puts back these as last applied
+    // pages apply at once; Cancel restores these as last applied
     const QStringList groups = {QStringLiteral("appearance"), QStringLiteral("sidebar"), QStringLiteral("font"), QStringLiteral("sshServers")};
     auto current = [this, groups] {
         QMap<QString, QVariant> values;

@@ -347,8 +347,7 @@ void VncSession::run(std::stop_token stop)
     }
     bool failed = false;
     while (ok && !stop.stop_requested()) {
-        // shortcut: 10 ms input poll, use a wake pipe if idle wakeups matter
-        // buffered messages count too: WaitForMessage only checks the socket
+        // shortcut: 10 ms input poll; buffered messages count, WaitForMessage sees only the socket
         const int ready = c->buffered > 0 ? 1 : WaitForMessage(c, 10000);
         if (ready < 0 || (ready > 0 && !HandleRFBServerMessage(c))) {
             failed = true;

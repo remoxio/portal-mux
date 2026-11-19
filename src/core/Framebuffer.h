@@ -8,8 +8,7 @@
 
 namespace rdc {
 
-// Front buffer shared between a session worker and the UI.
-// 32-bit BGRX (0xFFRRGGBB); update() forces the 4th byte to 0xFF
+// Front buffer shared by a session worker and the UI; BGRX, update() sets alpha
 class Framebuffer {
 public:
     static constexpr int BytesPerPixel = 4;

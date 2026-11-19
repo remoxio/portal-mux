@@ -7,8 +7,7 @@
 
 namespace rdc {
 
-// Hosts of ~/.ssh/config as SSH connections, resolved the OpenSSH way (first value wins,
-// wildcard Host blocks contribute, Include followed, Match skipped).
+// ~/.ssh/config's hosts as connections, resolved as OpenSSH does (Match skipped)
 inline constexpr char kSshConfigIdPrefix[] = "ssh-config:";
 std::vector<Connection> readSshConfig(const std::string& path);
 

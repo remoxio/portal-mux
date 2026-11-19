@@ -12,8 +12,7 @@ class QListWidget;
 class QPushButton;
 class QSettings;
 
-// Settings → SSH Servers, as System Settings' lists: a card with a row per server, edited in a sheet. Saved in
-// portal-mux.conf ([sshServers]) at once; passwords go to the keychain on apply()
+// Settings → SSH Servers; passwords reach the keychain on apply()
 class SshServersPage : public QWidget {
     Q_OBJECT
 public:

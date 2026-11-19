@@ -8,8 +8,7 @@
 
 class QTreeView;
 
-// Folding panels instead of an indented tree: no indentation, group rows as headers (a band, their icon, name and a state word),
-// a chevron on the right of rows with children; VMs and nodes as GuestRows, other rows as dimmed text (hints)
+// Folding panels instead of an indented tree: header rows, chevrons on the right
 class PanelDelegate : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
@@ -28,8 +27,7 @@ private:
     bool afterDoubleClick_ = false;
 };
 
-// No indentation, animated folding (unless the desktop turns animations off; never from the keyboard); no fold on
-// double-click: the view's activation handler calls foldLater() for headers
+// No indentation, animated folding; headers fold through foldLater()
 void setUpPanels(QTreeView* view, PanelDelegate* delegate);
 // once the mouse button is up: a release after the fold ends its animation at once
 void foldLater(QTreeView* view, const QModelIndex& index);

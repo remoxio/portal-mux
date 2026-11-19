@@ -13,8 +13,7 @@ typedef struct ssh_session_struct* ssh_session;
 
 namespace rdc {
 
-// One libssh session shared by terminal, SFTP and tunnels.
-// Construct and abort() from any thread; open() and session() on the worker only.
+// One libssh session for terminal, SFTP and tunnels; open() and session() on the worker only
 class SshConnection {
 public:
     struct Params {

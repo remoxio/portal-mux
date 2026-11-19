@@ -18,7 +18,7 @@ uint32_t xtScancode(const QKeyEvent* event)
     const DWORD vk = GetVirtualKeyCodeFromKeycode(event->nativeScanCode(), WINPR_KEYCODE_TYPE_XKB);
     return GetVirtualScanCodeFromVirtualKeyCode(vk, WINPR_KBD_TYPE_IBM_ENHANCED);
 #elif defined(Q_OS_MACOS)
-    // nativeVirtualKey() is the key's code (kVK_*), as WinPR's table wants it; Command is the Windows key
+    // kVK_* codes, as WinPR's table wants; Command is the Windows key
     const DWORD vk = GetVirtualKeyCodeFromKeycode(event->nativeVirtualKey(), WINPR_KEYCODE_TYPE_APPLE);
     return GetVirtualScanCodeFromVirtualKeyCode(vk, WINPR_KBD_TYPE_IBM_ENHANCED);
 #else

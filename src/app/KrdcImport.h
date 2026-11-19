@@ -6,6 +6,5 @@
 
 #include <vector>
 
-// KRDC bookmarks (XBEL) and per-host settings (krdcrc) as connections.
-// Unbookmarked history goes to "KRDC history"; KWallet passwords aren't imported.
+// KRDC bookmarks, history and krdcrc settings as connections; no KWallet passwords
 std::vector<rdc::Connection> importKrdc(const QByteArray& bookmarksXml, const QByteArray& krdcrc);

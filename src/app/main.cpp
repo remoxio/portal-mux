@@ -92,7 +92,7 @@ int main(int argc, char* argv[])
 
     MainWindow window;
     window.show();
-    // shortcut: one window per start, hand addresses to a running instance (D-Bus/QLocalServer) if needed
+    // shortcut: no single instance yet
     for (const QString& address : parser.positionalArguments()) window.openAddress(address);
     return app.exec();
 }

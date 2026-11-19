@@ -12,8 +12,7 @@
 
 namespace rdc {
 
-// Android screen, audio and input via scrcpy's device server (pinned version).
-// Worker reads video; audio, control and server output have own threads.
+// Android via scrcpy's server: video on the worker, audio, control and output on their own threads
 class ScrcpySession : public DisplaySession {
 public:
     ScrcpySession(DisplayListener& listener, Connection connection, std::string serverPath);

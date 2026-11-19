@@ -9,7 +9,7 @@ class QPainter;
 class QStyleOptionViewItem;
 class QSize;
 
-// A VM, container or node row as the KVM Manager draws it: big icon with a state glyph, bold name, a detail line, CPU graph
+// A VM, container or node row: icon with its state, bold name, detail line, CPU graph
 struct GuestRow {
     const char* icon = "device-desktop"; // Tabler
     bool active = false;                 // the icon in the text colour, else dimmed

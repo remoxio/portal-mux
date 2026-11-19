@@ -11,7 +11,7 @@
 
 #include <utility>
 
-static constexpr int gutter = 22; // the chevrons' column; rows in a tree with headers keep it, so graphs and chevrons line up
+static constexpr int gutter = 22; // the chevrons' column, kept by every row
 
 static QRect chevronRect(const QRect& row) { return {row.right() - gutter + 1, row.center().y() - 8, 16, 16}; }
 
@@ -113,7 +113,7 @@ void setUpPanels(QTreeView* view, PanelDelegate* delegate)
     view->setItemDelegate(delegate);
     view->setIndentation(0);
     view->setRootIsDecorated(false);
-    view->setExpandsOnDoubleClick(false); // Qt's would fold before the release, which ends the animation: foldLater() instead
+    view->setExpandsOnDoubleClick(false); // Qt's folds before the release, cutting the animation
     view->setAnimated(view->style()->styleHint(QStyle::SH_Widget_Animation_Duration, nullptr, view) > 0); // 0: KDE's animations set to instant
     view->installEventFilter(new InstantKeys(view));
 }

@@ -8,8 +8,7 @@
 
 namespace rdc {
 
-// A shell on a pseudo-terminal: login shell, or "command" via /bin/sh.
-// shortcut: POSIX only, Windows needs ConPTY, add it with the Windows port
+// A login shell or "command" on a pty; shortcut: POSIX only, Windows needs ConPTY
 class LocalTerminalSession : public TerminalSession {
 public:
     LocalTerminalSession(TerminalListener& listener, Connection connection);

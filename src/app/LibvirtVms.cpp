@@ -57,8 +57,8 @@ static LibvirtVms::State stateOf(virDomainPtr d)
     }
 }
 
-// libvirt callbacks run on the UI thread (GLib default context); opening and control() run elsewhere
-// shortcut: listing and CPU samples of a remote host still query on the UI thread, move them off it for slow links
+// callbacks on the UI thread, open() and control() elsewhere
+// shortcut: a remote host's listing and CPU samples still block the UI thread
 struct LibvirtVms::Worker {
     LibvirtVms* owner;
     std::string uri;
@@ -281,8 +281,7 @@ void LibvirtVms::control(const std::string& uuid, Action action)
         return;
     }
     const QString name = QString::fromUtf8(virDomainGetName(dom));
-    // off the UI thread: saving writes memory to disk, a start can be slow
-    // libvirt connections are thread-safe; the domain keeps its connection alive
+    // off the UI thread (a save writes memory to disk); libvirt connections are thread-safe
     std::thread([dom, action, name, id = QString::fromStdString(uuid), self = QPointer<LibvirtVms>(this)] {
         int rc = -1;
         switch (action) {
