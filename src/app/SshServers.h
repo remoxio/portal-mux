@@ -7,13 +7,13 @@
 
 #include <vector>
 
-class QComboBox;
-class QFormLayout;
-class QLineEdit;
+class QLabel;
 class QListWidget;
+class QPushButton;
 class QSettings;
 
-// Settings → SSH Servers: saved in portal-mux.conf ([sshServers]) as edited; passwords go to the keychain on apply()
+// Settings → SSH Servers, as System Settings' lists: a card with a row per server, edited in a sheet. Saved in
+// portal-mux.conf ([sshServers]) at once; passwords go to the keychain on apply()
 class SshServersPage : public QWidget {
     Q_OBJECT
 public:
@@ -28,28 +28,20 @@ signals:
 private:
     struct Server {
         QString id, name, host, user, auth = QStringLiteral("password"), keyFile;
+        QString summary() const; // user@host · authentication
     };
 
     void load();
     void save() const;
-    void show(int row);
-    void showAuth();
-    void add();
+    void showList();
+    void edit(int row); // -1: a new one
     void remove();
-    Server* current();
 
     QSettings* settings_;
     std::vector<Server> servers_;
-    QString shownId_;                 // whose password the field holds
     QMap<QString, QString> passwords_; // typed, by server id
     QStringList forgotten_;           // removed servers' ids
     QListWidget* list_;
-    QWidget* editor_;
-    QFormLayout* form_;
-    QLineEdit* host_;
-    QLineEdit* user_;
-    QComboBox* auth_;
-    QLineEdit* password_;
-    QLineEdit* keyFile_;
-    QWidget* keyRow_;
+    QLabel* empty_;
+    QPushButton *edit_, *remove_;
 };
