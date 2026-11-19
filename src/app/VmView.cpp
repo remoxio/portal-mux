@@ -165,7 +165,7 @@ VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings
     connect(tree_, &QTreeWidget::currentItemChanged, this, &VmView::updateActions);
 
     const char* testUri = std::getenv("PORTAL_MUX_LIBVIRT_URI"); // test:///<file>: fake VMs for UI tests
-#ifdef _WIN32
+#if defined(_WIN32) || defined(Q_OS_MACOS)
     local_ = testUri && *testUri;
 #endif
     if (local_) addHost(tr("This computer"), testUri && *testUri ? testUri : "qemu:///system");
