@@ -102,6 +102,7 @@ qt_add_executable(portal-mux WIN32 MACOSX_BUNDLE
     src/app/Look.cpp
     src/app/MainWindow.cpp
     src/app/MonitorWindow.cpp
+    src/app/PageRail.cpp
     src/app/PanelTree.cpp
     src/app/Prompts.cpp
     src/app/Proxmox.cpp
@@ -110,6 +111,7 @@ qt_add_executable(portal-mux WIN32 MACOSX_BUNDLE
     src/app/ProxmoxView.cpp
     src/app/RemoteView.cpp
     src/app/SftpView.cpp
+    src/app/SshServers.cpp
     src/app/WebSocketTunnel.cpp
     src/app/WindowEffects.cpp
     src/terminal/TerminalView.cpp

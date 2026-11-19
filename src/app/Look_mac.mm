@@ -3,6 +3,7 @@
 #include <QComboBox>
 #include <QFocusFrame>
 #include <QFormLayout>
+#include <QGroupBox>
 #include <QLineEdit>
 #include <QPainter>
 #include <QPainterPath>
@@ -33,6 +34,9 @@ public:
     {
         if (metric == PM_TabBarTabOverlap && tabView(widget)) return 0;
         if (metric == PM_TabBarBaseOverlap && tabView(widget)) return tabHeight / 2; // the bar sits on the pane's edge
+        if ((metric == PM_LayoutLeftMargin || metric == PM_LayoutTopMargin || metric == PM_LayoutRightMargin || metric == PM_LayoutBottomMargin) &&
+            card(widget))
+            return 0; // the card's own padding
         return QProxyStyle::pixelMetric(metric, option, widget);
     }
 
@@ -104,6 +108,48 @@ public:
         p->restore();
     }
 
+    // group boxes as spark-commander's: a small title over a rounded, faintly filled card
+    void drawComplexControl(ComplexControl control, const QStyleOptionComplex* option, QPainter* p, const QWidget* widget) const override
+    {
+        const auto* box = qstyleoption_cast<const QStyleOptionGroupBox*>(option);
+        if (control != CC_GroupBox || !box || !card(widget)) return QProxyStyle::drawComplexControl(control, option, p, widget);
+        QColor ink = box->palette.color(QPalette::WindowText);
+        ink.setAlphaF(0.03);
+        p->save();
+        p->setRenderHint(QPainter::Antialiasing);
+        p->setPen(Qt::NoPen);
+        p->setBrush(ink);
+        p->drawRoundedRect(QRectF(subControlRect(control, option, SC_GroupBoxFrame, widget)), 12, 12);
+        p->setFont(titleFont(widget));
+        proxy()->drawItemText(p, subControlRect(control, option, SC_GroupBoxLabel, widget), Qt::AlignLeft | Qt::AlignVCenter | Qt::TextHideMnemonic,
+                              box->palette, box->state & State_Enabled, box->text, QPalette::WindowText);
+        p->restore();
+    }
+
+    QRect subElementRect(SubElement element, const QStyleOption* option, const QWidget* widget) const override
+    {
+        if (element == SE_GroupBoxLayoutItem && card(widget)) return option->rect; // Qt's leaves the title out, so it crowds what is above
+        return QProxyStyle::subElementRect(element, option, widget);
+    }
+
+    QRect subControlRect(ComplexControl control, const QStyleOptionComplex* option, SubControl sc, const QWidget* widget) const override
+    {
+        const auto* box = qstyleoption_cast<const QStyleOptionGroupBox*>(option);
+        if (control != CC_GroupBox || !box || !card(widget)) return QProxyStyle::subControlRect(control, option, sc, widget);
+        const int title = box->text.isEmpty() ? 0 : QFontMetrics(titleFont(widget)).height();
+        const QRect frame = box->rect.adjusted(0, title ? title + 6 : 0, 0, 0);
+        switch (sc) {
+        case SC_GroupBoxLabel:
+            return QRect(box->rect.left() + 10, box->rect.top(), box->rect.width() - 10, title);
+        case SC_GroupBoxFrame:
+            return frame;
+        case SC_GroupBoxContents:
+            return frame.adjusted(16, 16, -16, -16);
+        default:
+            return QProxyStyle::subControlRect(control, option, sc, widget);
+        }
+    }
+
     void drawPrimitive(PrimitiveElement element, const QStyleOption* option, QPainter* p, const QWidget* widget) const override
     {
         if (element != PE_FrameTabWidget || !tabView(widget)) return QProxyStyle::drawPrimitive(element, option, p, widget);
@@ -171,6 +217,19 @@ private:
 
     static constexpr int tabHeight = 24;
     static constexpr qreal tabRadius = 7, fieldRadius = 6.5, ringWidth = 3.5;
+
+    static bool card(const QWidget* widget)
+    {
+        const auto* box = qobject_cast<const QGroupBox*>(widget);
+        return box && !box->isCheckable() && !box->isFlat();
+    }
+
+    static QFont titleFont(const QWidget* widget)
+    {
+        QFont font = widget ? widget->font() : QApplication::font();
+        font.setPointSizeF(font.pointSizeF() - 1);
+        return font;
+    }
 
     // a QTabWidget's tabs on top: AppKit's tab view; document mode stays Qt's
     static bool tabView(const QWidget* widget)

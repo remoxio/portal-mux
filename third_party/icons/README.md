@@ -18,7 +18,8 @@ https://github.com/tabler/tabler-icons/tree/v3.52.0/icons/outline. `LICENSE`: MI
 
 ## lucide/: Lucide 1.62.0 (ISC; MIT for the chevrons)
 
-`network.svg`, `monitor-cog.svg` and `panels-top-left.svg` (the Connections, KVM Manager and Sessions views) and
+`network.svg`, `monitor-cog.svg` and `panels-top-left.svg` (the Connections, KVM Manager and Sessions views), `server.svg`
+(Settings → SSH Servers) and
 `chevron-down.svg`, `chevron-up.svg` (folding the Proxmox view's panels), unmodified, from
 https://github.com/lucide-icons/lucide/tree/1.62.0/icons. `LICENSE`: ISC, and MIT for its Feather-derived icons,
 the chevrons among them. Drawn with `currentColor` like the Tabler icons.

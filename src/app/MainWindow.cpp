@@ -18,7 +18,9 @@
 #include "app/VmView.h"
 #endif
 #include "app/RemoteView.h"
+#include "app/PageRail.h"
 #include "app/SftpView.h"
+#include "app/SshServers.h"
 #include "app/WindowEffects.h"
 #include "core/Properties.h"
 #include "core/TestPatternSession.h"
@@ -911,6 +913,15 @@ void MainWindow::openSettings()
 {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Settings"));
+    // the pages change settings at once, so they show; Cancel puts back these as last applied
+    const QStringList groups = {QStringLiteral("sidebar"), QStringLiteral("font"), QStringLiteral("sshServers")};
+    auto current = [this, groups] {
+        QMap<QString, QVariant> values;
+        for (const QString& key : settings_->allKeys())
+            if (groups.contains(key.section(QLatin1Char('/'), 0, 0))) values[key] = settings_->value(key);
+        return values;
+    };
+    QMap<QString, QVariant> applied = current();
 
     auto* sidebar = new QGroupBox(tr("Sidebar"));
     auto* box = new QVBoxLayout(sidebar);
@@ -1039,33 +1050,80 @@ void MainWindow::openSettings()
         layout->setContentsMargins(0, 0, 0, 0);
         auto* title = new QLabel(name);
         QFont big; // family follows the window font
-        big.setBold(true);
+        big.setWeight(QFont::DemiBold);
+#ifdef Q_OS_MACOS
+        big.setPointSizeF(QApplication::font().pointSizeF() * 1.25);
+#else
         big.setPointSizeF(QApplication::font().pointSizeF() * 1.3);
+#endif
         title->setFont(big);
         layout->addWidget(title);
-        for (QWidget* section : sections) layout->addWidget(section);
-        layout->addStretch();
+        bool tall = false; // a section that takes the height
+        for (QWidget* section : sections) {
+            layout->addWidget(section);
+            tall = tall || section->sizePolicy().verticalPolicy() & QSizePolicy::ExpandFlag;
+        }
+        if (!tall) layout->addStretch();
         stack->addWidget(page);
         new QListWidgetItem(icons::lucide(icon), name, pages);
     };
     addPage("panels-top-left", tr("Layout"), {sidebar});
     addPage("type", tr("Font"), {mainFont, sshFont});
+    auto* sshServers = new SshServersPage(settings_);
+    addPage("server", tr("SSH Servers"), {sshServers});
     connect(pages, &QListWidget::currentRowChanged, stack, &QStackedWidget::setCurrentIndex);
     pages->setCurrentRow(0);
-    pages->setFrameShape(QFrame::NoFrame);
-    pages->viewport()->setAutoFillBackground(false);
-    pages->setFixedWidth(std::max(160, pages->sizeHintForColumn(0) + 32));
 
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    // OK, Cancel, Apply, as spark-commander's on every platform
+    auto* ok = new QPushButton(tr("OK"));
+    auto* cancel = new QPushButton(tr("Cancel"));
+    auto* apply = new QPushButton(tr("Apply"));
+    ok->setDefault(true);
+    auto* buttons = new QHBoxLayout;
+    buttons->addStretch();
+    for (QPushButton* b : {ok, cancel, apply}) {
+        b->setMinimumWidth(80);
+        buttons->addWidget(b);
+    }
+    auto changed = [&] { apply->setEnabled(current() != applied || sshServers->pending()); };
+    changed();
+    // every setting the pages write passes here
+    for (QObject* control : stack->findChildren<QObject*>()) {
+        if (auto* slider = qobject_cast<QSlider*>(control)) connect(slider, &QSlider::valueChanged, &dialog, changed);
+        if (auto* check = qobject_cast<QCheckBox*>(control)) connect(check, &QCheckBox::toggled, &dialog, changed);
+        if (auto* combo = qobject_cast<QComboBox*>(control)) connect(combo, &QComboBox::currentTextChanged, &dialog, changed);
+        if (auto* button = qobject_cast<QPushButton*>(control)) connect(button, &QPushButton::clicked, &dialog, changed);
+    }
+    connect(sshServers, &SshServersPage::changed, &dialog, changed);
+    auto commit = [&] {
+        sshServers->apply();
+        applied = current();
+        changed();
+    };
+    connect(apply, &QPushButton::clicked, &dialog, commit);
+    connect(ok, &QPushButton::clicked, &dialog, [&] {
+        commit();
+        dialog.accept();
+    });
+    connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
     auto* body = new QHBoxLayout;
-    body->addWidget(pages);
+    body->setSpacing(12);
+    body->addWidget(pageRail(pages));
     body->addWidget(stack, 1);
     auto* layout = new QVBoxLayout(&dialog);
     layout->addLayout(body, 1);
-    layout->addWidget(buttons);
-    dialog.resize(720, 520);
-    dialog.exec();
+    layout->addLayout(buttons);
+    dialog.resize(720, 640);
+    if (dialog.exec() == QDialog::Accepted || current() == applied) return;
+    // Cancel, Escape or the close button
+    for (const QString& group : groups) settings_->remove(group);
+    for (auto it = applied.cbegin(); it != applied.cend(); ++it) settings_->setValue(it.key(), it.value());
+    applySidebar();
+    QFont font = look::systemFont(QFontDatabase::GeneralFont);
+    if (const QString saved = settings_->value(QStringLiteral("font/main")).toString(); !saved.isEmpty()) font.fromString(saved);
+    QApplication::setFont(font);
+    for (int i = 0; i < tabs_->count(); ++i)
+        if (auto* terminal = qobject_cast<TerminalView*>(tabs_->widget(i))) configureTerminal(terminal);
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
