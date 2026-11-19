@@ -522,7 +522,11 @@ void RemoteView::sendKey(QKeyEvent* event, bool pressed)
 {
     if (!session_ || options_.viewOnly) return;
     if (!pressed && event->isAutoRepeat()) return; // X11 sends release+press on auto-repeat
+#ifdef Q_OS_MACOS
+    const uint32_t native = event->nativeVirtualKey(); // Qt leaves nativeScanCode() unset there
+#else
     const uint32_t native = event->nativeScanCode();
+#endif
     KeyEvent ke;
     if (pressed) {
         ke.scancode = xtScancode(event);
