@@ -9,44 +9,40 @@
 #include <QToolBar>
 #include <QWindow>
 
-#include <algorithm>
 #include <utility>
 
 TitleBar::TitleBar(QToolBar* bar, QWidget* parent) : QWidget(parent), bar_(bar), layout_(new QHBoxLayout(this))
 {
+    setAutoFillBackground(true);
     bar->installEventFilter(this); // its buttons move: the capsules follow
     layout_->setContentsMargins(0, 0, 8, 0);
     layout_->addWidget(bar, 0, Qt::AlignVCenter);
     layout_->addStretch();
 }
 
-bool TitleBar::movesWindow(QWidget* window, QEvent* event)
+bool TitleBar::movesWindow(QEvent* event)
 {
     if (event->type() == QEvent::MouseButtonDblClick && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
-        windowEffects::titleBarDoubleClicked(window);
+        windowEffects::titleBarDoubleClicked(window());
         return true;
     }
     if (event->type() == QEvent::MouseButtonPress && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton)
-        return window->windowHandle()->startSystemMove();
+        return window()->windowHandle()->startSystemMove();
     return false;
 }
 
 void TitleBar::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
-    // its place in the window changes with the sidebar and the splitter
-    for (QWidget* w = parentWidget(); w && !w->isWindow(); w = w->parentWidget()) w->installEventFilter(this);
-    installEventFilter(this);
-    placeBar();
+    QMargins margins = layout_->contentsMargins();
+    margins.setLeft(windowEffects::titleBarButtonsEnd(window()) + 12);
+    layout_->setContentsMargins(margins);
 }
 
 bool TitleBar::eventFilter(QObject* watched, QEvent* event)
 {
-    if (watched == bar_) {
-        if (event->type() == QEvent::LayoutRequest || event->type() == QEvent::Resize || event->type() == QEvent::Move) update();
-        return QWidget::eventFilter(watched, event);
-    }
-    if (event->type() == QEvent::Move || event->type() == QEvent::Resize || event->type() == QEvent::Show) placeBar();
+    if (watched == bar_ && (event->type() == QEvent::LayoutRequest || event->type() == QEvent::Resize || event->type() == QEvent::Move))
+        update();
     return QWidget::eventFilter(watched, event);
 }
 
@@ -77,21 +73,12 @@ void TitleBar::paintEvent(QPaintEvent*)
     capsule(run);
 }
 
-void TitleBar::placeBar()
-{
-    if (!window()->windowHandle()) return;
-    const int clear = windowEffects::titleBarButtonsEnd(window()) + 12 - mapTo(window(), QPoint()).x();
-    QMargins margins = layout_->contentsMargins();
-    margins.setLeft(std::max(8, clear));
-    if (margins != layout_->contentsMargins()) layout_->setContentsMargins(margins);
-}
-
 void TitleBar::mousePressEvent(QMouseEvent* event)
 {
-    if (!movesWindow(window(), event)) QWidget::mousePressEvent(event);
+    if (!movesWindow(event)) QWidget::mousePressEvent(event);
 }
 
 void TitleBar::mouseDoubleClickEvent(QMouseEvent* event)
 {
-    if (!movesWindow(window(), event)) QWidget::mouseDoubleClickEvent(event);
+    if (!movesWindow(event)) QWidget::mouseDoubleClickEvent(event);
 }

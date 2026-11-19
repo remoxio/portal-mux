@@ -122,6 +122,7 @@ private:
     QSplitter* splitter_;
     ActivityBar* activityBar_;
     QStackedWidget* views_;
+    QWidget* body_; // the activity bar and the splitter: the central widget but for macOS's title bar
     SidebarMode sidebarMode_ = SidebarMode::Docked;
     int panelWidth_ = 300;
     QTreeWidget* tree_;

@@ -5,14 +5,11 @@
 class QHBoxLayout;
 class QToolBar;
 
-// macOS: the work area's top as the window's title bar, as spark-commander's: `bar` in it, clear of the traffic
-// lights; its empty part moves the window, a double-click zooms or minimises as the system's would
+// macOS: the window's top, opaque, as ForkLift's title bar: `bar` in it, clear of the traffic lights; its empty part
+// moves the window, a double-click zooms or minimises as the system's would
 class TitleBar : public QWidget {
 public:
     explicit TitleBar(QToolBar* bar, QWidget* parent = nullptr);
-
-    // A press there moves the window; true if it did
-    static bool movesWindow(QWidget* window, QEvent* event);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -22,7 +19,7 @@ protected:
     void paintEvent(QPaintEvent* event) override;
 
 private:
-    void placeBar();
+    bool movesWindow(QEvent* event);
 
     QToolBar* bar_;
     QHBoxLayout* layout_;
