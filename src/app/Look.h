@@ -8,7 +8,7 @@ namespace look {
 
 // Windows: WinUI's fonts; elsewhere Qt's
 QFont systemFont(QFontDatabase::SystemFont kind);
-// Windows: WinUI's sizes, spacing and fonts
+// Windows: WinUI's sizes, spacing and fonts; macOS: AppKit's tab view, field sizes and spacing
 void apply();
 
 } // namespace look

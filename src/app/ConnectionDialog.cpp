@@ -184,7 +184,11 @@ void ConnectionDialog::buildPropertyTabs(const std::map<std::string, std::string
         }
         if (!d.tip.empty()) field->setToolTip(tr(d.tip.c_str()));
         if (d.kind == PropertyKind::Bool)
+#ifdef Q_OS_MACOS
+            form->addRow(static_cast<QWidget*>(nullptr), field); // in the fields' column, as AppKit's forms
+#else
             form->addRow(field);
+#endif
         else
             form->addRow(label + QLatin1Char(':'), field);
         if (form == generalForm_) generalRows_.push_back(field);
