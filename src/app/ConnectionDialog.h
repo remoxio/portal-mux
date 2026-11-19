@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/SshServers.h"
 #include "core/Connection.h"
 
 #include <QDialog>
@@ -17,7 +18,8 @@ class ConnectionDialog : public QDialog {
     Q_OBJECT
 
 public:
-    ConnectionDialog(const rdc::Connection& connection, const QStringList& groups, QWidget* parent = nullptr);
+    ConnectionDialog(const rdc::Connection& connection, const QStringList& groups, std::vector<SshServer> sshServers,
+                     QWidget* parent = nullptr);
 
     rdc::Connection connection() const;
     // Typed secrets by property key; "" = connection password
@@ -29,6 +31,7 @@ private:
     rdc::Protocol protocol() const;
 
     rdc::Connection original_;
+    std::vector<SshServer> sshServers_; // the SSH tunnel's choices
     QTabWidget* tabs_;
     QFormLayout* generalForm_;
     QLineEdit *name_, *host_, *username_, *password_;

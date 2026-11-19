@@ -80,6 +80,7 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTcpSocket>
+#include <QUuid>
 #include <QToolBar>
 #include <QToolButton>
 #include <QTimer>
@@ -132,24 +133,27 @@ static void applyColorScheme(const QSettings* settings)
 #endif
 }
 
-static void readSecrets(QObject* context, Connection c, std::function<void(Connection)> done)
+// also the password of the tunnel's SSH server, as the "tunnel.password" option
+static void readSecrets(QObject* context, QSettings* settings, Connection c, std::function<void(Connection)> done)
 {
     struct State {
         Connection c;
-        std::vector<std::string> keys;
+        std::vector<std::pair<std::string, std::string>> sources; // keychain name, option ("": the password)
         size_t next = 0;
         std::function<void(Connection)> done;
         std::function<void()> step;
     };
     auto state = std::make_shared<State>();
-    state->keys = secretKeys(c.protocol);
+    for (const std::string& key : secretKeys(c.protocol)) state->sources.emplace_back(keychainKey(c.id, key), key);
+    if (const auto via = findSshServer(settings, QString::fromStdString(c.option("tunnel"))); via && via->auth == QLatin1String("password"))
+        state->sources.emplace_back(sshServerSecret(via->id), "tunnel.password");
     state->c = std::move(c);
     state->done = std::move(done);
     state->step = [context, weak = std::weak_ptr<State>(state)] { // weak: no self-reference cycle
         const auto s = weak.lock();
-        if (s->next == s->keys.size()) return s->done(s->c);
-        const std::string key = s->keys[s->next++];
-        secrets::read(keychainKey(s->c.id, key), context, [s, key](QString value) {
+        if (s->next == s->sources.size()) return s->done(s->c);
+        const auto [name, key] = s->sources[s->next++];
+        secrets::read(name, context, [s, key](QString value) {
             if (!value.isEmpty()) // nothing stored: keep libvirt's display password
                 (key.empty() ? s->c.password : s->c.options[key]) = value.toStdString();
             s->step();
@@ -682,7 +686,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(sftpAction_, &QAction::triggered, this, [this] {
         const Connection* found = findConnection(selectedId());
         if (!found) return;
-        readSecrets(this, *found, [this](Connection c) {
+        readSecrets(this, settings_, *found, [this](Connection c) {
             auto* view = new SftpView(rdc::SshConnection::fromConnection(c, knownHostsFile()));
             view->setProperty("protocol", QStringLiteral("SFTP"));
             view->setProperty("address", QString::fromStdString(c.username.empty() ? c.host : c.username + "@" + c.host));
@@ -1304,7 +1308,7 @@ void MainWindow::editConnection(Connection connection)
         if (!c.group.empty() && !groups.contains(QString::fromStdString(c.group))) groups << QString::fromStdString(c.group);
     groups.sort();
 
-    ConnectionDialog dialog(connection, groups, this);
+    ConnectionDialog dialog(connection, groups, loadSshServers(settings_), this);
     if (dialog.exec() != QDialog::Accepted) return;
     const std::string id = store_.upsert(dialog.connection());
     if (!saveStore()) return;
@@ -1384,7 +1388,7 @@ void MainWindow::connectTo(const std::string& id)
                 if (RemoteView* view = currentView()) view->setFocus();
                 return;
             }
-    readSecrets(this, *found, [this](Connection c) { startSession(c); });
+    readSecrets(this, settings_, *found, [this](Connection c) { startSession(c); });
 }
 
 bool MainWindow::openAddress(const QString& text, Protocol fallback)
@@ -1661,9 +1665,21 @@ QScrollArea* MainWindow::createDisplay(const Connection& c)
         options.desktopSize = box.size();
     }
     std::unique_ptr<rdc::SshTunnel> tunnel;
-    if (!c.option("tunnel").empty()) {
-        rdc::SshConnection::Params jump = rdc::SshTunnel::parse(c.option("tunnel"));
-        jump.keyFile = c.option("tunnel.keyFile");
+    if (const QString via = QString::fromStdString(c.option("tunnel")); !via.isEmpty()) {
+        rdc::SshConnection::Params jump;
+        if (const auto server = findSshServer(settings_, via)) {
+            const QString spec = server->user.isEmpty() ? server->host : server->user + QLatin1Char('@') + server->host;
+            jump = rdc::SshTunnel::parse(spec.toStdString());
+            if (server->auth == QLatin1String("publicKey")) jump.keyFile = server->keyFile.toStdString();
+            jump.password = c.option("tunnel.password");
+        } else if (QUuid::fromString(via).isNull()) { // imported [user@]host[:port]
+            jump = rdc::SshTunnel::parse(c.option("tunnel"));
+            jump.keyFile = c.option("tunnel.keyFile");
+        } else {
+            QMessageBox::warning(this, tr("SSH tunnel"), tr("This connection's SSH server was removed in Settings. Choose another with Edit."));
+            delete scroll;
+            return nullptr;
+        }
         jump.knownHostsFile = knownHostsFile();
         tunnel = std::make_unique<rdc::SshTunnel>(*view, jump, c.host, c.effectivePort());
         // same local port: stable host:port for RDP's cert store

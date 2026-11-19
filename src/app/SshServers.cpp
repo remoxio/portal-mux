@@ -26,7 +26,7 @@
 
 #include <algorithm>
 
-static std::string keychainKey(const QString& id) { return "ssh-server/" + id.toStdString(); }
+std::string sshServerSecret(const QString& id) { return "ssh-server/" + id.toStdString(); }
 
 namespace {
 
@@ -93,10 +93,36 @@ public:
 
 } // namespace
 
-QString SshServersPage::Server::summary() const
+QString SshServer::summary() const
 {
     const QString where = user.isEmpty() ? host : user + QLatin1Char('@') + host;
-    return where + QStringLiteral(" · ") + (auth == QLatin1String("publicKey") ? tr("Public key") : tr("Password"));
+    return where + QStringLiteral(" · ") + (auth == QLatin1String("publicKey") ? SshServersPage::tr("Public key") : SshServersPage::tr("Password"));
+}
+
+std::vector<SshServer> loadSshServers(QSettings* settings)
+{
+    std::vector<SshServer> servers;
+    const int n = settings->beginReadArray(QStringLiteral("sshServers"));
+    for (int i = 0; i < n; ++i) {
+        settings->setArrayIndex(i);
+        SshServer s;
+        s.id = settings->value(QStringLiteral("id")).toString();
+        s.name = settings->value(QStringLiteral("name")).toString();
+        s.host = settings->value(QStringLiteral("host")).toString();
+        s.user = settings->value(QStringLiteral("user")).toString();
+        s.auth = settings->value(QStringLiteral("auth"), s.auth).toString();
+        s.keyFile = settings->value(QStringLiteral("keyFile")).toString();
+        if (!s.id.isEmpty()) servers.push_back(s);
+    }
+    settings->endArray();
+    return servers;
+}
+
+std::optional<SshServer> findSshServer(QSettings* settings, const QString& id)
+{
+    for (const SshServer& s : loadSshServers(settings))
+        if (s.id == id) return s;
+    return std::nullopt;
 }
 
 SshServersPage::SshServersPage(QSettings* settings, QWidget* parent) : QWidget(parent), settings_(settings)
@@ -140,26 +166,9 @@ SshServersPage::SshServersPage(QSettings* settings, QWidget* parent) : QWidget(p
     connect(add, &QPushButton::clicked, this, [this] { edit(-1); });
     connect(remove_, &QPushButton::clicked, this, &SshServersPage::remove);
 
-    load();
+    servers_ = loadSshServers(settings_);
     showList();
     list_->setCurrentRow(servers_.empty() ? -1 : 0);
-}
-
-void SshServersPage::load()
-{
-    const int n = settings_->beginReadArray(QStringLiteral("sshServers"));
-    for (int i = 0; i < n; ++i) {
-        settings_->setArrayIndex(i);
-        Server s;
-        s.id = settings_->value(QStringLiteral("id")).toString();
-        s.name = settings_->value(QStringLiteral("name")).toString();
-        s.host = settings_->value(QStringLiteral("host")).toString();
-        s.user = settings_->value(QStringLiteral("user")).toString();
-        s.auth = settings_->value(QStringLiteral("auth"), s.auth).toString();
-        s.keyFile = settings_->value(QStringLiteral("keyFile")).toString();
-        if (!s.id.isEmpty()) servers_.push_back(s);
-    }
-    settings_->endArray();
 }
 
 void SshServersPage::save() const
@@ -167,7 +176,7 @@ void SshServersPage::save() const
     settings_->remove(QStringLiteral("sshServers"));
     settings_->beginWriteArray(QStringLiteral("sshServers"), int(servers_.size()));
     for (int i = 0; i < int(servers_.size()); ++i) {
-        const Server& s = servers_[i];
+        const SshServer& s = servers_[i];
         settings_->setArrayIndex(i);
         settings_->setValue(QStringLiteral("id"), s.id);
         settings_->setValue(QStringLiteral("name"), s.name);
@@ -183,7 +192,7 @@ void SshServersPage::showList()
 {
     const int row = list_->currentRow();
     list_->clear();
-    for (const Server& s : servers_) (new QListWidgetItem(icons::lucide("server"), s.name, list_))->setData(Qt::UserRole, s.summary());
+    for (const SshServer& s : servers_) (new QListWidgetItem(icons::lucide("server"), s.name, list_))->setData(Qt::UserRole, s.summary());
     const int rows = std::min(int(servers_.size()), maxRows); // more scroll
     list_->setFixedHeight(rows ? rows * list_->sizeHintForRow(0) : 0);
     list_->setVisible(rows);
@@ -194,7 +203,7 @@ void SshServersPage::showList()
 void SshServersPage::edit(int row)
 {
     const bool adding = row < 0 || row >= int(servers_.size());
-    Server s;
+    SshServer s;
     if (adding) s.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     else s = servers_[row];
 
@@ -219,7 +228,7 @@ void SshServersPage::edit(int row)
     password->setEchoMode(QLineEdit::Password);
     password->setPlaceholderText(tr("Ask when connecting"));
     if (!adding && !passwords_.contains(s.id))
-        secrets::read(keychainKey(s.id), password, [password](const QString& stored) {
+        secrets::read(sshServerSecret(s.id), password, [password](const QString& stored) {
             if (!stored.isEmpty()) password->setPlaceholderText(tr("Stored in the keychain"));
         });
     auto* keyFile = new QLineEdit(s.keyFile);
@@ -290,7 +299,7 @@ void SshServersPage::remove()
 {
     const int row = list_->currentRow();
     if (row < 0 || row >= int(servers_.size())) return;
-    const Server& s = servers_[row];
+    const SshServer& s = servers_[row];
     QMessageBox box(QMessageBox::Question, tr("Remove SSH Server"), tr("Remove \"%1\"? Its saved password goes too.").arg(s.name),
                     QMessageBox::Yes | QMessageBox::No, this);
     box.setDefaultButton(QMessageBox::No);
@@ -306,10 +315,10 @@ void SshServersPage::remove()
 
 void SshServersPage::apply()
 {
-    for (const QString& id : std::as_const(forgotten_)) secrets::remove(keychainKey(id));
+    for (const QString& id : std::as_const(forgotten_)) secrets::remove(sshServerSecret(id));
     for (auto it = passwords_.cbegin(); it != passwords_.cend(); ++it)
         // qApp: OK closes the dialog
-        secrets::write(keychainKey(it.key()), it.value(), qApp, [page = QPointer<SshServersPage>(this)](const QString& error) {
+        secrets::write(sshServerSecret(it.key()), it.value(), qApp, [page = QPointer<SshServersPage>(this)](const QString& error) {
             if (!error.isEmpty())
                 QMessageBox::warning(page, tr("Keychain"), tr("The password could not be stored in the system keychain: %1").arg(error));
         });

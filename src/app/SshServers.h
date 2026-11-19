@@ -5,12 +5,23 @@
 #include <QStringList>
 #include <QWidget>
 
+#include <optional>
+#include <string>
 #include <vector>
 
 class QLabel;
 class QListWidget;
 class QPushButton;
 class QSettings;
+
+// A server of Settings → SSH Servers
+struct SshServer {
+    QString id, name, host, user, auth = QStringLiteral("password"), keyFile;
+    QString summary() const; // user@host · authentication
+};
+std::vector<SshServer> loadSshServers(QSettings* settings);
+std::optional<SshServer> findSshServer(QSettings* settings, const QString& id);
+std::string sshServerSecret(const QString& id); // its password's name in the keychain
 
 // Settings → SSH Servers; passwords reach the keychain on apply()
 class SshServersPage : public QWidget {
@@ -25,19 +36,13 @@ signals:
     void changed();
 
 private:
-    struct Server {
-        QString id, name, host, user, auth = QStringLiteral("password"), keyFile;
-        QString summary() const; // user@host · authentication
-    };
-
-    void load();
     void save() const;
     void showList();
     void edit(int row); // -1: a new one
     void remove();
 
     QSettings* settings_;
-    std::vector<Server> servers_;
+    std::vector<SshServer> servers_;
     QMap<QString, QString> passwords_; // typed, by server id
     QStringList forgotten_;           // removed servers' ids
     QListWidget* list_;

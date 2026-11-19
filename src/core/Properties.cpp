@@ -56,8 +56,9 @@ static void addDisplayCommon(std::vector<PropertyDef>& p, bool canResizeRemote)
 static std::vector<PropertyDef> tunnelCommon()
 {
     return {
-        {"tunnel", "Jump host", "SSH tunnel", K::Text, "", {}, 0, 0, "[user@]host[:port] — the connection goes through this SSH server; empty = direct"},
-        {"tunnel.keyFile", "Private key", "SSH tunnel", K::File, "", {}, 0, 0, "Empty = SSH agent and ~/.ssh default keys"},
+        // an SSH server of Settings (its id); an imported "[user@]host[:port]" still works
+        {"tunnel", "SSH server", "SSH tunnel", K::Choice, "", {{"", "None: connect directly"}}, 0, 0,
+         "The connection goes through this SSH server; servers are added in Settings → SSH Servers"},
     };
 }
 
