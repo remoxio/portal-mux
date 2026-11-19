@@ -30,6 +30,7 @@ public:
     void sendClipboardText(const std::string& text) override;
     void sendClipboardUris(const std::string& uriList) override;
     void resizeDesktop(int width, int height) override;
+    void setPixelRatio(double ratio) override;
     Framebuffer& framebuffer() override { return framebuffer_; }
 
     struct Callbacks;
@@ -57,6 +58,8 @@ private:
     bool alwaysTrust_ = false;
     PointerEvent lastPointer_;
     int wantWidth_ = 1024, wantHeight_ = 768;
+    double pixelRatio_ = 1;
+    int sentScale_ = 0;
     DispClientContext* disp_ = nullptr;
     bool dispReady_ = false;
 

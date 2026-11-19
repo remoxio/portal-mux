@@ -418,6 +418,7 @@ void RemoteView::requestDesktopSize()
 {
     if (!session_ || !parentWidget()) return;
     const QSize size = options_.desktopSize.isValid() ? options_.desktopSize : parentWidget()->size() * devicePixelRatioF();
+    if (!options_.desktopSize.isValid()) session_->setPixelRatio(devicePixelRatioF()); // in this display's pixels: scaled as it
     if (size.width() > 0 && size.height() > 0) session_->resizeDesktop(size.width(), size.height());
 }
 

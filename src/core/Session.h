@@ -70,6 +70,7 @@ public:
     virtual std::vector<UsbDevice> usbDevices() { return {}; }
     virtual void redirectUsb(const std::string&, bool, std::function<void(std::string)> done) { done("Not supported"); }
     virtual void resizeDesktop(int width, int height) = 0; // no-op if the protocol can't
+    virtual void setPixelRatio(double) {}                  // RDP: the remote's scale is multiplied by it, as this display's
     // full state per change; a new index = plugged in
     virtual void sendGamepad(const GamepadState&) {}
     virtual Framebuffer& framebuffer() = 0;

@@ -239,7 +239,7 @@ Status on Linux, 2026-11-14. "verified" = tested end to end against the local te
 - [x] Dirty-rect rendering (GDI + GFX), keyboard (XT scancodes, Linux), mouse, remote cursor shapes — verified
 - [x] Keyboard layout sent to the server: detected from systemd-localed (`localectl` layout), per-connection override — verified
 - [x] Text clipboard both ways (UTF-8, CRLF↔LF) — verified
-- [x] Dynamic resolution (Display Control channel), initial size = tab size — verified; HiDPI 1:1 implemented, not tested on a HiDPI screen
+- [x] Dynamic resolution (Display Control channel), initial size = tab size — verified; HiDPI 1:1 implemented, not tested on a HiDPI screen. The desktop is in this display's pixels, so Display → Remote scale is relative to it: 100% = the size of its own apps, the server gets it times the device pixel ratio (200% on Retina), also in every layout sent on a resize or a move to another screen, and per monitor with Use all monitors; a fixed desktop size keeps the percentage as is. Verified on macOS against FreeRDP's sample server (desktopScale 200, deviceScale 180 at 3260×1752); not yet against Windows
 - [x] Drive redirection (`\\tsclient`) — verified read/write against Windows 10 and xrdp (full session)
 - [x] Server-side resolution changes (DesktopResize) — verified
 

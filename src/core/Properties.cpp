@@ -83,7 +83,9 @@ static std::vector<PropertyDef> rdpProperties()
         {"multimon", "Use all monitors", "Display", K::Bool, "false", {}, 0, 0,
          "The remote desktop spans this computer's monitors; Full Screen shows each part on its own monitor"},
         {"colorDepth", "Color depth", "Display", K::Choice, "32", {{"32", "32 bit"}, {"24", "24 bit"}, {"16", "16 bit"}, {"15", "15 bit"}, {"8", "8 bit"}}},
-        {"scale", "Remote scale (%)", "Display", K::Int, "100", {}, 100, 500, "Desktop and device scale factor sent to the server (HiDPI)"},
+        {"scale", "Remote scale (%)", "Display", K::Int, "100", {}, 50, 500,
+         "Size of the remote's text and icons; 100 = as here (the server gets 200% on a Retina display); "
+         "with a fixed desktop size, the server's own"},
         {"connectionType", "Connection type", "Experience", K::Choice, "auto",
          {{"auto", "Detect automatically"}, {"lan", "LAN"}, {"broadband-high", "High-speed broadband"}, {"wan", "WAN"},
           {"broadband-low", "Low-speed broadband"}, {"satellite", "Satellite"}, {"modem", "Modem"}, {"custom", "Custom (options below)"}}},

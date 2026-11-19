@@ -27,6 +27,7 @@
 #include <cstring>
 #include <filesystem>
 #include <climits>
+#include <cmath>
 #include <sstream>
 
 namespace rdc {
@@ -581,6 +582,14 @@ void RdpSession::resizeDesktop(int width, int height)
     });
 }
 
+void RdpSession::setPixelRatio(double ratio)
+{
+    post([this, ratio] {
+        pixelRatio_ = ratio;
+        sendLayout();
+    });
+}
+
 void RdpSession::handlePointer(const PointerEvent& e)
 {
     rdpInput* input = context_->input;
@@ -617,33 +626,40 @@ void RdpSession::announceClipboard()
     (void)cliprdr_->ClientFormatList(cliprdr_, &list);
 }
 
+// the setting is relative to this display: 100 = the size of its own apps
+static int desktopScale(int setting, double pixelRatio) { return std::clamp(int(std::lround(setting * pixelRatio)), 100, 500); }
+
+static UINT32 deviceScale(int desktopScale) { return desktopScale >= 180 ? 180 : desktopScale >= 140 ? 140 : 100; } // spec allows only these
+
 void RdpSession::sendLayout()
 {
     if (!dispReady_ || !disp_ || !connected_) return;
     rdpGdi* gdi = context_->gdi;
-    if (gdi && gdi->width == wantWidth_ && gdi->height == wantHeight_) return;
+    const int scale = desktopScale(connection_.number("scale"), pixelRatio_);
+    if (gdi && gdi->width == wantWidth_ && gdi->height == wantHeight_ && scale == sentScale_) return;
     DISPLAY_CONTROL_MONITOR_LAYOUT monitor{};
     monitor.Flags = DISPLAY_CONTROL_MONITOR_PRIMARY;
     monitor.Width = UINT32(wantWidth_);
     monitor.Height = UINT32(wantHeight_);
-    monitor.DesktopScaleFactor = 100;
-    monitor.DeviceScaleFactor = 100;
-    (void)disp_->SendMonitorLayout(disp_, 1, &monitor);
+    monitor.DesktopScaleFactor = UINT32(scale);
+    monitor.DeviceScaleFactor = deviceScale(scale);
+    if (disp_->SendMonitorLayout(disp_, 1, &monitor) == CHANNEL_RC_OK) sentScale_ = scale;
 }
 
-// "x,y,width,height,primary;…" in this computer's pixels, from MainWindow's screens
-static std::vector<rdpMonitor> parseMonitors(const std::string& text)
+// "x,y,width,height,primary,pixel ratio %;…" in this computer's pixels, from MainWindow's screens
+static std::vector<rdpMonitor> parseMonitors(const std::string& text, int scale)
 {
     std::vector<rdpMonitor> monitors;
     std::stringstream list(text);
     for (std::string item; std::getline(list, item, ';');) {
         rdpMonitor m{};
-        int primary = 0;
-        if (std::sscanf(item.c_str(), "%d,%d,%d,%d,%d", &m.x, &m.y, &m.width, &m.height, &primary) != 5 || m.width <= 0 || m.height <= 0)
+        int primary = 0, ratio = 100;
+        if (std::sscanf(item.c_str(), "%d,%d,%d,%d,%d,%d", &m.x, &m.y, &m.width, &m.height, &primary, &ratio) < 5 || m.width <= 0 ||
+            m.height <= 0)
             continue;
         m.is_primary = primary ? 1 : 0;
-        m.attributes.desktopScaleFactor = 100;
-        m.attributes.deviceScaleFactor = 100;
+        m.attributes.desktopScaleFactor = UINT32(desktopScale(scale, ratio / 100.0));
+        m.attributes.deviceScaleFactor = deviceScale(int(m.attributes.desktopScaleFactor));
         monitors.push_back(m);
     }
     if (monitors.size() < 2) monitors.clear();
@@ -660,17 +676,18 @@ bool RdpSession::applySettings()
     auto setBool = [&](FreeRDP_Settings_Keys_Bool key, bool v) { return freerdp_settings_set_bool(st, key, v ? TRUE : FALSE); };
     auto setU32 = [&](FreeRDP_Settings_Keys_UInt32 key, int v) { return freerdp_settings_set_uint32(st, key, UINT32(std::max(v, 0))); };
     const bool fixed = c.number("width") > 0 && c.number("height") > 0;
-    const std::vector<rdpMonitor> monitors = parseMonitors(c.option("monitors"));
+    const std::vector<rdpMonitor> monitors = parseMonitors(c.option("monitors"), c.number("scale"));
     const bool resize = monitors.empty() && (c.option("scaling") == "resize" || (c.option("scaling") == "scale" && !fixed));
     const std::string audio = c.option("audio");
-    const int scale = std::clamp(c.number("scale"), 100, 500);
+    const int scale = desktopScale(c.number("scale"), pixelRatio_);
+    sentScale_ = scale;
 
     bool ok = setString(FreeRDP_ServerHostname, c.host) && setU32(FreeRDP_ServerPort, c.effectivePort()) &&
               setString(FreeRDP_Username, c.username) && setString(FreeRDP_Password, c.password) &&
               setString(FreeRDP_Domain, c.option("domain")) &&
               setU32(FreeRDP_DesktopWidth, wantWidth_) && setU32(FreeRDP_DesktopHeight, wantHeight_) &&
               setU32(FreeRDP_ColorDepth, c.number("colorDepth")) && setU32(FreeRDP_DesktopScaleFactor, scale) &&
-              setU32(FreeRDP_DeviceScaleFactor, scale >= 180 ? 180 : scale >= 140 ? 140 : 100) && // spec allows only these
+              setU32(FreeRDP_DeviceScaleFactor, deviceScale(scale)) &&
               setBool(FreeRDP_SoftwareGdi, true) && setBool(FreeRDP_SupportDisplayControl, resize) &&
               setBool(FreeRDP_DynamicResolutionUpdate, resize) &&
               setBool(FreeRDP_SupportGraphicsPipeline, c.flag("gfx")) && setBool(FreeRDP_GfxH264, c.flag("h264")) &&
@@ -689,12 +706,16 @@ bool RdpSession::applySettings()
     if (ok && !monitors.empty()) { // the desktop spans this computer's monitors
         int left = INT32_MAX, top = INT32_MAX, right = INT32_MIN, bottom = INT32_MIN;
         for (const rdpMonitor& m : monitors) {
+            if (m.is_primary)
+                ok = ok && setU32(FreeRDP_DesktopScaleFactor, int(m.attributes.desktopScaleFactor)) &&
+                     setU32(FreeRDP_DeviceScaleFactor, int(m.attributes.deviceScaleFactor));
             left = std::min(left, m.x);
             top = std::min(top, m.y);
             right = std::max(right, m.x + m.width);
             bottom = std::max(bottom, m.y + m.height);
         }
-        ok = setBool(FreeRDP_UseMultimon, true) && setBool(FreeRDP_SupportMonitorLayoutPdu, true) &&
+        ok = ok && setBool(FreeRDP_UseMultimon, true) && setBool(FreeRDP_SupportMonitorLayoutPdu, true) &&
+             setBool(FreeRDP_HasMonitorAttributes, true) &&
              freerdp_settings_set_monitor_def_array_sorted(st, monitors.data(), monitors.size()) &&
              setU32(FreeRDP_DesktopWidth, right - left) && setU32(FreeRDP_DesktopHeight, bottom - top);
     }

@@ -1509,7 +1509,8 @@ QScrollArea* MainWindow::createDisplay(const Connection& c)
         QStringList defs, names;
         QVariantList parts;
         for (const auto& [screen, r] : screens) {
-            defs << QStringLiteral("%1,%2,%3,%4,%5").arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height()).arg(screen == QGuiApplication::primaryScreen());
+            defs << QStringLiteral("%1,%2,%3,%4,%5,%6").arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height())
+                        .arg(screen == QGuiApplication::primaryScreen()).arg(qRound(screen->devicePixelRatio() * 100));
             names << screen->name();
             parts << r.translated(-box.topLeft());
         }

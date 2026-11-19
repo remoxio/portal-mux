@@ -61,6 +61,7 @@ public:
     bool canSendFiles() const override { return inner_->canSendFiles(); }
     void sendFiles(const std::vector<std::string>& p, std::function<void(std::string)> done) override { inner_->sendFiles(p, std::move(done)); }
     void resizeDesktop(int w, int h) override { inner_->resizeDesktop(w, h); }
+    void setPixelRatio(double r) override { inner_->setPixelRatio(r); }
     void sendGamepad(const GamepadState& g) override { inner_->sendGamepad(g); }
     Framebuffer& framebuffer() override { return inner_->framebuffer(); }
 
