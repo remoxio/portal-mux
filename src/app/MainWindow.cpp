@@ -392,13 +392,10 @@ MainWindow::MainWindow(QWidget* parent)
     settings->addAction(QIcon::fromTheme(QStringLiteral("configure")), tr("&Settings…"), QKeySequence::Preferences, this,
                         &MainWindow::openSettings)
         ->setMenuRole(QAction::PreferencesRole);
-    // placeholder; ApplicationSpecificRole: in the app menu on macOS
+    // placeholder; ApplicationSpecificRole: in the app menu on macOS, where this menu then hides
     settings->addAction(QIcon::fromTheme(QStringLiteral("configure-shortcuts")), tr("S&hortcuts…"), this, [this] {
         QMessageBox::information(this, tr("Shortcuts"), tr("Configurable shortcuts are coming."));
     })->setMenuRole(QAction::ApplicationSpecificRole);
-#ifdef Q_OS_MACOS
-    settings->menuAction()->setVisible(false); // both items are in the app menu
-#endif
     QMenu* help = menuBar()->addMenu(tr("&Help"));
     help->addAction(tr("&About Portal Mux"), this, [this] { showAbout(this); })->setMenuRole(QAction::AboutRole);
 

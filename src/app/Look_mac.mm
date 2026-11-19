@@ -10,6 +10,7 @@
 #include <QStyleOption>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTranslator>
 
 #import <AppKit/AppKit.h>
 
@@ -180,10 +181,27 @@ private:
     }
 };
 
+// macOS 13 renamed it; Qt's app menu still says "Preferences..."
+class AppMenuText : public QTranslator {
+public:
+    using QTranslator::QTranslator;
+
+    QString translate(const char* context, const char* source, const char*, int) const override
+    {
+        return qstrcmp(context, "MAC_APPLICATION_MENU") == 0 && qstrcmp(source, "Preferences...") == 0 ? QStringLiteral("Settings…") : QString();
+    }
+
+    bool isEmpty() const override { return false; }
+};
+
 } // namespace
 
 namespace look {
 
-QStyle* macStyle(const QString& base) { return new MacStyle(base); }
+void applyMac()
+{
+    QApplication::setStyle(new MacStyle(QApplication::style()->name()));
+    QCoreApplication::installTranslator(new AppMenuText(qApp));
+}
 
 } // namespace look

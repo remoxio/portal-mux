@@ -281,7 +281,7 @@ private:
 namespace look {
 
 #ifdef Q_OS_MACOS
-QStyle* macStyle(const QString& base); // Look_mac.mm
+void applyMac(); // Look_mac.mm
 #endif
 
 QFont systemFont(QFontDatabase::SystemFont kind)
@@ -305,7 +305,7 @@ void apply()
     QApplication::setStyle(new WinUiStyle(QApplication::style()->name()));
     QApplication::setFont(systemFont(QFontDatabase::GeneralFont));
 #elif defined(Q_OS_MACOS)
-    QApplication::setStyle(macStyle(QApplication::style()->name()));
+    applyMac();
 #endif
 }
 
