@@ -71,6 +71,8 @@ private:
     void feed(const char* data, size_t len);
     void send(const char* data, size_t len);
     void paste(const QString& text);
+    void pasteClipboard();
+    bool clipboardImage() const; // to upload: an image without text, and a session that can
     void resizeTerminal();
     void updateScrollBar(bool stickToBottom);
     Line lineAt(int line) const;

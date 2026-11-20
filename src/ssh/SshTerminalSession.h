@@ -5,10 +5,13 @@
 #include "core/TaskQueue.h"
 #include "ssh/SshConnection.h"
 
+#include <atomic>
 #include <memory>
 #include <thread>
+#include <vector>
 
 typedef struct ssh_channel_struct* ssh_channel;
+typedef struct sftp_session_struct* sftp_session;
 
 namespace rdc {
 
@@ -21,9 +24,12 @@ public:
     void disconnect() override;
     void write(std::span<const std::byte> data) override;
     void resize(int cols, int rows) override;
+    bool canUpload() const override { return true; }
+    void upload(std::string data, std::string extension, std::function<void(std::string, std::string)> done) override;
 
 private:
     void run(std::stop_token stop);
+    std::string store(const std::string& data, const std::string& extension, std::string& error);
 
     TerminalListener& listener_;
     Connection connection_;
@@ -33,6 +39,9 @@ private:
     std::jthread worker_;
     ssh_channel channel_ = nullptr;
     int cols_ = 80, rows_ = 24;
+    sftp_session sftp_ = nullptr;
+    std::vector<std::string> uploads_; // removed when the session ends
+    std::atomic<bool> uploaded_ = false, finished_ = false;
 };
 
 } // namespace rdc

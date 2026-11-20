@@ -82,6 +82,12 @@ public:
     virtual void disconnect() = 0;
     virtual void write(std::span<const std::byte> data) = 0;
     virtual void resize(int cols, int rows) = 0;
+    // a file in a private folder on the remote side, removed when the session ends; done(path, error) on the worker
+    virtual bool canUpload() const { return false; }
+    virtual void upload(std::string /*data*/, std::string /*extension*/, std::function<void(std::string, std::string)> done)
+    {
+        done({}, "Not supported.");
+    }
 };
 
 } // namespace rdc

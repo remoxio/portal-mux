@@ -3,10 +3,17 @@
 #include "ssh/SshForwards.h"
 
 #include <libssh/libssh.h>
+#include <libssh/sftp.h>
 
 #include "core/Net.h"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <ctime>
+#include <fcntl.h>
+#include <random>
+#include <string_view>
 
 namespace rdc {
 
@@ -26,8 +33,77 @@ void SshTerminalSession::disconnect()
 {
     if (!worker_.joinable()) return;
     worker_.request_stop();
+    for (int i = 0; uploaded_ && !finished_ && i < 100; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(20)); // removes them
     ssh_->abort();
     worker_.join();
+}
+
+void SshTerminalSession::upload(std::string data, std::string extension, std::function<void(std::string, std::string)> done)
+{
+    tasks_.post([this, data = std::move(data), extension = std::move(extension), done = std::move(done)] {
+        std::string error;
+        std::string path = channel_ ? store(data, extension, error) : std::string();
+        if (!channel_) error = "Not connected.";
+        done(path, error);
+    });
+}
+
+// ~/.cache/portal-mux/paste/paste-<time>-<random><extension>, 0600; files there older than a day go
+std::string SshTerminalSession::store(const std::string& data, const std::string& extension, std::string& error)
+{
+    auto fail = [&](const std::string& what) {
+        error = what + ": " + (sftp_ ? "SFTP error " + std::to_string(sftp_get_error(sftp_)) + ", " : "") + ssh_->lastError();
+        return std::string();
+    };
+    if (!sftp_) {
+        sftp_ = sftp_new(ssh_->session());
+        if (!sftp_ || sftp_init(sftp_) != SSH_OK) {
+            const std::string message = fail("Could not start SFTP");
+            if (sftp_) sftp_free(sftp_);
+            sftp_ = nullptr;
+            return message;
+        }
+    }
+    char* home = sftp_canonicalize_path(sftp_, ".");
+    if (!home) return fail("No home folder");
+    std::string dir = home;
+    ssh_string_free_char(home);
+    for (const char* part : {"/.cache", "/portal-mux", "/paste"}) sftp_mkdir(sftp_, (dir += part).c_str(), 0700); // may exist
+    char stamp[32];
+    const std::time_t now = std::time(nullptr);
+    std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", std::localtime(&now));
+    char random[16];
+    std::snprintf(random, sizeof random, "%06x", unsigned(std::random_device{}() & 0xffffff));
+    const std::string path = dir + "/paste-" + stamp + "-" + random + extension;
+    sftp_file file = sftp_open(sftp_, path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (!file) return fail("Cannot create " + path);
+    bool written = true;
+    for (size_t at = 0; written && at < data.size();) {
+        const ssize_t n = sftp_write(file, data.data() + at, std::min<size_t>(data.size() - at, 32768));
+        written = n > 0;
+        at += written ? size_t(n) : 0;
+    }
+    sftp_close(file);
+    if (!written) {
+        sftp_unlink(sftp_, path.c_str());
+        return fail("Cannot write " + path);
+    }
+    uploads_.push_back(path);
+    uploaded_ = true;
+    if (sftp_attributes mine = sftp_stat(sftp_, path.c_str())) { // the server's clock
+        const uint64_t dayAgo = mine->mtime > 86400 ? uint64_t(mine->mtime) - 86400 : 0;
+        sftp_attributes_free(mine);
+        if (sftp_dir listing = sftp_opendir(sftp_, dir.c_str())) {
+            while (sftp_attributes a = sftp_readdir(sftp_, listing)) {
+                if (a->name && std::string_view(a->name).starts_with("paste-") && a->mtime < dayAgo)
+                    sftp_unlink(sftp_, (dir + "/" + a->name).c_str());
+                sftp_attributes_free(a);
+            }
+            sftp_closedir(listing);
+        }
+    }
+    // Windows' SFTP: /C:/Users/…
+    return path.size() > 3 && path[0] == '/' && std::isalpha(static_cast<unsigned char>(path[1])) && path[2] == ':' ? path.substr(1) : path;
 }
 
 void SshTerminalSession::write(std::span<const std::byte> data)
@@ -109,6 +185,13 @@ void SshTerminalSession::run(std::stop_token stop)
         if (ssh_channel_is_eof(channel)) break;
         tasks_.drain();
     }
+    if (sftp_) {
+        if (!failed)
+            for (const std::string& path : uploads_) sftp_unlink(sftp_, path.c_str());
+        sftp_free(sftp_);
+        sftp_ = nullptr;
+    }
+    finished_ = true;
     channel_ = nullptr;
     ssh_channel_close(channel);
     ssh_channel_free(channel);

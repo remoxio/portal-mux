@@ -3,14 +3,17 @@
 #include "app/Look.h"
 
 #include <QApplication>
+#include <QBuffer>
 #include <QClipboard>
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QImage>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QPainter>
 #include <QPointer>
 #include <QPushButton>
@@ -272,6 +275,32 @@ void TerminalView::paste(const QString& text)
     vterm_keyboard_end_paste(vt_);
 }
 
+bool TerminalView::clipboardImage() const
+{
+    const QMimeData* mime = QApplication::clipboard()->mimeData();
+    return session_ && session_->canUpload() && mime && mime->hasImage() && !mime->hasText();
+}
+
+// an image goes to a file on the server and its path is pasted, as a dragged-in file (Claude Code takes it as an image)
+void TerminalView::pasteClipboard()
+{
+    if (!clipboardImage()) return paste(QApplication::clipboard()->text());
+    const QMimeData* mime = QApplication::clipboard()->mimeData();
+    QByteArray png = mime->data(QStringLiteral("image/png"));
+    if (png.isEmpty()) {
+        QBuffer buffer(&png);
+        buffer.open(QIODevice::WriteOnly);
+        qvariant_cast<QImage>(mime->imageData()).save(&buffer, "PNG");
+    }
+    session_->upload(png.toStdString(), ".png", [this](std::string path, std::string error) {
+        QMetaObject::invokeMethod(this, [this, path = QString::fromStdString(path), error = QString::fromStdString(error)] {
+            if (error.isEmpty()) return paste(path);
+            const QByteArray note = "\r\n\x1b[2m[" + tr("The image could not be copied to the server: %1").arg(error).toUtf8() + "]\x1b[0m\r\n";
+            feed(note.constData(), size_t(note.size()));
+        }, Qt::QueuedConnection);
+    });
+}
+
 void TerminalView::updateScrollBar(bool stickToBottom)
 {
     QScrollBar* bar = verticalScrollBar();
@@ -503,8 +532,8 @@ void TerminalView::contextMenuEvent(QContextMenuEvent* event)
                    [selection] { QApplication::clipboard()->setText(selection); })
         ->setEnabled(!selection.isEmpty());
     menu.addAction(QIcon::fromTheme(QStringLiteral("edit-paste")), tr("&Paste"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V), this,
-                   [this, clipboard] { paste(clipboard); })
-        ->setEnabled(!clipboard.isEmpty());
+                   [this] { pasteClipboard(); })
+        ->setEnabled(!clipboard.isEmpty() || clipboardImage());
     menu.addSeparator();
     menu.addAction(QIcon::fromTheme(QStringLiteral("edit-find")), tr("&Find…"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F), this,
                    &TerminalView::openFind);
@@ -636,7 +665,7 @@ void TerminalView::keyPressEvent(QKeyEvent* event)
     }
     if ((m == (Qt::ControlModifier | Qt::ShiftModifier) && event->key() == Qt::Key_V) ||
         (m == Qt::ShiftModifier && event->key() == Qt::Key_Insert)) {
-        paste(QApplication::clipboard()->text());
+        pasteClipboard();
         return;
     }
     if (m == (Qt::ControlModifier | Qt::ShiftModifier) && event->key() == Qt::Key_F) {
