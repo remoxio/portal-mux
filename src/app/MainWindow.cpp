@@ -197,28 +197,32 @@ static QIcon protocolIcon(const QString& label)
 
 static QWidget* viewPage(const QString& title, QWidget* body, const QList<QAction*>& actions)
 {
-    auto* header = new QHBoxLayout;
-    header->setContentsMargins(10, 2, 2, 2);
-    header->setSpacing(0);
     auto* label = new QLabel(title.toUpper());
     QFont font; // family follows the window font
     font.setBold(true);
     font.setPointSizeF(QApplication::font().pointSizeF() * 0.85);
     label->setFont(font);
     label->setMinimumHeight(26);
-    header->addWidget(label, 1);
-    for (QAction* action : actions) {
-        auto* button = new QToolButton;
-        button->setDefaultAction(action);
-        button->setAutoRaise(true);
-        button->setIconSize(QSize(16, 16));
-        header->addWidget(button);
-    }
+    label->setContentsMargins(10, 2, 2, 2);
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    layout->addLayout(header);
+    layout->addWidget(label);
+    if (!actions.isEmpty()) { // under the title, which a narrow sidebar then shows whole
+        auto* bar = new QHBoxLayout;
+        bar->setContentsMargins(6, 0, 2, 4); // the icons start under the title's first letter
+        bar->setSpacing(0);
+        for (QAction* action : actions) {
+            auto* button = new QToolButton;
+            button->setDefaultAction(action);
+            button->setAutoRaise(true);
+            button->setIconSize(QSize(16, 16));
+            bar->addWidget(button);
+        }
+        bar->addStretch();
+        layout->addLayout(bar);
+    }
     layout->addWidget(body, 1);
     return page;
 }
