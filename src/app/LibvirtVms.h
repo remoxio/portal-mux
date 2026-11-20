@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/VmSettings.h"
 #include "core/Connection.h"
 #include "core/Session.h"
 
@@ -44,6 +45,8 @@ public:
     std::unique_ptr<rdc::TerminalSession> serialConsole(const std::string& uuid, rdc::TerminalListener& listener) const; // null: unreachable
     // Asynchronous; new state via changed(), errors via failed()
     void control(const std::string& uuid, Action action);
+    std::optional<VmSettings> settings(const std::string& uuid, QString& error) const;
+    QString apply(const std::string& uuid, const VmSettings& was, const VmSettings& now); // the error, empty if done
 
 signals:
     void changed();

@@ -7,7 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Dependencies come from the OS package manager (distro, MSYS2, MacPorts/Homebrew); see docs/BOOTSTRAP.md §6.
-find_package(Qt6 6.6 REQUIRED COMPONENTS Widgets Multimedia Network WebSockets) # Network: Wake-on-LAN, Proxmox; WebSockets: its VNC consoles
+find_package(Qt6 6.6 REQUIRED COMPONENTS Widgets Multimedia Network WebSockets Xml) # Network: Wake-on-LAN, Proxmox; WebSockets: its VNC consoles; Xml: libvirt VM definitions
 if(UNIX AND NOT APPLE)
     find_package(Qt6 REQUIRED COMPONENTS DBus) # keyboard layout from systemd-localed
     find_package(KF6WindowSystem 6 CONFIG REQUIRED) # blur behind the sidebar (KWin's blur protocol)
@@ -116,6 +116,7 @@ qt_add_executable(portal-mux WIN32 MACOSX_BUNDLE
     src/app/SftpView.cpp
     src/app/Secrets.cpp
     src/app/SshServers.cpp
+    src/app/VmSettingsDialog.cpp
     src/app/WebSocketTunnel.cpp
     src/app/WindowEffects.cpp
     src/terminal/TerminalView.cpp
@@ -170,6 +171,7 @@ target_link_libraries(portal-mux PRIVATE
     Qt6::Multimedia
     Qt6::Network
     Qt6::WebSockets
+    Qt6::Xml
     Qt6Keychain::Qt6Keychain
     $<TARGET_NAME_IF_EXISTS:Qt6::DBus>
     $<TARGET_NAME_IF_EXISTS:KF6::WindowSystem>

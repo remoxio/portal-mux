@@ -19,6 +19,7 @@
 #include <winpr/input.h>
 
 #include <QFile>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 
 #include <cassert>
@@ -218,6 +219,43 @@ static void domainXmlTests()
     assert(!connectionFromDomainXml(domain("<graphics type='spice' port='-1'><listen type='none'/></graphics>")));
     assert(!connectionFromDomainXml(domain("<graphics type='egl-headless'/><video/>")));
     assert(!connectionFromDomainXml(domain("")));
+
+    const QString perDevice = QStringLiteral(
+        "<domain type='kvm'><vcpu placement='static' cpuset='0-7'>8</vcpu><memory unit='KiB'>4194304</memory>"
+        "<currentMemory unit='KiB'>4194304</currentMemory><os><type>hvm</type></os>"
+        "<cpu mode='host-passthrough'><topology sockets='1' dies='1' clusters='1' cores='4' threads='2'/></cpu><devices>"
+        "<disk type='file' device='disk'><source file='/v/a.qcow2'/><target dev='vda' bus='virtio'/><boot order='1'/></disk>"
+        "<disk type='file' device='cdrom'><driver name='qemu'/><source file='/iso/old.iso'/><target dev='sda' bus='sata'/><readonly/></disk>"
+        "<interface type='network'><boot order='2'/></interface><graphics type='spice' passwd='pw'/></devices></domain>");
+    auto flat = [](QString xml) { return xml.replace(QRegularExpression(QStringLiteral(">\\s+<")), QStringLiteral("><")); };
+    VmSettings s = domainSettings(perDevice);
+    assert(s.cpus == 8 && s.memoryMiB == 4096 && !s.cpusFixed && !s.memoryFixed && s.hasCd && s.iso == "/iso/old.iso" && !s.cdFirst);
+    s.cpus = 6;
+    s.memoryMiB = 8192;
+    s.cdFirst = true;
+    QString edited = flat(withSettings(perDevice, s));
+    VmSettings back = domainSettings(edited);
+    assert(back.cpus == 6 && back.memoryMiB == 8192 && back.cdFirst && back.iso == "/iso/old.iso");
+    assert(edited.contains("cores=\"3\"") && edited.contains("threads=\"2\"") && edited.contains("cpuset=\"0-7\"") && edited.contains("passwd=\"pw\""));
+    assert(edited.contains("<currentMemory unit=\"KiB\">8388608</currentMemory>"));
+    assert(edited.contains("<readonly/><boot order=\"1\"/></disk>") && edited.contains("<boot order=\"3\"/></interface>"));
+    s.cpus = 5; // no longer divisible by its 2 threads
+    s.cdFirst = false;
+    edited = flat(withSettings(edited, s));
+    assert(edited.contains("cores=\"5\"") && edited.contains("threads=\"1\"") && !domainSettings(edited).cdFirst);
+    assert(edited.contains("<readonly/><boot order=\"3\"/></disk>") && edited.contains("<boot order=\"2\"/></interface>"));
+
+    const QString legacy = QStringLiteral("<domain><vcpu current='2'>4</vcpu><memory>1048576</memory><os><type>hvm</type><boot dev='hd'/></os>"
+                                          "<devices><disk device='cdrom' type='file'><target dev='hdc'/></disk></devices></domain>");
+    s = domainSettings(legacy);
+    assert(s.cpus == 2 && s.hasCd && s.iso.isEmpty() && !s.cdFirst);
+    s.cdFirst = true;
+    edited = flat(withSettings(legacy, s));
+    assert(edited.contains("<boot dev=\"cdrom\"/><boot dev=\"hd\"/></os>") && edited.contains("<vcpu current=\"2\">4</vcpu>"));
+    assert(flat(cdromXml(legacy, "/iso/new.iso")).trimmed() == "<disk device=\"cdrom\" type=\"file\"><source file=\"/iso/new.iso\"/><target dev=\"hdc\"/></disk>");
+    assert(!cdromXml(perDevice, {}).contains("source") && cdromXml(perDevice, {}).contains("dev=\"sda\""));
+    const VmSettings numa = domainSettings("<domain><vcpu>2</vcpu><memory>2097152</memory><cpu><numa><cell id='0'/></numa></cpu></domain>");
+    assert(numa.memoryFixed && !numa.hasCd && !numa.cdFirst && withSettings("<broken", s).isEmpty());
 }
 
 static void videoDecoderTests()

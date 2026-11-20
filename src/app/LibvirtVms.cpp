@@ -273,6 +273,88 @@ bool LibvirtVms::allowed(Action action, State state)
     return false;
 }
 
+// ISO files in the host's active storage pools
+static QStringList isoVolumes(virConnectPtr conn)
+{
+    QStringList isos;
+    virStoragePoolPtr* pools = nullptr;
+    const int n = virConnectListAllStoragePools(conn, &pools, VIR_CONNECT_LIST_STORAGE_POOLS_ACTIVE);
+    for (int i = 0; i < n; ++i) {
+        virStoragePoolRefresh(pools[i], 0); // files added since
+        virStorageVolPtr* volumes = nullptr;
+        const int m = virStoragePoolListAllVolumes(pools[i], &volumes, 0);
+        for (int j = 0; j < m; ++j) {
+            if (char* path = virStorageVolGetPath(volumes[j])) {
+                if (const QString p = QString::fromUtf8(path); p.endsWith(QLatin1String(".iso"), Qt::CaseInsensitive)) isos << p;
+                std::free(path);
+            }
+            virStorageVolFree(volumes[j]);
+        }
+        std::free(volumes);
+        virStoragePoolFree(pools[i]);
+    }
+    std::free(pools);
+    isos.sort(Qt::CaseInsensitive);
+    return isos;
+}
+
+// shortcut: on the UI thread like the listing, a remote host's round trips block it briefly
+std::optional<VmSettings> LibvirtVms::settings(const std::string& uuid, QString& error) const
+{
+    virDomainPtr dom = connected() ? virDomainLookupByUUIDString(worker_->conn, uuid.c_str()) : nullptr;
+    char* xml = dom ? virDomainGetXMLDesc(dom, VIR_DOMAIN_XML_INACTIVE | VIR_DOMAIN_XML_SECURE) : nullptr;
+    virNodeInfo node{};
+    if (!xml || virNodeGetInfo(worker_->conn, &node) < 0) {
+        error = dom ? QString::fromUtf8(virGetLastErrorMessage()) : tr("The virtual machine is gone, or libvirt is not reachable.");
+        std::free(xml);
+        if (dom) virDomainFree(dom);
+        return std::nullopt;
+    }
+    VmSettings s = domainSettings(QString::fromUtf8(xml));
+    std::free(xml);
+    s.maxCpus = int(node.cpus);
+    s.maxMemoryMiB = int(node.memory / 1024);
+    s.isos = isoVolumes(worker_->conn);
+    s.localFiles = !remote();
+    s.running = virDomainIsActive(dom) == 1;
+    virDomainFree(dom);
+    return s;
+}
+
+QString LibvirtVms::apply(const std::string& uuid, const VmSettings& was, const VmSettings& now)
+{
+    virDomainPtr dom = connected() ? virDomainLookupByUUIDString(worker_->conn, uuid.c_str()) : nullptr;
+    if (!dom) return tr("The virtual machine is gone, or libvirt is not reachable.");
+    auto failed = [dom] {
+        const QString error = QString::fromUtf8(virGetLastErrorMessage());
+        virDomainFree(dom);
+        return error;
+    };
+    if (now.cpus != was.cpus || now.memoryMiB != was.memoryMiB || now.cdFirst != was.cdFirst) {
+        char* xml = virDomainGetXMLDesc(dom, VIR_DOMAIN_XML_INACTIVE | VIR_DOMAIN_XML_SECURE); // SECURE: keeps its display password
+        if (!xml) return failed();
+        const QByteArray changed = withSettings(QString::fromUtf8(xml), now).toUtf8();
+        std::free(xml);
+        virDomainPtr defined = changed.isEmpty() ? nullptr : virDomainDefineXML(worker_->conn, changed.constData());
+        if (!defined) return failed();
+        virDomainFree(defined);
+    }
+    if (now.iso != was.iso) {
+        // each from its own definition: the running one may boot in another order until its next start
+        std::vector<unsigned> targets{VIR_DOMAIN_AFFECT_CONFIG};
+        if (virDomainIsActive(dom) == 1) targets.push_back(VIR_DOMAIN_AFFECT_LIVE | VIR_DOMAIN_DEVICE_MODIFY_FORCE);
+        for (const unsigned flags : targets) {
+            char* xml = virDomainGetXMLDesc(dom, flags & VIR_DOMAIN_AFFECT_LIVE ? 0 : VIR_DOMAIN_XML_INACTIVE);
+            if (!xml) return failed();
+            const QByteArray disk = cdromXml(QString::fromUtf8(xml), now.iso).toUtf8();
+            std::free(xml);
+            if (disk.isEmpty() || virDomainUpdateDeviceFlags(dom, disk.constData(), flags) < 0) return failed();
+        }
+    }
+    virDomainFree(dom);
+    return {};
+}
+
 void LibvirtVms::control(const std::string& uuid, Action action)
 {
     virDomainPtr dom = connected() ? virDomainLookupByUUIDString(worker_->conn, uuid.c_str()) : nullptr;

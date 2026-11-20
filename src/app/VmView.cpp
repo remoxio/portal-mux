@@ -3,6 +3,7 @@
 #include "app/ConnectionStore.h"
 #include "app/PanelTree.h"
 #include "app/Icons.h"
+#include "app/VmSettingsDialog.h"
 
 #include <QAction>
 #include <QUrl>
@@ -15,7 +16,9 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QMessageBox>
+#include <QProcess>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -147,6 +150,8 @@ VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings
         if (const Vm* vm = selected()) emit serialRequested(selectedHost(), vm->uuid);
     });
     serial_->setToolTip(tr("Its serial console in a terminal (a console device in the VM, a getty in the guest)"));
+    vmSettings_ = make("device-desktop-cog", tr("Se&ttings…"), [this] { editSettings(); });
+    vmSettings_->setToolTip(tr("Processors, memory and its CD/DVD"));
     addHost_ = make("plus", tr("&Add Host…"), [this] { editHost(nullptr); });
     addHost_->setToolTip(tr("A libvirt host over SSH"));
     editHost_ = make("pencil", tr("&Edit Host…"), [this] { editHost(selectedHost()); });
@@ -156,7 +161,7 @@ VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings
         s->setSeparator(true);
         return s;
     };
-    tree_->addActions({open_, serial_, separator(), start_, pause_, separator(), shutdown_, reboot_, save_, separator(), forceOff_, reset_,
+    tree_->addActions({open_, serial_, vmSettings_, separator(), start_, pause_, separator(), shutdown_, reboot_, save_, separator(), forceOff_, reset_,
                        separator(), addHost_, editHost_, removeHost_});
 
     connect(tree_, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem* item) {
@@ -348,6 +353,7 @@ void VmView::updateActions()
     reset_->setEnabled(allowed(Action::Reset));
     open_->setEnabled(vm);
     serial_->setEnabled(control && (s == State::Running || s == State::Paused));
+    vmSettings_->setEnabled(control);
     const bool remoteRow = host && host->remote() && !vm;
     editHost_->setEnabled(remoteRow);
     removeHost_->setEnabled(remoteRow);
@@ -373,4 +379,22 @@ void VmView::act(Action action)
         if (box.clickedButton() != yes) return;
     }
     host->control(uuid, action);
+}
+
+void VmView::editSettings()
+{
+    const Vm* vm = selected();
+    LibvirtVms* host = selectedHost();
+    if (!vm || !host) return;
+    const std::string uuid = vm->uuid;
+    const QString name = QString::fromStdString(vm->name);
+    QString error;
+    const std::optional<VmSettings> was = host->settings(uuid, error);
+    if (!was) return (void)QMessageBox::warning(this, tr("Virtual machine"), tr("%1: %2").arg(name, error));
+    VmSettingsDialog dialog(name, *was, [&](const VmSettings& now) { return host->apply(uuid, *was, now); }, this);
+    if (const QString virtManager = QStandardPaths::findExecutable(QStringLiteral("virt-manager")); !virtManager.isEmpty())
+        dialog.addMore(tr("More in virt-manager…"), [virtManager, uri = host->uri(), uuid] {
+            QProcess::startDetached(virtManager, {QStringLiteral("--connect"), uri, QStringLiteral("--show-domain-editor"), QString::fromStdString(uuid)});
+        });
+    dialog.exec();
 }

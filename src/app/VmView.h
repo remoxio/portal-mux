@@ -35,6 +35,7 @@ private:
     LibvirtVms* selectedHost() const; // of the selected VM or host row
     const LibvirtVms::Vm* selected() const;
     void act(LibvirtVms::Action action);
+    void editSettings();
     void addHost(const QString& name, const std::string& uri);
     void editHost(LibvirtVms* host); // null: a new one
     void removeHost(LibvirtVms* host, bool ask = true);
@@ -46,5 +47,5 @@ private:
     QTreeWidget* tree_;
     QLabel* note_; // no hosts yet
     Folding* folding_;
-    QAction *open_, *serial_, *start_, *pause_, *shutdown_, *reboot_, *save_, *forceOff_, *reset_, *addHost_, *editHost_, *removeHost_;
+    QAction *open_, *serial_, *vmSettings_, *start_, *pause_, *shutdown_, *reboot_, *save_, *forceOff_, *reset_, *addHost_, *editHost_, *removeHost_;
 };
