@@ -389,12 +389,9 @@ void SshServersPage::edit(int row)
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     QPushButton* ok = buttons->button(QDialogButtonBox::Ok);
     ok->setEnabled(!s.host.isEmpty());
-    QPushButton* test = buttons->addButton(tr("&Test Connection"), QDialogButtonBox::ActionRole);
+    auto* test = new QPushButton(tr("&Test Connection"));
     test->setToolTip(tr("Logs in once with these values; nothing is saved"));
     test->setEnabled(!s.host.isEmpty());
-    auto* result = new QLabel;
-    result->setWordWrap(true);
-    result->hide();
     connect(host, &QLineEdit::textChanged, ok, [ok, test](const QString& text) {
         ok->setEnabled(!text.trimmed().isEmpty());
         test->setEnabled(!text.trimmed().isEmpty());
@@ -405,16 +402,16 @@ void SshServersPage::edit(int row)
         p.knownHostsFile = (QFileInfo(settings_->fileName()).absolutePath() + QStringLiteral("/known_hosts")).toStdString(); // the app's
         const bool key = auth->currentData().toString() == QLatin1String("publicKey");
         if (key) p.keyFile = keyFile->text().trimmed().toStdString();
+        const QString where = QString::fromStdString(p.user.empty() ? p.host : p.user + "@" + p.host);
         auto run = [=](const QString& saved) mutable {
             if (!key) p.password = (password->text().isEmpty() ? saved : password->text()).toStdString();
             test->setEnabled(false);
-            result->setStyleSheet({});
-            result->setText(tr("Connecting…"));
-            result->show();
+            test->setText(tr("Testing…"));
             new SshTest(p, sheet, [=](const QString& error) {
                 test->setEnabled(true);
-                result->setText(error.isEmpty() ? tr("Logged in.") : error);
-                result->setStyleSheet(error.isEmpty() ? QString() : QStringLiteral("color: #da4453"));
+                test->setText(tr("&Test Connection"));
+                if (error.isEmpty()) QMessageBox::information(sheet, tr("Test Connection"), tr("Logged in to %1.").arg(where));
+                else QMessageBox::warning(sheet, tr("Test Connection"), error);
             });
         };
         if (!key && password->text().isEmpty() && !adding) secrets::read(sshServerSecret(s.id), sheet, run);
@@ -431,8 +428,11 @@ void SshServersPage::edit(int row)
     layout->addWidget(heading);
 #endif
     layout->addLayout(form);
-    layout->addWidget(result);
-    layout->addWidget(buttons);
+    auto* bottom = new QHBoxLayout; // the test on the left, as a dialog's extra button
+    bottom->addWidget(test);
+    bottom->addStretch();
+    bottom->addWidget(buttons);
+    layout->addLayout(bottom);
 
     connect(sheet, &QDialog::accepted, this, [=, this]() mutable {
         s.host = host->text().trimmed();
