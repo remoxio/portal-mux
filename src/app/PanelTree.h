@@ -2,11 +2,15 @@
 
 #include "app/GuestRow.h"
 
+#include <QSet>
 #include <QStyledItemDelegate>
 
 #include <optional>
 
+class QSettings;
 class QTreeView;
+class QTreeWidget;
+class QTreeWidgetItem;
 
 // Folding panels instead of an indented tree: header rows, chevrons on the right
 class PanelDelegate : public QStyledItemDelegate {
@@ -31,3 +35,18 @@ private:
 void setUpPanels(QTreeView* view, PanelDelegate* delegate);
 // once the mouse button is up: a release after the fold ends its animation at once
 void foldLater(QTreeView* view, const QModelIndex& index);
+
+// Folded rows kept in the settings across restarts; a row's id is its data(0, role), empty: not kept
+class Folding : public QObject {
+public:
+    Folding(QTreeWidget* tree, QSettings* settings, QString key, int role);
+    void apply(QTreeWidgetItem* item) const; // as the user last left it, open by default
+
+private:
+    void set(QTreeWidgetItem* item, bool folded);
+
+    QSettings* settings_;
+    QString key_;
+    int role_;
+    QSet<QString> folded_;
+};

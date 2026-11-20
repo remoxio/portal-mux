@@ -17,6 +17,7 @@ struct TerminalListener;
 
 class ActivityBar;
 class LibvirtVms;
+class Folding;
 class HyperVView;
 class ProxmoxView;
 class QAction;
@@ -132,6 +133,7 @@ private:
     QTreeWidget* tree_;
     QLineEdit* filter_;
     QTreeWidget* active_;
+    Folding *treeFolding_, *sessionsFolding_;
     QTabWidget* tabs_;
     QAction *editAction_, *deleteAction_, *connectAction_, *sftpAction_;
     QAction *fullScreenAction_, *screenshotAction_, *viewOnlyAction_, *clipboardAction_, *localCursorAction_,

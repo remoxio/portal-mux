@@ -12,6 +12,7 @@
 #include <optional>
 #include <vector>
 
+class Folding;
 class ProxmoxClient;
 class QAction;
 class QLabel;
@@ -72,6 +73,7 @@ private:
     std::vector<ProxmoxClient*> clients_;
     QTreeWidget* tree_;
     QLabel* note_;
+    Folding* folding_;
     QTimer poll_;
     QAction *add_, *refresh_, *console_, *start_, *shutdown_, *stop_, *reboot_, *reset_, *suspend_, *resume_, *edit_, *remove_;
 };

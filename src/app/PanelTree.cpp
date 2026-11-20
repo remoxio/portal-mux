@@ -6,8 +6,10 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QSettings>
 #include <QTimer>
 #include <QTreeView>
+#include <QTreeWidget>
 
 #include <utility>
 
@@ -116,4 +118,25 @@ void setUpPanels(QTreeView* view, PanelDelegate* delegate)
     view->setExpandsOnDoubleClick(false); // Qt's folds before the release, cutting the animation
     view->setAnimated(view->style()->styleHint(QStyle::SH_Widget_Animation_Duration, nullptr, view) > 0); // 0: KDE's animations set to instant
     view->installEventFilter(new InstantKeys(view));
+}
+
+Folding::Folding(QTreeWidget* tree, QSettings* settings, QString key, int role)
+    : QObject(tree), settings_(settings), key_(std::move(key)), role_(role)
+{
+    for (const QString& id : settings_->value(key_).toStringList()) folded_.insert(id);
+    connect(tree, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem* item) { set(item, true); });
+    connect(tree, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* item) { set(item, false); });
+}
+
+void Folding::apply(QTreeWidgetItem* item) const { item->setExpanded(!folded_.contains(item->data(0, role_).toString())); }
+
+void Folding::set(QTreeWidgetItem* item, bool folded)
+{
+    const QString id = item->data(0, role_).toString();
+    if (id.isEmpty() || folded_.contains(id) == folded) return; // rebuilds open what is open anyway
+    if (folded) folded_.insert(id);
+    else folded_.remove(id);
+    QStringList list(folded_.begin(), folded_.end());
+    list.sort();
+    settings_->setValue(key_, list);
 }

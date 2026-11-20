@@ -6,6 +6,7 @@
 
 #include <vector>
 
+class Folding;
 class QAction;
 class QLabel;
 class QSettings;
@@ -44,5 +45,6 @@ private:
     bool local_ = true;
     QTreeWidget* tree_;
     QLabel* note_; // no hosts yet
+    Folding* folding_;
     QAction *open_, *serial_, *start_, *pause_, *shutdown_, *reboot_, *save_, *forceOff_, *reset_, *addHost_, *editHost_, *removeHost_;
 };

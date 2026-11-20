@@ -8,6 +8,7 @@
 #include <map>
 #include <string>
 
+class Folding;
 class QAction;
 class QLabel;
 class QSettings;
@@ -49,6 +50,7 @@ private:
     std::map<QString, HyperVHost*> hosts_;
     QTreeWidget* tree_;
     QLabel* note_;
+    Folding* folding_;
     std::pair<HyperVHost*, std::string> pendingOpen_; // started by Open: its console once it runs
     QAction *open_, *start_, *pause_, *shutdown_, *reboot_, *save_, *turnOff_, *reset_, *addHost_, *removeHost_;
 };

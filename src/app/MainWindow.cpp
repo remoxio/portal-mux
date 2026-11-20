@@ -11,6 +11,7 @@
 #include "app/Look.h"
 #include "app/MonitorWindow.h"
 #include "app/HyperVView.h"
+#include "app/PanelTree.h"
 #include "app/ProxmoxView.h"
 #include "app/Keymap.h"
 #ifdef PORTAL_MUX_LIBVIRT
@@ -104,6 +105,7 @@ using rdc::SessionState;
 static constexpr int IdRole = Qt::UserRole;
 static constexpr int ReadOnlyRole = Qt::UserRole + 1;
 static constexpr int WindowRole = Qt::UserRole + 2; // Sessions: a detached window
+static constexpr int FoldRole = Qt::UserRole + 3;   // a group's id for its folding
 
 static std::string keychainKey(const std::string& id, const std::string& property)
 {
@@ -538,6 +540,8 @@ MainWindow::MainWindow(QWidget* parent)
         page->setFrameShape(QFrame::NoFrame);
         page->setItemDelegate(new ElidingDelegate(page));
     }
+    treeFolding_ = new Folding(tree_, settings_, QStringLiteral("folded/connections"), FoldRole);
+    sessionsFolding_ = new Folding(active_, settings_, QStringLiteral("folded/sessions"), FoldRole);
     filter_ = new QLineEdit;
     filter_->setPlaceholderText(tr("Search"));
     filter_->setToolTip(tr("Name or address; Enter connects to the selected match (Ctrl+F)"));
@@ -800,8 +804,8 @@ void MainWindow::rebuildTree(const std::string& selectId)
             auto& g = groups[name];
             if (!g) {
                 g = new QTreeWidgetItem(tree_, {name});
-                g->setIcon(0, icons::material("folder-open"));
-                g->setExpanded(true);
+                g->setIcon(0, icons::material("folder")); // opening sets folder-open
+                g->setData(0, FoldRole, QStringLiteral("group:") + name);
             }
             parent = g;
         }
@@ -822,6 +826,7 @@ void MainWindow::rebuildTree(const std::string& selectId)
         g->setIcon(0, icons::material(icon));
         g->setToolTip(0, tip);
         g->setData(0, ReadOnlyRole, true);
+        g->setData(0, FoldRole, QStringLiteral("readonly:") + title);
         for (const Connection& c : list) {
             auto* item = new QTreeWidgetItem(g, {QString::fromStdString(c.name)});
             item->setIcon(0, protocolIcon(protocolLabel(c.protocol)));
@@ -838,8 +843,8 @@ void MainWindow::rebuildTree(const std::string& selectId)
                                                            QString::fromStdString(c.host));
                 });
     tree_->sortItems(0, Qt::AscendingOrder);
-    for (auto& [name, g] : groups) g->setExpanded(true);
-    for (QTreeWidgetItem* g : readOnly) g->setExpanded(true);
+    for (auto& [name, g] : groups) treeFolding_->apply(g);
+    for (QTreeWidgetItem* g : readOnly) treeFolding_->apply(g);
     if (selected) tree_->setCurrentItem(selected);
     applyFilter();
     updateActions();
@@ -1926,6 +1931,7 @@ void MainWindow::updateActiveList()
             group = new QTreeWidgetItem({protocol});
             group->setIcon(0, protocolIcon(protocol));
             group->setFlags(Qt::ItemIsEnabled);
+            group->setData(0, FoldRole, protocol);
         }
         return group;
     };
@@ -1946,7 +1952,7 @@ void MainWindow::updateActiveList()
     for (auto& [rank, group] : groups) {
         group->setText(0, QStringLiteral("%1 (%2)").arg(group->text(0)).arg(group->childCount()));
         active_->addTopLevelItem(group);
-        group->setExpanded(true);
+        sessionsFolding_->apply(group);
     }
     for (int i = 0; i < active_->topLevelItemCount(); ++i)
         for (int j = 0; j < active_->topLevelItem(i)->childCount(); ++j)

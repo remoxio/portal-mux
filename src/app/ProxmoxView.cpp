@@ -28,7 +28,6 @@
 
 #include <algorithm>
 #include <functional>
-#include <set>
 
 using proxmox::Guest;
 using proxmox::Server;
@@ -103,6 +102,7 @@ ProxmoxView::ProxmoxView(QSettings* settings, QString configDir, QWidget* parent
     tree_->setHeaderHidden(true);
     tree_->setFrameShape(QFrame::NoFrame);
     setUpPanels(tree_, new ProxmoxDelegate(tree_));
+    folding_ = new Folding(tree_, settings_, QStringLiteral("folded/proxmox"), KeyRole);
     tree_->setContextMenuPolicy(Qt::ActionsContextMenu);
     note_ = new QLabel;
     note_->setWordWrap(true);
@@ -346,9 +346,6 @@ void ProxmoxView::rebuild()
 {
     const QTreeWidgetItem* current = tree_->currentItem();
     const QString keep = current ? current->data(0, KeyRole).toString() : QString();
-    std::set<QString> collapsed;
-    for (QTreeWidgetItemIterator it(tree_); *it; ++it)
-        if ((*it)->childCount() && !(*it)->isExpanded()) collapsed.insert((*it)->data(0, KeyRole).toString());
     tree_->clear();
     const QString graphTip = tr("The graph: its CPU use over the last 200 seconds");
     for (ProxmoxClient* client : clients_) {
@@ -403,7 +400,7 @@ void ProxmoxView::rebuild()
         }
     }
     for (QTreeWidgetItemIterator it(tree_); *it; ++it) {
-        (*it)->setExpanded(!collapsed.count((*it)->data(0, KeyRole).toString()));
+        folding_->apply(*it);
         if ((*it)->data(0, KeyRole).toString() == keep) tree_->setCurrentItem(*it);
     }
     note_->setText(clients_.empty() ? tr("Add a Proxmox VE server with + to see its VMs and containers here.") : QString());

@@ -21,7 +21,6 @@
 
 #include <algorithm>
 #include <functional>
-#include <set>
 
 using hyperv::Action;
 using hyperv::State;
@@ -130,6 +129,7 @@ HyperVView::HyperVView(QSettings* settings, QString configDir, QWidget* parent)
         const auto it = hosts_.find(id);
         return it == hosts_.end() ? nullptr : it->second;
     }, tree_));
+    folding_ = new Folding(tree_, settings_, QStringLiteral("folded/hyperv"), HostRole);
     tree_->setContextMenuPolicy(Qt::ActionsContextMenu);
     note_ = new QLabel(tr("Add a Hyper-V host with +: a server of Settings → SSH Servers, with an administrator's account."));
     note_->setWordWrap(true);
@@ -351,10 +351,6 @@ void HyperVView::rebuild()
     const Vm* current = selected();
     const std::string keep = current ? current->id : std::string();
     const HyperVHost* keepHost = selectedHost();
-    std::set<QString> collapsed;
-    for (int i = 0; i < tree_->topLevelItemCount(); ++i)
-        if (QTreeWidgetItem* top = tree_->topLevelItem(i); top->childCount() && !top->isExpanded())
-            collapsed.insert(top->data(0, HostRole).toString());
     tree_->clear();
     for (const QString& id : std::as_const(ids_)) {
         const auto found = hosts_.find(id);
@@ -410,7 +406,7 @@ void HyperVView::rebuild()
             item->setToolTip(0, tip.join(QLatin1Char('\n')));
             if (host == keepHost && vm.id == keep) tree_->setCurrentItem(item);
         }
-        parent->setExpanded(!collapsed.count(id));
+        folding_->apply(parent);
     }
     if (!tree_->currentItem() && tree_->topLevelItemCount()) tree_->setCurrentItem(tree_->topLevelItem(0));
     note_->setVisible(ids_.isEmpty());

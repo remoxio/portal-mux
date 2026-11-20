@@ -20,7 +20,6 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <set>
 #include <cstdlib>
 #include <functional>
 
@@ -73,6 +72,7 @@ const char* stateGlyph(State s)
 }
 
 constexpr int HostRole = Qt::UserRole + 1; // its LibvirtVms; Qt::UserRole: the VM's uuid, empty on a host row
+constexpr int FoldRole = Qt::UserRole + 2; // a host row's uri
 
 LibvirtVms* hostOf(const QModelIndex& index) { return reinterpret_cast<LibvirtVms*>(index.data(HostRole).value<quintptr>()); }
 LibvirtVms* hostOf(const QTreeWidgetItem* item) { return reinterpret_cast<LibvirtVms*>(item->data(0, HostRole).value<quintptr>()); }
@@ -110,6 +110,7 @@ VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings
     tree_->setHeaderHidden(true);
     tree_->setFrameShape(QFrame::NoFrame);
     setUpPanels(tree_, new VmDelegate(tree_));
+    folding_ = new Folding(tree_, settings_, QStringLiteral("folded/kvm"), FoldRole);
     tree_->setContextMenuPolicy(Qt::ActionsContextMenu);
     note_ = new QLabel(tr("Add a KVM host with +: libvirt over SSH (qemu+ssh://)."));
     note_->setWordWrap(true);
@@ -290,10 +291,6 @@ void VmView::rebuild()
     const Vm* current = selected();
     const std::string keep = current ? current->uuid : std::string();
     LibvirtVms* keepHost = selectedHost();
-    std::set<LibvirtVms*> collapsed;
-    for (int i = 0; i < tree_->topLevelItemCount(); ++i)
-        if (QTreeWidgetItem* top = tree_->topLevelItem(i); top->childCount() && !top->isExpanded())
-            collapsed.insert(hostOf(top));
     tree_->clear();
     for (LibvirtVms* host : hosts_) {
         auto* parent = new QTreeWidgetItem(tree_, {host->name()});
@@ -302,6 +299,7 @@ void VmView::rebuild()
         parent->setData(0, PanelDelegate::HeaderColorRole, host->connected() || host->connecting() ? palette().color(QPalette::Disabled, QPalette::Text)
                                                                                                 : QColor(0xda, 0x44, 0x53));
         parent->setData(0, HostRole, QVariant::fromValue(quintptr(host)));
+        parent->setData(0, FoldRole, host->uri());
         const QString tip = host->uri() + (host->lastError().isEmpty() ? QString() : QLatin1Char('\n') + host->lastError());
         parent->setToolTip(0, tip);
         if (host == keepHost && keep.empty()) tree_->setCurrentItem(parent);
@@ -324,7 +322,7 @@ void VmView::rebuild()
             item->setToolTip(0, tip + QLatin1Char('\n') + tr("The graph: its CPU use over the last 80 seconds"));
             if (host == keepHost && vm.uuid == keep) tree_->setCurrentItem(item);
         }
-        parent->setExpanded(!collapsed.count(host));
+        folding_->apply(parent);
     }
     if (!tree_->currentItem() && tree_->topLevelItemCount()) tree_->setCurrentItem(tree_->topLevelItem(0));
     note_->setVisible(hosts_.empty());
