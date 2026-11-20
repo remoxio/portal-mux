@@ -353,6 +353,7 @@ void HyperVView::hostChanged(HyperVHost* host)
 
 void HyperVView::rebuild()
 {
+    const Rebuild quiet(tree_);
     const Vm* current = selected();
     const std::string keep = current ? current->id : std::string();
     const HyperVHost* keepHost = selectedHost();

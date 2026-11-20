@@ -344,6 +344,7 @@ void ProxmoxView::refreshAll()
 
 void ProxmoxView::rebuild()
 {
+    const Rebuild quiet(tree_);
     const QTreeWidgetItem* current = tree_->currentItem();
     const QString keep = current ? current->data(0, KeyRole).toString() : QString();
     tree_->clear();

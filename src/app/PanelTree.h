@@ -50,3 +50,17 @@ private:
     int role_;
     QSet<QString> folded_;
 };
+
+// While a view's rows are made again: nothing painted in between, no fold animation, the scroll position kept
+class Rebuild {
+public:
+    explicit Rebuild(QTreeView* view);
+    ~Rebuild();
+    Rebuild(const Rebuild&) = delete;
+    Rebuild& operator=(const Rebuild&) = delete;
+
+private:
+    QTreeView* view_;
+    bool animated_;
+    int scroll_;
+};

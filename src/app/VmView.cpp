@@ -288,6 +288,7 @@ static QString hostState(const LibvirtVms* host)
 
 void VmView::rebuild()
 {
+    const Rebuild quiet(tree_);
     const Vm* current = selected();
     const std::string keep = current ? current->uuid : std::string();
     LibvirtVms* keepHost = selectedHost();

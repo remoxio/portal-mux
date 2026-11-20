@@ -6,6 +6,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QScrollBar>
 #include <QSettings>
 #include <QTimer>
 #include <QTreeView>
@@ -139,4 +140,18 @@ void Folding::set(QTreeWidgetItem* item, bool folded)
     QStringList list(folded_.begin(), folded_.end());
     list.sort();
     settings_->setValue(key_, list);
+}
+
+Rebuild::Rebuild(QTreeView* view) : view_(view), animated_(view->isAnimated()), scroll_(view->verticalScrollBar()->value())
+{
+    view_->setUpdatesEnabled(false);
+    view_->setAnimated(false);
+}
+
+Rebuild::~Rebuild()
+{
+    view_->doItemsLayout(); // the scroll range of the new rows
+    view_->verticalScrollBar()->setValue(scroll_);
+    view_->setAnimated(animated_);
+    view_->setUpdatesEnabled(true);
 }

@@ -795,6 +795,7 @@ MainWindow::MainWindow(QWidget* parent)
 
 void MainWindow::rebuildTree(const std::string& selectId)
 {
+    const Rebuild quiet(tree_);
     tree_->clear();
     std::map<QString, QTreeWidgetItem*> groups;
     QTreeWidgetItem* selected = nullptr;
@@ -1933,6 +1934,7 @@ void MainWindow::updateActiveList()
 {
     static const char* const order[] = {"RDP", "VNC", "SPICE", "SSH", "SFTP", "Telnet", "Serial", "Terminal", "Android", "Moonlight", "Test"};
     const QSignalBlocker block(active_);
+    const Rebuild quiet(active_);
     active_->clear();
     std::map<int, QTreeWidgetItem*> groups;
     auto groupOf = [&](QWidget* page) {
