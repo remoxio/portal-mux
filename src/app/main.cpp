@@ -5,8 +5,11 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDialog>
+#include <QDir>
+#include <QFile>
 #include <QIcon>
 #include <QLayout>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QWindow>
 
@@ -16,6 +19,9 @@
 #endif
 
 #include <glib.h>
+#include <winpr/wlog.h>
+
+#include <cstdio>
 
 namespace {
 
@@ -51,6 +57,34 @@ private:
     }
 };
 
+// FreeRDP's log also to <state dir>/freerdp.log, the previous run's in .1; WLOG_APPENDER set: as the user says
+void logFreeRdp()
+{
+    if (qEnvironmentVariableIsSet("WLOG_APPENDER")) return;
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::StateLocation);
+    const QString path = dir + QStringLiteral("/freerdp.log");
+    QDir().mkpath(dir);
+    QFile::remove(path + QStringLiteral(".1"));
+    QFile::rename(path, path + QStringLiteral(".1"));
+#ifdef _WIN32
+    static FILE* file = _wfopen(reinterpret_cast<const wchar_t*>(path.utf16()), L"w");
+#else
+    static FILE* file = fopen(QFile::encodeName(path).constData(), "w");
+#endif
+    if (!file) return;
+    static wLogCallbacks callbacks{};
+    callbacks.message = [](const wLogMessage* m) -> BOOL {
+        (void)fprintf(file, "%s%s\n", m->PrefixString, m->TextString);
+        (void)fflush(file); // readable while a session misbehaves
+        if (m->Level >= WLOG_WARN) (void)fprintf(stderr, "%s%s\n", m->PrefixString, m->TextString);
+        return TRUE;
+    };
+    wLog* root = WLog_GetRoot();
+    if (!WLog_SetLogAppenderType(root, WLOG_APPENDER_CALLBACK) || !WLog_ConfigureAppender(WLog_GetLogAppender(root), "callbacks", &callbacks))
+        return;
+    if (!qEnvironmentVariableIsSet("WLOG_LEVEL")) (void)WLog_SetLogLevel(root, WLOG_INFO);
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -59,6 +93,7 @@ int main(int argc, char* argv[])
     QApplication::setApplicationName(QStringLiteral("portal-mux"));
     QApplication::setApplicationVersion(QStringLiteral(PROJECT_VERSION));
     QApplication::setDesktopFileName(QStringLiteral("portal-mux")); // Wayland app id: the launcher's icon
+    logFreeRdp();
 #ifndef Q_OS_MACOS // there it would replace the Dock's icon, the bundle's has the background
     QIcon icon;
     for (int size : {16, 22, 24, 28, 32, 48, 64, 96, 128, 256}) icon.addFile(QStringLiteral(":/hicolor/%1x%1/apps/portal-mux.png").arg(size));

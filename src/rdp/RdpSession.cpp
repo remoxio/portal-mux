@@ -18,6 +18,7 @@
 #include <winpr/clipboard.h>
 #include <winpr/string.h>
 #include <winpr/synch.h>
+#include <winpr/wlog.h>
 
 #include <algorithm>
 #include <cctype>
@@ -31,6 +32,15 @@
 #include <sstream>
 
 namespace rdc {
+
+// while any screen is frozen: every PDU header (the server's heartbeats) and every GFX frame and its acknowledgement
+static void traceFrozen(bool frozen)
+{
+    static std::atomic<int> count = 0;
+    if ((frozen ? count++ : --count) != 0) return;
+    for (const char* name : {"com.freerdp.core.rdp", "com.freerdp.channels.rdpgfx.client"})
+        (void)WLog_SetLogLevel(WLog_Get(name), frozen ? WLOG_TRACE : WLOG_LEVEL_INHERIT);
+}
 
 namespace {
 
@@ -155,6 +165,13 @@ struct RdpSession::Callbacks {
         RdpSession* s = self(ctx);
         s->framebuffer_.update(r, gdi->primary_buffer, int(gdi->stride));
         s->listener_.onFrameUpdated(r);
+        const auto now = std::chrono::steady_clock::now();
+        const std::chrono::steady_clock::time_point last{std::chrono::steady_clock::duration(s->lastUpdate_.exchange(now.time_since_epoch().count()))};
+        if (s->frozen_.exchange(false)) {
+            WLog_INFO("portal-mux.rdp", "%s: screen updates again after %lld s", s->label().c_str(),
+                      (long long)std::chrono::duration_cast<std::chrono::seconds>(now - last).count());
+            traceFrozen(false);
+        }
         return TRUE;
     }
 
@@ -526,11 +543,25 @@ void RdpSession::post(std::function<void()> task)
     if (wakeEvent_) SetEvent(wakeEvent_);
 }
 
+// marks in the log where a screen stops answering input
+void RdpSession::checkFrozen()
+{
+    const auto now = std::chrono::steady_clock::now();
+    const std::chrono::steady_clock::time_point update{std::chrono::steady_clock::duration(lastUpdate_.load())};
+    if (frozen_ || lastInput_ <= update || now - lastInput_ < std::chrono::seconds(30)) return;
+    frozen_ = true;
+    WLog_WARN("portal-mux.rdp", "%s: no screen update for %lld s after input; tracing until it updates", label().c_str(),
+              (long long)std::chrono::duration_cast<std::chrono::seconds>(now - lastInput_).count());
+    traceFrozen(true);
+}
+
 void RdpSession::sendKey(const KeyEvent& e)
 {
     if (e.scancode == 0) return;
     post([this, e] {
-        if (connected_) freerdp_input_send_keyboard_event_ex(context_->input, e.pressed, FALSE, e.scancode);
+        if (!connected_) return;
+        freerdp_input_send_keyboard_event_ex(context_->input, e.pressed, FALSE, e.scancode);
+        if (e.pressed) lastInput_ = std::chrono::steady_clock::now();
     });
 }
 
@@ -544,7 +575,9 @@ void RdpSession::syncLocks(uint8_t locks)
 void RdpSession::sendPointer(const PointerEvent& e)
 {
     post([this, e] {
-        if (connected_) handlePointer(e);
+        if (!connected_) return;
+        handlePointer(e);
+        if (e.buttons || e.wheelDelta) lastInput_ = std::chrono::steady_clock::now();
     });
 }
 
@@ -845,9 +878,11 @@ void RdpSession::run(std::stop_token stop)
             }
             ResetEvent(wakeEvent_);
             tasks_.drain();
+            checkFrozen();
         }
         connected_ = false;
     }
+    if (frozen_.exchange(false)) traceFrozen(false);
 
     const UINT32 error = freerdp_get_last_error(context_);
     const UINT32 info = freerdp_error_info(instance);

@@ -4,6 +4,8 @@
 #include "core/Session.h"
 #include "core/TaskQueue.h"
 
+#include <atomic>
+#include <chrono>
 #include <mutex>
 #include <thread>
 
@@ -43,6 +45,8 @@ private:
     void handlePointer(const PointerEvent& e);
     void announceClipboard();
     void sendLayout();
+    void checkFrozen();
+    std::string label() const { return connection_.name.empty() ? connection_.host : connection_.name; }
 
     DisplayListener& listener_;
     Connection connection_;
@@ -57,6 +61,9 @@ private:
     bool cancelled_ = false;
     bool alwaysTrust_ = false;
     PointerEvent lastPointer_;
+    std::atomic<std::chrono::steady_clock::rep> lastUpdate_{0}; // set by the paint thread
+    std::chrono::steady_clock::time_point lastInput_;            // presses and wheel, the worker's
+    std::atomic<bool> frozen_ = false;                           // logged: no update since input
     int wantWidth_ = 1024, wantHeight_ = 768;
     double pixelRatio_ = 1;
     int sentScale_ = 0;
