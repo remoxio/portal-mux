@@ -11,7 +11,7 @@
 
 bool windowEffects::translucencyPossible() { return QOperatingSystemVersion::current() >= QOperatingSystemVersion::Windows10; }
 
-// as spark-commander: Transparency effects on, and not Remote Desktop, which never blurs
+// Transparency effects on, and not Remote Desktop, which never blurs
 bool windowEffects::blurAvailable()
 {
     DWORD on = 1, size = sizeof on;

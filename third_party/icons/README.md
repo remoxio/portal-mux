@@ -1,13 +1,12 @@
 # Icons
 
-The app's icons; Material Icon Theme and Tabler are the same sets as the author's other apps (spark-commander,
-Water Data Studio). All are compiled in as Qt resources (`:/icons/...`, see `src/app/Icons.h`).
+The app's icons. All are compiled in as Qt resources (`:/icons/...`, see `src/app/Icons.h`).
 
 ## material-icon-theme/: Material Icon Theme 5.40.0 (MIT)
 
 Coloured folder icons for the connection groups, unmodified, from the VS Code extension
-`PKief.material-icon-theme` 5.40.0 (https://github.com/material-extensions/vscode-material-icon-theme), as
-bundled in spark-commander. `LICENSE.txt`: MIT. The icons draw on Material Design Icons and Material Symbols
+`PKief.material-icon-theme` 5.40.0 (https://github.com/material-extensions/vscode-material-icon-theme).
+`LICENSE.txt`: MIT. The icons draw on Material Design Icons and Material Symbols
 (Apache 2.0).
 
 ## tabler/: Tabler Icons 3.52.0 (MIT)

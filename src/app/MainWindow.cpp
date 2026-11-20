@@ -1170,7 +1170,7 @@ void MainWindow::openSettings()
     connect(pages, &QListWidget::currentRowChanged, stack, &QStackedWidget::setCurrentIndex);
     pages->setCurrentRow(0);
 
-    // OK, Cancel, Apply, as spark-commander's on every platform
+    // OK, Cancel, Apply on every platform
     auto* ok = new QPushButton(tr("OK"));
     auto* cancel = new QPushButton(tr("Cancel"));
     auto* apply = new QPushButton(tr("Apply"));

@@ -3,5 +3,5 @@
 class QListWidget;
 class QWidget;
 
-// `list` as spark-commander's settings rail, in its panel
+// `list` as a rail of pages, in its panel
 QWidget* pageRail(QListWidget* list);

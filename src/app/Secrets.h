@@ -8,7 +8,7 @@
 class QObject;
 class QWidget;
 
-// Saved passwords, as spark-commander's: AES-256-GCM in passwords.json, keyed by the master password; the keychain keeps
+// Saved passwords: AES-256-GCM in passwords.json, keyed by the master password; the keychain keeps
 // the derived key, so the master password is asked for only where it is missing
 namespace secrets {
 
