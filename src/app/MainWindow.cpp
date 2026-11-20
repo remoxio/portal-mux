@@ -532,7 +532,11 @@ MainWindow::MainWindow(QWidget* parent)
     tree_ = new QTreeWidget;
     tree_->setHeaderHidden(true);
     tree_->setContextMenuPolicy(Qt::ActionsContextMenu);
-    tree_->addActions({connectAction_, sftpAction_, editAction_, deleteAction_, newAction});
+    auto* reloadSshConfig = new QAction(QIcon::fromTheme(QStringLiteral("view-refresh")), tr("&Reload ~/.ssh/config"), this);
+    connect(reloadSshConfig, &QAction::triggered, this, [this] { rebuildTree(selectedId()); });
+    auto* separator = new QAction(this);
+    separator->setSeparator(true);
+    tree_->addActions({connectAction_, sftpAction_, editAction_, deleteAction_, newAction, separator, reloadSshConfig});
     active_ = new QTreeWidget;
     active_->setHeaderHidden(true);
     active_->setContextMenuPolicy(Qt::CustomContextMenu);
