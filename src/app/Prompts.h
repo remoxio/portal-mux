@@ -12,15 +12,7 @@
 
 class QWidget;
 
-namespace prompts {
-
-// SessionListener's askTrust / askCredentials, UI thread; `always`: an "Always trust" box
-bool trust(QWidget* parent, const QString& title, const QString& details, bool* always = nullptr);
-bool credentials(QWidget* parent, const QString& prompt, rdc::Credentials& creds);
-
-} // namespace prompts
-
-// Blocks a worker on a UI-thread dialog; close() wakes waiters as declined
+// Blocks a worker on a UI-thread prompt; close() wakes waiters as declined
 class PromptBridge {
 public:
     PromptBridge(QObject* context, std::function<void()> declined) : context_(context), declined_(std::move(declined)) {}
@@ -49,6 +41,26 @@ public:
         return state->done && state->result;
     }
 
+    // From a worker: `show` puts up a panel on the UI thread and replies once
+    bool askLater(std::function<void(std::function<void(bool)>)> show)
+    {
+        auto state = std::make_shared<State>();
+        auto reply = [this, state](bool ok) {
+            {
+                std::lock_guard lock(mutex_);
+                if (state->done || closed_) return;
+                state->done = true;
+                state->result = ok;
+            }
+            cv_.notify_all();
+            if (!ok) QMetaObject::invokeMethod(context_, declined_, Qt::QueuedConnection);
+        };
+        QMetaObject::invokeMethod(context_, [show = std::move(show), reply] { show(reply); }, Qt::QueuedConnection);
+        std::unique_lock lock(mutex_);
+        cv_.wait(lock, [&] { return state->done || closed_; });
+        return state->done && state->result;
+    }
+
     void close()
     {
         {
@@ -68,3 +80,20 @@ private:
     std::condition_variable cv_;
     bool closed_ = false;
 };
+
+namespace prompts {
+
+// Dialogs, blocking the app: for prompts that belong to no tab; `always`: an "Always trust" box
+bool trust(QWidget* parent, const QString& title, const QString& details, bool* always = nullptr);
+bool credentials(QWidget* parent, const QString& prompt, rdc::Credentials& creds);
+
+// A tab's: a panel over `tab` that blocks only it; `reply` once, never if the tab goes first
+void trustIn(QWidget* tab, const QString& title, const QString& details, bool* always, std::function<void(bool)> reply);
+void credentialsIn(QWidget* tab, const QString& prompt, rdc::Credentials& creds, std::function<void(bool)> reply);
+void errorIn(QWidget* tab, const QString& title, const QString& text, const QString& again, std::function<void(bool again)> reply = {});
+
+// From a tab's session worker, waiting in `bridge`; on the UI thread itself, the dialog
+bool trust(PromptBridge& bridge, QWidget* tab, const QString& title, const QString& details, bool* always = nullptr);
+bool credentials(PromptBridge& bridge, QWidget* tab, const QString& prompt, rdc::Credentials& creds);
+
+} // namespace prompts

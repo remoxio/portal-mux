@@ -69,14 +69,12 @@ SftpView::~SftpView()
 
 bool SftpView::askTrust(const std::string& title, const std::string& details, bool*) // nothing here offers "Always trust"
 {
-    return prompts_.ask([this, t = QString::fromStdString(title), d = QString::fromStdString(details)] {
-        return prompts::trust(this, t, d);
-    });
+    return prompts::trust(prompts_, this, QString::fromStdString(title), QString::fromStdString(details));
 }
 
 bool SftpView::askCredentials(const std::string& prompt, rdc::Credentials& creds)
 {
-    return prompts_.ask([this, p = QString::fromStdString(prompt), &creds] { return prompts::credentials(this, p, creds); });
+    return prompts::credentials(prompts_, this, QString::fromStdString(prompt), creds);
 }
 
 void SftpView::setBusy(const QString& message) { status_->setText(message); }

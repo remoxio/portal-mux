@@ -12,10 +12,8 @@
 #include <QImage>
 #include <QLineEdit>
 #include <QMenu>
-#include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
-#include <QPointer>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QToolButton>
@@ -223,26 +221,20 @@ void TerminalView::onStateChanged(SessionState state)
 void TerminalView::onError(std::string message)
 {
     QMetaObject::invokeMethod(this, [this, text = QString::fromStdString(message)] {
-        QPointer<TerminalView> alive(this);
-        QMessageBox box(QMessageBox::Warning, tr("Connection error"), text, QMessageBox::Close, this);
-        const QAbstractButton* again = box.addButton(tr("&Reconnect"), QMessageBox::AcceptRole);
-        box.setDefaultButton(QMessageBox::Close);
-        box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's dialog: Enter presses the first button
-        box.exec();
-        if (alive && box.clickedButton() == again) emit reconnectRequested(); // Close keeps the tab
+        prompts::errorIn(this, tr("Connection error"), text, tr("&Reconnect"), [this](bool again) {
+            if (again) emit reconnectRequested(); // Close keeps the tab
+        });
     }, Qt::QueuedConnection);
 }
 
 bool TerminalView::askTrust(const std::string& title, const std::string& details, bool*)
 {
-    return prompts_.ask([this, t = QString::fromStdString(title), d = QString::fromStdString(details)] {
-        return prompts::trust(this, t, d);
-    });
+    return prompts::trust(prompts_, this, QString::fromStdString(title), QString::fromStdString(details));
 }
 
 bool TerminalView::askCredentials(const std::string& prompt, rdc::Credentials& creds)
 {
-    return prompts_.ask([this, p = QString::fromStdString(prompt), &creds] { return prompts::credentials(this, p, creds); });
+    return prompts::credentials(prompts_, this, QString::fromStdString(prompt), creds);
 }
 
 void TerminalView::onData(std::string bytes)

@@ -10,7 +10,6 @@
 #include <QPointer>
 #include <QGuiApplication>
 #include <QKeyEvent>
-#include <QMessageBox>
 #include <QMimeData>
 #include <QUrl>
 #include <QPainter>
@@ -227,33 +226,23 @@ void RemoteView::onStateChanged(SessionState state)
 void RemoteView::onError(std::string message)
 {
     QMetaObject::invokeMethod(this, [this, text = QString::fromStdString(message)] {
-        QPointer<RemoteView> alive(this);
-        // on the window: survives the tab closing
-        QMessageBox box(QMessageBox::Warning, tr("Connection error"), text, QMessageBox::Close, window());
-        const QAbstractButton* again = box.addButton(tr("&Reconnect"), QMessageBox::AcceptRole);
-        box.setDefaultButton(QMessageBox::Close);
-        box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's dialog: Enter presses the first button
-        box.exec();
-        if (!alive) return;
-        if (box.clickedButton() == again) emit reconnectRequested();
-        else emit closeRequested();
+        prompts::errorIn(this, tr("Connection error"), text, tr("&Reconnect"), [this](bool again) {
+            if (again) emit reconnectRequested();
+            else emit closeRequested();
+        });
     }, Qt::QueuedConnection);
 }
 
 bool RemoteView::askTrust(const std::string& title, const std::string& details, bool* always)
 {
-    // lives with the waiting worker
-    return prompts_.ask([this, t = QString::fromStdString(title), d = QString::fromStdString(details), always] {
-        const bool ok = prompts::trust(this, t, d, always);
-        if (ok && always && *always) emit alwaysTrustChosen();
-        return ok;
-    });
+    const bool ok = prompts::trust(prompts_, this, QString::fromStdString(title), QString::fromStdString(details), always);
+    if (ok && always && *always) QMetaObject::invokeMethod(this, [this] { emit alwaysTrustChosen(); }, Qt::QueuedConnection);
+    return ok;
 }
 
 bool RemoteView::askCredentials(const std::string& prompt, rdc::Credentials& creds)
 {
-    // valid until ask() returns
-    return prompts_.ask([this, p = QString::fromStdString(prompt), &creds] { return prompts::credentials(this, p, creds); });
+    return prompts::credentials(prompts_, this, QString::fromStdString(prompt), creds);
 }
 
 void RemoteView::onAudio(const int16_t* samples, size_t frames, int sampleRate, int channels)
@@ -583,7 +572,7 @@ void RemoteView::dropEvent(QDropEvent* event)
         if (!view) return;
         if (error.empty()) return emit view->message(tr("Copied %n file(s) to the remote side", "", n), 8000);
         emit view->message({}, 0);
-        QMessageBox::warning(view, tr("Copy Files"), QString::fromStdString(error));
+        prompts::errorIn(view, tr("Copy Files"), QString::fromStdString(error), {});
     });
 }
 
