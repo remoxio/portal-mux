@@ -2,6 +2,9 @@
 
 #include "app/ConnectionStore.h"
 #include "app/Icons.h"
+#include "app/Prompts.h"
+#include "ssh/SshConnection.h"
+#include "ssh/SshTunnel.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -9,6 +12,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -28,6 +32,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <thread>
 
 std::string sshServerSecret(const QString& id) { return "ssh-server/" + id.toStdString(); }
 
@@ -73,6 +78,49 @@ void offerNewSshServer(QComboBox* box, SshServersRefill refill)
 namespace {
 
 constexpr int iconSize = 20, gap = 10, maxRows = 8, editSize = 16, editBox = 28;
+
+// One login on a worker, its prompts over `dialogs`; done(error) on the UI thread, "" = logged in; stops with its parent
+class SshTest : public QObject, private rdc::SessionListener {
+public:
+    SshTest(rdc::SshConnection::Params params, QWidget* dialogs, std::function<void(QString)> done)
+        : QObject(dialogs), dialogs_(dialogs), prompts_(this, [] {}), ssh_(*this, std::move(params))
+    {
+        worker_ = std::jthread([this, done = std::move(done)](std::stop_token stop) {
+            const bool ok = ssh_.open([&] { return stop.stop_requested(); });
+            const QString error = ok ? QString() : ssh_.error().empty() ? SshServersPage::tr("Cancelled.") : QString::fromStdString(ssh_.error());
+            QMetaObject::invokeMethod(this, [this, done, error] {
+                done(error);
+                deleteLater();
+            }, Qt::QueuedConnection);
+        });
+    }
+    ~SshTest() override
+    {
+        prompts_.close();
+        worker_.request_stop();
+        ssh_.abort();
+        worker_.join();
+    }
+
+private:
+    void onStateChanged(rdc::SessionState) override {}
+    void onError(std::string) override {}
+    bool askTrust(const std::string& title, const std::string& details, bool* always) override
+    {
+        return prompts_.ask([this, t = QString::fromStdString(title), d = QString::fromStdString(details), always] {
+            return prompts::trust(dialogs_, t, d, always);
+        });
+    }
+    bool askCredentials(const std::string& prompt, rdc::Credentials& creds) override
+    {
+        return prompts_.ask([this, p = QString::fromStdString(prompt), &creds] { return prompts::credentials(dialogs_, p, creds); });
+    }
+
+    QWidget* dialogs_;
+    PromptBridge prompts_;
+    rdc::SshConnection ssh_;
+    std::jthread worker_;
+};
 
 // name over user@host, a line between rows, a pencil on the right
 class ServerRow : public QStyledItemDelegate {
@@ -329,7 +377,37 @@ void SshServersPage::edit(int row)
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     QPushButton* ok = buttons->button(QDialogButtonBox::Ok);
     ok->setEnabled(!s.host.isEmpty());
-    connect(host, &QLineEdit::textChanged, ok, [ok](const QString& text) { ok->setEnabled(!text.trimmed().isEmpty()); });
+    QPushButton* test = buttons->addButton(tr("&Test Connection"), QDialogButtonBox::ActionRole);
+    test->setToolTip(tr("Logs in once with these values; nothing is saved"));
+    test->setEnabled(!s.host.isEmpty());
+    auto* result = new QLabel;
+    result->setWordWrap(true);
+    result->hide();
+    connect(host, &QLineEdit::textChanged, ok, [ok, test](const QString& text) {
+        ok->setEnabled(!text.trimmed().isEmpty());
+        test->setEnabled(!text.trimmed().isEmpty());
+    });
+    connect(test, &QPushButton::clicked, sheet, [=, this] {
+        const QString who = user->text().trimmed();
+        rdc::SshConnection::Params p = rdc::SshTunnel::parse(((who.isEmpty() ? QString() : who + QLatin1Char('@')) + host->text().trimmed()).toStdString());
+        p.knownHostsFile = (QFileInfo(settings_->fileName()).absolutePath() + QStringLiteral("/known_hosts")).toStdString(); // the app's
+        const bool key = auth->currentData().toString() == QLatin1String("publicKey");
+        if (key) p.keyFile = keyFile->text().trimmed().toStdString();
+        auto run = [=](const QString& saved) mutable {
+            if (!key) p.password = (password->text().isEmpty() ? saved : password->text()).toStdString();
+            test->setEnabled(false);
+            result->setStyleSheet({});
+            result->setText(tr("Connecting…"));
+            result->show();
+            new SshTest(p, sheet, [=](const QString& error) {
+                test->setEnabled(true);
+                result->setText(error.isEmpty() ? tr("Logged in.") : error);
+                result->setStyleSheet(error.isEmpty() ? QString() : QStringLiteral("color: #da4453"));
+            });
+        };
+        if (!key && password->text().isEmpty() && !adding) secrets::read(sshServerSecret(s.id), sheet, run);
+        else run({});
+    });
     connect(buttons, &QDialogButtonBox::accepted, sheet, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, sheet, &QDialog::reject);
     auto* layout = new QVBoxLayout(sheet);
@@ -341,6 +419,7 @@ void SshServersPage::edit(int row)
     layout->addWidget(heading);
 #endif
     layout->addLayout(form);
+    layout->addWidget(result);
     layout->addWidget(buttons);
 
     connect(sheet, &QDialog::accepted, this, [=, this]() mutable {
