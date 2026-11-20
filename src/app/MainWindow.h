@@ -17,6 +17,7 @@ struct TerminalListener;
 
 class ActivityBar;
 class LibvirtVms;
+class HyperVView;
 class ProxmoxView;
 class QAction;
 class QLabel;
@@ -89,6 +90,7 @@ private:
     void reattach(QWidget* detachedWindow);
     void styleStatusCells();
     bool confirmCloseTab(int index);
+    void openHyperVConsole(const rdc::Connection& console);
     void openProxmoxConsole(const rdc::Connection& connection, const QString& key, QWidget* replace, const QString& address,
                             QObject* tunnel);
     void openProxmoxTerminal(const QString& key, QWidget* replace, const QString& name, const QString& address,
@@ -117,6 +119,7 @@ private:
     std::vector<rdc::Connection> sshConfig_;
 
     ProxmoxView* proxmox_ = nullptr;
+    HyperVView* hyperv_ = nullptr;
     QSettings* settings_;
     bool blurPending_ = false;
     Gamepads* gamepads_ = nullptr;

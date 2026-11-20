@@ -3,6 +3,7 @@
 #include "android/ScrcpyMessages.h"
 #include "app/Addresses.h"
 #include "app/DomainXml.h"
+#include "app/HyperV.h"
 #include "app/KrdcImport.h"
 #include "app/Proxmox.h"
 #include "core/Connection.h"
@@ -467,8 +468,32 @@ static void proxmoxTests()
     assert(!proxmox::usesSpice(R"({"data":{"status":"running"}})") && !proxmox::usesSpice("x"));
 }
 
+static void hypervTests()
+{
+    using hyperv::Action;
+    using hyperv::State;
+    QString error;
+    const auto l = hyperv::parseListing(R"({"vms":[{"id":"8d1c0e2a-0b5e-4c4b-9a55-0123456789ab","name":"Xubuntu","state":"Running","cpu":12,
+        "memory":2147483648,"uptime":75,"generation":2,"status":"Operating normally","ip":"192.168.122.80"},
+        {"id":"9d1c0e2a-0b5e-4c4b-9a55-0123456789ab","name":"W","state":"FastSavedCritical","cpu":0,"memory":0,"uptime":0,
+        "generation":1,"status":"","ip":""}],"errors":["'W' failed to start."]})", &error);
+    assert(l && l->vms.size() == 2 && l->vms[0].state == State::Running && l->vms[0].memory == 2147483648LL && l->vms[0].cpu == 12);
+    assert(l->vms[0].ip == "192.168.122.80" && l->vms[1].state == State::Saved && l->errors.size() == 1 && !l->noModule);
+    assert(hyperv::parseListing(R"({"noModule":true})", &error)->noModule);
+    assert(!hyperv::parseListing("Get-VM : You do not have the required permission", &error) && !error.isEmpty());
+    assert(hyperv::parseState(QStringLiteral("Reset")) == State::Resetting && hyperv::parseState(QStringLiteral("Hibernated")) == State::Other);
+    assert(hyperv::actionScript(Action::Start, "x'; Remove-Item C:\\ -Recurse; '").isEmpty()); // only GUIDs reach PowerShell
+    assert(hyperv::actionScript(Action::TurnOff, "8d1c0e2a-0b5e-4c4b-9a55-0123456789ab").contains(QLatin1String("Stop-VM -VM $vm -TurnOff")));
+    assert(hyperv::answerEnd("<<portal-mux ok>>") == true && hyperv::answerEnd("<<portal-mux error>>") == false && !hyperv::answerEnd("ok"));
+    assert(hyperv::allowed(Action::Start, State::Saved) && !hyperv::allowed(Action::Start, State::Running));
+    assert(hyperv::allowed(Action::TurnOff, State::Stopping) && !hyperv::allowed(Action::TurnOff, State::Off));
+    const std::string loop = hyperv::loopCommand();
+    assert(loop.rfind("powershell ", 0) == 0 && loop.size() < 8000); // cmd.exe's limit
+}
+
 int main()
 {
+    hypervTests();
     forwardTests();
     telnetTests();
     proxmoxTests();

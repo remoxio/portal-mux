@@ -10,6 +10,7 @@
 #include "app/LockKeys.h"
 #include "app/Look.h"
 #include "app/MonitorWindow.h"
+#include "app/HyperVView.h"
 #include "app/ProxmoxView.h"
 #include "app/Keymap.h"
 #ifdef PORTAL_MUX_LIBVIRT
@@ -598,6 +599,10 @@ MainWindow::MainWindow(QWidget* parent)
     connect(proxmox_, &ProxmoxView::terminalReady, this, &MainWindow::openProxmoxTerminal);
     connect(proxmox_, &ProxmoxView::message, this, [this](const QString& text) { status_->showMessage(text, 8000); });
     addView("proxmox", icons::brand("proxmox-line"), tr("Proxmox"), proxmox_, proxmox_->titleActions(), tr("Show Pro&xmox"));
+    hyperv_ = new HyperVView(settings_, configDir_);
+    connect(hyperv_, &HyperVView::openRequested, this, &MainWindow::openHyperVConsole);
+    connect(hyperv_, &HyperVView::message, this, [this](const QString& text) { status_->showMessage(text, 8000); });
+    addView("hyperv", icons::tabler("brand-windows"), tr("Hyper-V Manager"), hyperv_, hyperv_->titleActions(), tr("Show &Hyper-V Manager"));
     addView("active", icons::lucide("panels-top-left"), tr("Sessions"), active_, {});
     const QString savedView = settings_->value(QStringLiteral("window/sidebarView")).toString();
     for (int i = 0; i < views_->count(); ++i)
@@ -1190,6 +1195,7 @@ void MainWindow::openSettings()
     connect(sshServers, &SshServersPage::changed, &dialog, changed);
     auto commit = [&] {
         sshServers->apply();
+        hyperv_->reloadServers();
         applied = current();
         changed();
     };
@@ -1624,7 +1630,8 @@ QScrollArea* MainWindow::createDisplay(const Connection& c)
     scroll->setWidget(view);
     scroll->setAlignment(Qt::AlignCenter);
     scroll->setProperty("protocol", protocolLabel(c.protocol));
-    scroll->setProperty("address", c.protocol == Protocol::Android && c.host.empty()
+    scroll->setProperty("address", !c.option("address").empty() ? QString::fromStdString(c.option("address")) // set by a manager
+                                   : c.protocol == Protocol::Android && c.host.empty()
                                        ? tr("the only device")
                                        : QString::fromStdString(c.host) + (c.protocol == Protocol::Android ? QString()
                                                                                                            : QStringLiteral(":%1").arg(c.effectivePort())));
@@ -1799,6 +1806,20 @@ void MainWindow::openProxmoxConsole(const Connection& c, const QString& key, QWi
     connect(view, &RemoteView::closeRequested, scroll, &QObject::deleteLater);
     view->setFocus();
     updateSessionActions();
+}
+
+void MainWindow::openHyperVConsole(const Connection& console)
+{
+    for (int i = 0; i < tabs_->count(); ++i)
+        if (tabs_->widget(i)->property("connectionId") == QString::fromStdString(console.id)) {
+            tabs_->setCurrentIndex(i);
+            if (RemoteView* view = currentView()) view->setFocus();
+            return;
+        }
+    readSecrets(this, settings_, console, [this](Connection c) {
+        if (c.password.empty()) c.password = c.option("tunnel.password"); // the server's Windows account
+        openSession(c);
+    });
 }
 
 void MainWindow::openProxmoxTerminal(const QString& key, QWidget* replace, const QString& name, const QString& address,

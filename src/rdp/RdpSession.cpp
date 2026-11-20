@@ -742,6 +742,8 @@ bool RdpSession::applySettings()
         ok = freerdp_settings_set_pointer_len(st, FreeRDP_LoadBalanceInfo, lb.data(), lb.size());
     if (const std::string blob = c.option("preconnectionBlob"); ok && !blob.empty())
         ok = setString(FreeRDP_PreconnectionBlob, blob) && setBool(FreeRDP_SendPreconnectionPdu, true);
+    if (ok && c.flag("vmConnect")) // Hyper-V's console on port 2179: CredSSP without negotiation
+        ok = setBool(FreeRDP_VmConnectMode, true) && setBool(FreeRDP_NegotiateSecurityLayer, false);
 
     for (size_t start = 0, end; ok && start <= c.option("drives").size(); start = end + 1) {
         const std::string drives = c.option("drives");

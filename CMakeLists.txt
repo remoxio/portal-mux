@@ -105,6 +105,9 @@ qt_add_executable(portal-mux WIN32 MACOSX_BUNDLE
     src/app/PageRail.cpp
     src/app/PanelTree.cpp
     src/app/Prompts.cpp
+    src/app/HyperV.cpp
+    src/app/HyperVHost.cpp
+    src/app/HyperVView.cpp
     src/app/Proxmox.cpp
     src/app/ProxmoxClient.cpp
     src/app/ProxmoxTerminal.cpp
