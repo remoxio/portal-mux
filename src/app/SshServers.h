@@ -48,5 +48,5 @@ private:
     QStringList forgotten_;           // removed servers' ids
     QListWidget* list_;
     QLabel* empty_;
-    QPushButton *edit_, *remove_;
+    QPushButton* remove_;
 };

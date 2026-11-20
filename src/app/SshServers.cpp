@@ -16,26 +16,52 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPointer>
 #include <QPushButton>
 #include <QSettings>
 #include <QStyledItemDelegate>
+#include <QToolTip>
 #include <QUuid>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <functional>
 
 std::string sshServerSecret(const QString& id) { return "ssh-server/" + id.toStdString(); }
 
 namespace {
 
-constexpr int iconSize = 20, gap = 10, maxRows = 8;
+constexpr int iconSize = 20, gap = 10, maxRows = 8, editSize = 16, editBox = 28;
 
-// name over user@host, a line between rows
+// name over user@host, a line between rows, a pencil on the right
 class ServerRow : public QStyledItemDelegate {
 public:
-    using QStyledItemDelegate::QStyledItemDelegate;
+    ServerRow(std::function<void(int)> onEdit, QObject* parent) : QStyledItemDelegate(parent), onEdit_(std::move(onEdit)) {}
+
+    static QRectF editRect(const QRectF& r) { return {r.right() - 6 - editBox, r.center().y() - editBox / 2.0, qreal(editBox), qreal(editBox)}; }
+
+    bool editorEvent(QEvent* event, QAbstractItemModel* model, const QStyleOptionViewItem& option, const QModelIndex& index) override
+    {
+        const auto type = event->type();
+        if (type == QEvent::MouseButtonRelease || type == QEvent::MouseButtonDblClick) {
+            auto* mouse = static_cast<QMouseEvent*>(event);
+            if (mouse->button() == Qt::LeftButton && editRect(option.rect).contains(mouse->position())) {
+                if (type == QEvent::MouseButtonRelease) onEdit_(index.row());
+                return true; // not activated as well
+            }
+        }
+        return QStyledItemDelegate::editorEvent(event, model, option, index);
+    }
+
+    bool helpEvent(QHelpEvent* event, QAbstractItemView* view, const QStyleOptionViewItem& option, const QModelIndex& index) override
+    {
+        if (event->type() != QEvent::ToolTip || !editRect(option.rect).contains(event->pos()))
+            return QStyledItemDelegate::helpEvent(event, view, option, index);
+        QToolTip::showText(event->globalPos(), SshServersPage::tr("Edit"), view, editRect(option.rect).toRect());
+        return true;
+    }
 
     static QFont small(QFont font)
     {
@@ -78,7 +104,7 @@ public:
         p->drawPixmap(QPointF(r.left() + 8, r.center().y() - iconSize / 2.0), icon);
         const QFont smallFont = small(o.font);
         const int nameHeight = o.fontMetrics.height(), lineHeight = QFontMetrics(smallFont).height();
-        const qreal top = r.center().y() - (nameHeight + lineHeight) / 2.0, width = r.right() - textLeft - 8;
+        const qreal top = r.center().y() - (nameHeight + lineHeight) / 2.0, width = editRect(r).left() - gap - textLeft;
         p->setPen(text);
         p->setFont(o.font);
         p->drawText(QRectF(textLeft, top, width, nameHeight), Qt::AlignLeft | Qt::AlignVCenter,
@@ -87,8 +113,17 @@ public:
         p->setFont(smallFont);
         p->drawText(QRectF(textLeft, top + nameHeight, width, lineHeight), Qt::AlignLeft | Qt::AlignVCenter,
                     QFontMetrics(smallFont).elidedText(index.data(Qt::UserRole).toString(), Qt::ElideRight, int(width)));
+        QPixmap pencil = icons::tabler("pencil").pixmap(QSize(editSize, editSize), p->device()->devicePixelRatioF());
+        QPainter tint(&pencil);
+        tint.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        tint.fillRect(pencil.rect(), dim);
+        tint.end();
+        p->drawPixmap(editRect(r).center() - QPointF(editSize, editSize) / 2, pencil);
         p->restore();
     }
+
+private:
+    std::function<void(int)> onEdit_;
 };
 
 } // namespace
@@ -129,7 +164,7 @@ std::optional<SshServer> findSshServer(QSettings* settings, const QString& id)
 SshServersPage::SshServersPage(QSettings* settings, QWidget* parent) : QWidget(parent), settings_(settings)
 {
     list_ = new QListWidget;
-    list_->setItemDelegate(new ServerRow(list_));
+    list_->setItemDelegate(new ServerRow([this](int row) { edit(row); }, list_));
     list_->setFrameShape(QFrame::NoFrame);
     list_->setAttribute(Qt::WA_MacShowFocusRect, false);
     list_->viewport()->setAutoFillBackground(false);
@@ -139,14 +174,12 @@ SshServersPage::SshServersPage(QSettings* settings, QWidget* parent) : QWidget(p
     empty_->setAlignment(Qt::AlignCenter);
     empty_->setEnabled(false); // dimmed
     empty_->setMinimumHeight(56);
-    edit_ = new QPushButton(tr("Edit…"));
     auto* add = new QPushButton(QStringLiteral("+"));
     add->setToolTip(tr("Add an SSH server"));
     remove_ = new QPushButton(QStringLiteral("−"));
     remove_->setToolTip(tr("Remove the selected SSH server"));
     auto* buttons = new QHBoxLayout;
     buttons->addStretch();
-    buttons->addWidget(edit_);
     buttons->addWidget(add);
     buttons->addWidget(remove_);
     auto* card = new QGroupBox;
@@ -158,12 +191,8 @@ SshServersPage::SshServersPage(QSettings* settings, QWidget* parent) : QWidget(p
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(card);
 
-    connect(list_, &QListWidget::currentRowChanged, this, [this](int row) {
-        edit_->setEnabled(row >= 0);
-        remove_->setEnabled(row >= 0);
-    });
+    connect(list_, &QListWidget::currentRowChanged, this, [this](int row) { remove_->setEnabled(row >= 0); });
     connect(list_, &QListWidget::itemActivated, this, [this](QListWidgetItem* item) { edit(list_->row(item)); });
-    connect(edit_, &QPushButton::clicked, this, [this] { edit(list_->currentRow()); });
     connect(add, &QPushButton::clicked, this, [this] { edit(-1); });
     connect(remove_, &QPushButton::clicked, this, &SshServersPage::remove);
 
