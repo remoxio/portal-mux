@@ -266,18 +266,19 @@ void HyperVView::reloadServers()
 
 void HyperVView::addHost()
 {
-    std::vector<SshServer> servers;
-    for (const SshServer& s : loadSshServers(settings_))
-        if (!ids_.contains(s.id)) servers.push_back(s);
-    if (servers.empty()) {
-        QMessageBox::information(this, tr("Add Hyper-V Host"),
-                                 tr("Add the Hyper-V host in Configuration → Settings → SSH Servers first, with an administrator's account."));
-        return;
-    }
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Add Hyper-V Host"));
     auto* server = new QComboBox;
-    for (const SshServer& s : servers) server->addItem(icons::lucide("server"), s.name + QStringLiteral("  (") + s.address() + QLatin1Char(')'), s.id);
+    server->setPlaceholderText(tr("Choose an SSH server"));
+    server->setSizeAdjustPolicy(QComboBox::AdjustToContents); // starts empty
+    SshServersRefill fill = [&](const QString& select, const std::vector<SshServer>& servers) {
+        server->clear();
+        for (const SshServer& s : servers)
+            if (!ids_.contains(s.id)) server->addItem(icons::lucide("server"), s.name + QStringLiteral("  (") + s.address() + QLatin1Char(')'), s.id);
+        offerNewSshServer(server, fill);
+        server->setCurrentIndex(server->findData(select));
+    };
+    fill({}, loadSshServers(settings_));
     auto* hint = new QLabel(tr("Portal Mux runs PowerShell on it over SSH: it needs OpenSSH Server (an optional feature of Windows), "
                                "and the account must be an administrator or in Hyper-V Administrators."));
     hint->setWordWrap(true);
@@ -287,6 +288,10 @@ void HyperVView::addHost()
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    QPushButton* ok = buttons->button(QDialogButtonBox::Ok);
+    auto validate = [server, ok] { ok->setEnabled(!server->currentData().toString().isEmpty()); };
+    connect(server, &QComboBox::currentIndexChanged, &dialog, validate);
+    validate();
     auto* layout = new QVBoxLayout(&dialog);
     layout->addLayout(form);
     layout->addWidget(buttons);

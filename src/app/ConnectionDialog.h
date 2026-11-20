@@ -6,6 +6,7 @@
 #include <QDialog>
 
 #include <map>
+#include <vector>
 
 class QComboBox;
 class QFormLayout;
@@ -29,9 +30,11 @@ private:
     void buildPropertyTabs(const std::map<std::string, std::string>& values);
     std::map<std::string, std::string> currentValues() const;
     rdc::Protocol protocol() const;
+    void fillServers(QComboBox* box, const QStringList& noneLabels, const QString& select); // the SSH tunnel's or jump host's
 
     rdc::Connection original_;
     std::vector<SshServer> sshServers_; // the SSH tunnel's choices
+    std::vector<std::pair<QComboBox*, QStringList>> serverBoxes_; // with their "none" labels
     QTabWidget* tabs_;
     QFormLayout* generalForm_;
     QLineEdit *name_, *host_, *username_, *password_;

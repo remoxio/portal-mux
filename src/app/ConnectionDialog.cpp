@@ -130,6 +130,7 @@ void ConnectionDialog::buildPropertyTabs(const std::map<std::string, std::string
     for (QWidget* row : generalRows_) generalForm_->removeRow(row);
     generalRows_.clear();
     editors_.clear();
+    serverBoxes_.clear();
 
     std::map<std::string, QFormLayout*> forms;
     for (const PropertyDef& d : rdc::properties(protocol())) {
@@ -172,17 +173,16 @@ void ConnectionDialog::buildPropertyTabs(const std::map<std::string, std::string
         }
         case PropertyKind::Choice: {
             auto* e = new QComboBox;
-            for (const rdc::Choice& ch : d.choices) e->addItem(tr(ch.label.c_str()), QString::fromStdString(ch.value));
             if (d.key == "tunnel" || d.key == "jumpHost") {
                 e->setMinimumContentsLength(24);
-                for (const SshServer& s : sshServers_) {
-                    e->addItem(icons::lucide("server"), s.name, s.id);
-                    e->setItemData(e->count() - 1, s.summary(), Qt::ToolTipRole);
-                }
-                if (!value.isEmpty() && e->findData(value) < 0) // imported, or removed in Settings
-                    e->addItem(QUuid::fromString(value).isNull() ? value : tr("A removed SSH server"), value);
+                QStringList none; // its first items, the value ""
+                for (const rdc::Choice& ch : d.choices) none << tr(ch.label.c_str());
+                serverBoxes_.emplace_back(e, none);
+                fillServers(e, none, value);
+            } else {
+                for (const rdc::Choice& ch : d.choices) e->addItem(tr(ch.label.c_str()), QString::fromStdString(ch.value));
+                e->setCurrentIndex(std::max(0, e->findData(value)));
             }
-            e->setCurrentIndex(std::max(0, e->findData(value)));
             editor = field = e;
             break;
         }
@@ -206,7 +206,7 @@ void ConnectionDialog::buildPropertyTabs(const std::map<std::string, std::string
         if (form == generalForm_) generalRows_.push_back(field);
         editors_[d.key] = editor;
         if (d.key == "tunnel" || d.key == "jumpHost") {
-            auto* note = new QLabel(tr("SSH servers are added in Settings → SSH Servers."));
+            auto* note = new QLabel(tr("New SSH Server… in the list adds one to Settings → SSH Servers."));
             note->setEnabled(false); // dimmed
             form->addRow(QString(), note);
             if (form == generalForm_) generalRows_.push_back(note);
@@ -229,6 +229,25 @@ std::map<std::string, std::string> ConnectionDialog::currentValues() const
         }
     }
     return values;
+}
+
+void ConnectionDialog::fillServers(QComboBox* box, const QStringList& noneLabels, const QString& select)
+{
+    box->clear();
+    for (const QString& label : noneLabels) box->addItem(label, QString());
+    for (const SshServer& s : sshServers_) {
+        box->addItem(icons::lucide("server"), s.name, s.id);
+        box->setItemData(box->count() - 1, s.summary(), Qt::ToolTipRole);
+    }
+    if (!select.isEmpty() && box->findData(select) < 0) // imported, or removed in Settings
+        box->addItem(QUuid::fromString(select).isNull() ? select : tr("A removed SSH server"), select);
+    offerNewSshServer(box, [this, box, noneLabels](const QString& chosen, const std::vector<SshServer>& servers) {
+        sshServers_ = servers;
+        for (const auto& [other, labels] : serverBoxes_)
+            if (other != box) fillServers(other, labels, other->currentData().toString());
+        fillServers(box, noneLabels, chosen);
+    });
+    box->setCurrentIndex(std::max(0, box->findData(select)));
 }
 
 rdc::Connection ConnectionDialog::connection() const

@@ -33,6 +33,45 @@ std::string sshServerSecret(const QString& id) { return "ssh-server/" + id.toStd
 
 namespace {
 
+QSettings* editorSettings = nullptr;
+std::function<void(QWidget*)> editor;
+constexpr int NewServerRole = Qt::UserRole + 100; // the "New SSH Server…" item; its data stays empty
+
+} // namespace
+
+void setSshServersEditor(QSettings* settings, std::function<void(QWidget*)> open)
+{
+    editorSettings = settings;
+    editor = std::move(open);
+}
+
+void offerNewSshServer(QComboBox* box, SshServersRefill refill)
+{
+    if (!editor) return;
+    if (box->count() > 0) box->insertSeparator(box->count());
+    box->addItem(icons::tabler("plus"), SshServersPage::tr("New SSH Server…"));
+    box->setItemData(box->count() - 1, true, NewServerRole);
+    if (box->property("offersNewSshServer").toBool()) return; // connected when first offered
+    box->setProperty("offersNewSshServer", true);
+    QObject::connect(box, &QComboBox::currentIndexChanged, box, [box](int index) {
+        if (!box->itemData(index, NewServerRole).toBool()) box->setProperty("chosenSshServer", box->itemData(index));
+    });
+    QObject::connect(box, &QComboBox::activated, box, [box, refill](int index) {
+        if (!box->itemData(index, NewServerRole).toBool()) return;
+        QStringList before;
+        for (const SshServer& s : loadSshServers(editorSettings)) before << s.id;
+        const QString chosen = box->property("chosenSshServer").toString();
+        editor(box->window());
+        const std::vector<SshServer> servers = loadSshServers(editorSettings);
+        QString select = chosen;
+        for (const SshServer& s : servers)
+            if (!before.contains(s.id)) select = s.id;
+        refill(select, servers);
+    });
+}
+
+namespace {
+
 constexpr int iconSize = 20, gap = 10, maxRows = 8, editSize = 16, editBox = 28;
 
 // name over user@host, a line between rows, a pencil on the right

@@ -58,7 +58,7 @@ private:
     int sidebarOpacity(bool expanded) const;
     bool sidebarBlur(bool expanded) const;
     bool applySidebar(); // false while blur is pending
-    void openSettings();
+    void openSettings(const QString& page = {}, QWidget* parent = nullptr); // page: "sshServers"
     QFont terminalFont() const;
     void configureTerminal(TerminalView* terminal);
     void rebuildTree(const std::string& selectId = {});

@@ -5,10 +5,12 @@
 #include <QStringList>
 #include <QWidget>
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
 
+class QComboBox;
 class QLabel;
 class QListWidget;
 class QPushButton;
@@ -23,6 +25,13 @@ struct SshServer {
 std::vector<SshServer> loadSshServers(QSettings* settings);
 std::optional<SshServer> findSshServer(QSettings* settings, const QString& id);
 std::string sshServerSecret(const QString& id); // its password's name in secrets
+
+// Settings → SSH Servers as a dialog above `parent`; set by the main window
+void setSshServersEditor(QSettings* settings, std::function<void(QWidget* parent)> open);
+// a server list's last items: a separator and "New SSH Server…", which opens the editor, then
+// refill(the server added there, else the one chosen before, else "") with the servers as they are then
+using SshServersRefill = std::function<void(const QString& select, const std::vector<SshServer>& servers)>;
+void offerNewSshServer(QComboBox* box, SshServersRefill refill);
 
 // Settings → SSH Servers; passwords are saved on apply()
 class SshServersPage : public QWidget {

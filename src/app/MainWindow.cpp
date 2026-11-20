@@ -439,7 +439,7 @@ MainWindow::MainWindow(QWidget* parent)
     view->addAction(tr("Open Test &Pattern"), this, &MainWindow::openTestPattern);
     QMenu* settings = menuBar()->addMenu(tr("&Configuration"));
     settings->addAction(QIcon::fromTheme(QStringLiteral("configure")), tr("&Settings…"), QKeySequence::Preferences, this,
-                        &MainWindow::openSettings)
+                        [this] { openSettings(); })
         ->setMenuRole(QAction::PreferencesRole);
     // placeholder; in the app menu on macOS
     settings->addAction(QIcon::fromTheme(QStringLiteral("configure-shortcuts")), tr("S&hortcuts…"), this, [this] {
@@ -606,6 +606,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(proxmox_, &ProxmoxView::terminalReady, this, &MainWindow::openProxmoxTerminal);
     connect(proxmox_, &ProxmoxView::message, this, [this](const QString& text) { status_->showMessage(text, 8000); });
     addView("proxmox", icons::brand("proxmox-line"), tr("Proxmox"), proxmox_, proxmox_->titleActions(), tr("Show Pro&xmox"));
+    setSshServersEditor(settings_, [this](QWidget* parent) { openSettings(QStringLiteral("sshServers"), parent); });
     hyperv_ = new HyperVView(settings_, configDir_);
     connect(hyperv_, &HyperVView::openRequested, this, &MainWindow::openHyperVConsole);
     connect(hyperv_, &HyperVView::message, this, [this](const QString& text) { status_->showMessage(text, 8000); });
@@ -627,7 +628,7 @@ MainWindow::MainWindow(QWidget* parent)
 #endif
     workLayout->addWidget(tabs_, 1);
     workLayout->addWidget(status_);
-    tabs_->setTabsClosable(true);
+    tabs_->setTabsClosable(settings_->value(QStringLiteral("tabs/closeButtons"), true).toBool());
     tabs_->setDocumentMode(true);
     tabs_->setMovable(true);
     tabs_->tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -994,12 +995,13 @@ void MainWindow::quickConnect()
     dialog.exec();
 }
 
-void MainWindow::openSettings()
+void MainWindow::openSettings(const QString& page, QWidget* parent)
 {
-    QDialog dialog(this);
+    QDialog dialog(parent ? parent : this);
     dialog.setWindowTitle(tr("Settings"));
     // pages apply at once; Cancel restores these as last applied
-    const QStringList groups = {QStringLiteral("appearance"), QStringLiteral("sidebar"), QStringLiteral("font"), QStringLiteral("sshServers")};
+    const QStringList groups = {QStringLiteral("appearance"), QStringLiteral("sidebar"), QStringLiteral("tabs"), QStringLiteral("font"),
+                                QStringLiteral("sshServers")};
     auto current = [this, groups] {
         QMap<QString, QVariant> values;
         for (const QString& key : settings_->allKeys())
@@ -1171,13 +1173,23 @@ void MainWindow::openSettings()
         stack->addWidget(page);
         new QListWidgetItem(icons::lucide(icon), name, pages);
     };
-    addPage("panels-top-left", tr("Layout"), {appearance, sidebar});
+    auto* tabs = new QGroupBox(tr("Tabs"));
+    auto* closeButtons = new QCheckBox(tr("A close button on each tab"));
+    closeButtons->setToolTip(tr("Without it a session ends from the menu or the toolbar (Disconnect)"));
+    closeButtons->setChecked(settings_->value(QStringLiteral("tabs/closeButtons"), true).toBool());
+    connect(closeButtons, &QCheckBox::toggled, &dialog, [this](bool on) {
+        settings_->setValue(QStringLiteral("tabs/closeButtons"), on);
+        tabs_->setTabsClosable(on);
+    });
+    (new QVBoxLayout(tabs))->addWidget(closeButtons);
+    addPage("panels-top-left", tr("Layout"), {appearance, sidebar, tabs});
     addPage("type", tr("Font"), {mainFont, sshFont});
     auto* sshServers = new SshServersPage(settings_);
     addPage("server", tr("SSH Servers"), {sshServers});
+    const int sshRow = pages->count() - 1;
     addPage("lock", tr("Passwords"), {secrets::page()});
     connect(pages, &QListWidget::currentRowChanged, stack, &QStackedWidget::setCurrentIndex);
-    pages->setCurrentRow(0);
+    pages->setCurrentRow(page == QLatin1String("sshServers") ? sshRow : 0);
 
     // OK, Cancel, Apply on every platform
     auto* ok = new QPushButton(tr("OK"));
@@ -1227,6 +1239,7 @@ void MainWindow::openSettings()
     for (auto it = applied.cbegin(); it != applied.cend(); ++it) settings_->setValue(it.key(), it.value());
     applyColorScheme(settings_);
     applySidebar();
+    tabs_->setTabsClosable(settings_->value(QStringLiteral("tabs/closeButtons"), true).toBool());
     QFont font = look::systemFont(QFontDatabase::GeneralFont);
     if (const QString saved = settings_->value(QStringLiteral("font/main")).toString(); !saved.isEmpty()) font.fromString(saved);
     QApplication::setFont(font);
