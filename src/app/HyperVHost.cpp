@@ -126,7 +126,8 @@ bool HyperVHost::exchange(void* ch, const QString& script, QByteArray& answer, b
     while (!stop.stop_requested() && Clock::now() < deadline) {
         while (ssh_channel_read_nonblocking(channel, buffer, sizeof buffer, 1) > 0) {} // stderr: unused, but must not fill up
         const int n = ssh_channel_read_timeout(channel, buffer, sizeof buffer, 0, 250);
-        if (n == SSH_ERROR || (n == 0 && ssh_channel_is_eof(channel))) return false;
+        if (n == SSH_ERROR || (n <= 0 && ssh_channel_is_eof(channel))) return false;
+        if (n <= 0) continue; // SSH_AGAIN: nothing within 250 ms
         pending.append(buffer, n);
         for (qsizetype eol; (eol = pending.indexOf('\n')) >= 0;) {
             QByteArray text = pending.left(eol);
