@@ -333,7 +333,6 @@ MainWindow::MainWindow(QWidget* parent)
     scaleAction_ = new QAction(QIcon::fromTheme(QStringLiteral("zoom-fit-best")), tr("&Scale Remote Screen to Fit Window Size"), this);
     scaleAction_->setIconText(tr("Scale"));
     disconnectAction_ = new QAction(QIcon::fromTheme(QStringLiteral("network-disconnect")), tr("&Disconnect"), this);
-    disconnectAction_->setShortcuts(QKeySequence::Close);
     reconnectAction_ = new QAction(QIcon::fromTheme(QStringLiteral("view-refresh")), tr("&Reconnect"), this);
     connect(reconnectAction_, &QAction::triggered, this, [this] {
         if (RemoteView* view = currentView()) emit view->reconnectRequested();
@@ -359,7 +358,7 @@ MainWindow::MainWindow(QWidget* parent)
     addKeys(tr("Print Screen"), {key(0x137, 0xff61)});
     sendKeysMenu_->addSeparator();
     for (uint32_t i = 0; i < 12; ++i) addKeys(tr("Ctrl+Alt+F%1").arg(i + 1), {ctrl, alt, key(i < 10 ? 0x3B + i : 0x57 + i - 10, 0xffbe + i)});
-    addActions({fullScreenAction_, disconnectAction_}); // shortcuts must work with the menu bar hidden
+    addAction(fullScreenAction_); // its shortcut must work with the menu bar hidden
     const std::pair<QAction*, void (RemoteView::*)(bool)> toggles[] = {
         {viewOnlyAction_, &RemoteView::setViewOnly},   {clipboardAction_, &RemoteView::setClipboardSharing},
         {localCursorAction_, &RemoteView::setLocalCursor}, {grabKeysAction_, &RemoteView::setGrabKeys},
@@ -1640,7 +1639,7 @@ QScrollArea* MainWindow::createDisplay(const Connection& c)
     connect(view, &RemoteView::message, status_, [this](const QString& text, int timeoutMs) {
         text.isEmpty() ? status_->clearMessage() : status_->showMessage(text, timeoutMs);
     });
-    view->setWindowShortcuts(fullScreenAction_->shortcuts() + disconnectAction_->shortcuts());
+    view->setWindowShortcuts(fullScreenAction_->shortcuts());
     connect(view, &RemoteView::alwaysTrustChosen, this, [this, id = c.id] {
         const Connection* saved = store_.find(id);
         if (!saved) return;
@@ -1892,7 +1891,7 @@ void MainWindow::openTestPattern()
     scroll->setWidget(view);
     scroll->setProperty("protocol", QStringLiteral("Test"));
     addSessionTab(scroll, tr("Test pattern"), {});
-    view->setWindowShortcuts(fullScreenAction_->shortcuts() + disconnectAction_->shortcuts());
+    view->setWindowShortcuts(fullScreenAction_->shortcuts());
     view->start(std::make_unique<rdc::TestPatternSession>(*view), RemoteView::Options{});
     view->setFocus();
     updateSessionActions();
