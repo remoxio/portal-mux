@@ -39,7 +39,7 @@ private:
 
     std::vector<uint8_t> pixels_;
     bool connected_ = false, cancelled_ = false, passwordUsed_ = false;
-    int wantWidth_ = 0, wantHeight_ = 0, sentWidth_ = 0, sentHeight_ = 0, wheelRemainder_ = 0;
+    int wantWidth_ = 0, wantHeight_ = 0, sentWidth_ = 0, sentHeight_ = 0, wheelRemainder_ = 0, hwheelRemainder_ = 0;
     uint8_t buttons_ = 0;
     std::string lastClipboard_;
     std::string encodings_; // outlives the client: LibVNCClient keeps the pointer

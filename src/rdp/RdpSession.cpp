@@ -577,7 +577,7 @@ void RdpSession::sendPointer(const PointerEvent& e)
     post([this, e] {
         if (!connected_) return;
         handlePointer(e);
-        if (e.buttons || e.wheelDelta) lastInput_ = std::chrono::steady_clock::now();
+        if (e.buttons || e.wheelDelta || e.hwheelDelta) lastInput_ = std::chrono::steady_clock::now();
     });
 }
 
@@ -635,14 +635,15 @@ void RdpSession::handlePointer(const PointerEvent& e)
     for (auto [bit, flag] : buttons)
         if ((e.buttons ^ lastPointer_.buttons) & bit)
             freerdp_input_send_mouse_event(input, UINT16(flag | (e.buttons & bit ? PTR_FLAGS_DOWN : 0)), x, y);
-    for (int delta = e.wheelDelta; delta != 0;) {
-        const int step = std::clamp(delta, -255, 255); // 9-bit two's complement on the wire
-        const UINT16 flags = PTR_FLAGS_WHEEL | (step < 0 ? PTR_FLAGS_WHEEL_NEGATIVE | ((0x100 + step) & 0xFF) : step);
-        freerdp_input_send_mouse_event(input, flags, x, y);
-        delta -= step;
-    }
+    for (auto [axis, total] : {std::pair{UINT16(PTR_FLAGS_WHEEL), e.wheelDelta}, {UINT16(PTR_FLAGS_HWHEEL), e.hwheelDelta}})
+        for (int delta = total; delta != 0;) {
+            const int step = std::clamp(delta, -255, 255); // 9-bit two's complement on the wire
+            const UINT16 flags = axis | (step < 0 ? PTR_FLAGS_WHEEL_NEGATIVE | ((0x100 + step) & 0xFF) : step);
+            freerdp_input_send_mouse_event(input, flags, x, y);
+            delta -= step;
+        }
     lastPointer_ = e;
-    lastPointer_.wheelDelta = 0;
+    lastPointer_.wheelDelta = lastPointer_.hwheelDelta = 0;
 }
 
 void RdpSession::announceClipboard()

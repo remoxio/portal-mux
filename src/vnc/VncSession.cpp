@@ -7,6 +7,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <tuple>
 #include <cstring>
 
 namespace rdc {
@@ -230,13 +231,13 @@ void VncSession::sendPointer(const PointerEvent& e)
         if (!connected_) return;
         buttons_ = e.buttons;
         SendPointerEvent(client_, e.x, e.y, buttons_);
-        // wheel = button 4 up / 5 down per notch
-        for (wheelRemainder_ += e.wheelDelta; std::abs(wheelRemainder_) >= 120;) {
-            const int button = wheelRemainder_ > 0 ? 8 : 16;
-            SendPointerEvent(client_, e.x, e.y, buttons_ | button);
-            SendPointerEvent(client_, e.x, e.y, buttons_);
-            wheelRemainder_ -= wheelRemainder_ > 0 ? 120 : -120;
-        }
+        // wheel = button 4 up / 5 down, 6 left / 7 right per notch
+        for (auto [remainder, positive, negative] : {std::tuple{&wheelRemainder_, 8, 16}, {&hwheelRemainder_, 64, 32}})
+            for (*remainder += remainder == &wheelRemainder_ ? e.wheelDelta : e.hwheelDelta; std::abs(*remainder) >= 120;) {
+                SendPointerEvent(client_, e.x, e.y, buttons_ | (*remainder > 0 ? positive : negative));
+                SendPointerEvent(client_, e.x, e.y, buttons_);
+                *remainder -= *remainder > 0 ? 120 : -120;
+            }
     });
 }
 

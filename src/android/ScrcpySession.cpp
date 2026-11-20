@@ -399,8 +399,8 @@ void ScrcpySession::sendPointer(const PointerEvent& e)
     const int x = std::clamp(e.x, 0, w - 1), y = std::clamp(e.y, 0, h - 1);
     const bool left = e.buttons & PointerEvent::Left;
     const uint32_t buttons = left ? uint32_t(scrcpy::ButtonPrimary) : 0;
-    if (e.wheelDelta) {
-        send(scrcpy::scroll(x, y, w, h, 0, e.wheelDelta / 120.0f, buttons));
+    if (e.wheelDelta || e.hwheelDelta) {
+        send(scrcpy::scroll(x, y, w, h, e.hwheelDelta / 120.0f, e.wheelDelta / 120.0f, buttons));
         return;
     }
     const uint8_t changed = e.buttons ^ buttons_;

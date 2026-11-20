@@ -473,6 +473,7 @@ void MoonlightSession::sendPointer(const PointerEvent& e)
                                 {PointerEvent::Right, BUTTON_RIGHT}})
         if (changed & mask) LiSendMouseButtonEvent(char(e.buttons & mask ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE), button);
     if (e.wheelDelta) LiSendHighResScrollEvent(short(e.wheelDelta));
+    if (e.hwheelDelta) LiSendHighResHScrollEvent(short(e.hwheelDelta));
 }
 
 void MoonlightSession::sendGamepad(const GamepadState& g)

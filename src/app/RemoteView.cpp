@@ -512,9 +512,11 @@ void RemoteView::pointerAt(QPoint remote, Qt::MouseButtons buttons, int wheelDel
 
 void RemoteView::wheelEvent(QWheelEvent* event)
 {
-    if (!session_ || options_.viewOnly || event->angleDelta().y() == 0) return;
+    const QPoint delta = event->angleDelta();
+    if (!session_ || options_.viewOnly || delta.isNull()) return;
     PointerEvent pe = toPointer(event->position(), imageRect(), image_.size(), event->buttons());
-    pe.wheelDelta = event->angleDelta().y(); // 120 per notch, positive = away
+    pe.wheelDelta = delta.y();   // 120 per notch, positive = away
+    pe.hwheelDelta = -delta.x(); // Qt's positive is left
     session_->sendPointer(pe);
 }
 

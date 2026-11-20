@@ -47,6 +47,7 @@ struct PointerEvent {
     int x = 0, y = 0;
     uint8_t buttons = 0;
     int wheelDelta = 0;  // positive = away; 120 per notch
+    int hwheelDelta = 0; // positive = right; 120 per notch
 };
 
 // XInput conventions; stick Y positive = up
