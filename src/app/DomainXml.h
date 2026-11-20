@@ -14,5 +14,7 @@ std::optional<rdc::Connection> connectionFromDomainXml(const QString& xml);
 VmSettings domainSettings(const QString& xml);
 // The definition with those that differ from it changed; empty if it can't be read
 QString withSettings(const QString& xml, const VmSettings& settings);
+// A <domainsnapshot>; `current` left false
+VmSnapshot snapshotFromXml(const QString& xml);
 // Its first CD/DVD drive's <disk> holding this disc (none: empty), for virDomainUpdateDeviceFlags
 QString cdromXml(const QString& xml, const QString& iso);

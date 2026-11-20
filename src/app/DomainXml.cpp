@@ -188,3 +188,17 @@ QString cdromXml(const QString& xml, const QString& iso)
     cd.save(stream, 2);
     return out;
 }
+
+VmSnapshot snapshotFromXml(const QString& xml)
+{
+    QDomDocument doc;
+    if (!doc.setContent(xml)) return {};
+    const QDomElement root = doc.documentElement();
+    VmSnapshot s;
+    s.name = root.firstChildElement(u"name"_s).text();
+    s.description = root.firstChildElement(u"description"_s).text();
+    s.created = QDateTime::fromSecsSinceEpoch(root.firstChildElement(u"creationTime"_s).text().toLongLong());
+    const QString state = root.firstChildElement(u"state"_s).text();
+    s.memory = state != u"shutoff" && state != u"disk-snapshot" && root.firstChildElement(u"memory"_s).attribute(u"snapshot"_s) != u"no";
+    return s;
+}

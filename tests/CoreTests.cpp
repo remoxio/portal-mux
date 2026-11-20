@@ -256,6 +256,12 @@ static void domainXmlTests()
     assert(!cdromXml(perDevice, {}).contains("source") && cdromXml(perDevice, {}).contains("dev=\"sda\""));
     const VmSettings numa = domainSettings("<domain><vcpu>2</vcpu><memory>2097152</memory><cpu><numa><cell id='0'/></numa></cpu></domain>");
     assert(numa.memoryFixed && !numa.hasCd && !numa.cdFirst && withSettings("<broken", s).isEmpty());
+
+    const VmSnapshot running = snapshotFromXml("<domainsnapshot><name>before update</name><description>x</description><state>running</state>"
+                                               "<creationTime>1763640000</creationTime><memory snapshot='internal'/><domain><name>vm</name></domain></domainsnapshot>");
+    assert(running.name == "before update" && running.description == "x" && running.memory && running.created.toSecsSinceEpoch() == 1763640000);
+    assert(!snapshotFromXml("<domainsnapshot><name>a</name><state>shutoff</state><memory snapshot='no'/></domainsnapshot>").memory);
+    assert(!snapshotFromXml("<domainsnapshot><name>b</name><state>running</state><memory snapshot='no'/></domainsnapshot>").memory);
 }
 
 static void videoDecoderTests()

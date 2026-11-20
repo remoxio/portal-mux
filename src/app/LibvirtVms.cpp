@@ -355,6 +355,49 @@ QString LibvirtVms::apply(const std::string& uuid, const VmSettings& was, const 
     return {};
 }
 
+std::vector<VmSnapshot> LibvirtVms::snapshots(const std::string& uuid, QString& error) const
+{
+    virDomainPtr dom = connected() ? virDomainLookupByUUIDString(worker_->conn, uuid.c_str()) : nullptr;
+    virDomainSnapshotPtr* list = nullptr;
+    const int n = dom ? virDomainListAllSnapshots(dom, &list, 0) : -1;
+    if (n < 0) error = dom ? QString::fromUtf8(virGetLastErrorMessage()) : tr("The virtual machine is gone, or libvirt is not reachable.");
+    std::vector<VmSnapshot> snapshots;
+    for (int i = 0; i < n; ++i) {
+        if (char* xml = virDomainSnapshotGetXMLDesc(list[i], 0)) {
+            VmSnapshot s = snapshotFromXml(QString::fromUtf8(xml));
+            s.current = virDomainSnapshotIsCurrent(list[i], 0) == 1;
+            snapshots.push_back(std::move(s));
+            std::free(xml);
+        }
+        virDomainSnapshotFree(list[i]);
+    }
+    std::free(list);
+    if (dom) virDomainFree(dom);
+    std::sort(snapshots.begin(), snapshots.end(), [](const VmSnapshot& a, const VmSnapshot& b) { return a.created < b.created; });
+    return snapshots;
+}
+
+void LibvirtVms::snapshot(const std::string& uuid, SnapshotOp op, const QString& name, std::function<void(const QString&)> done)
+{
+    virDomainPtr dom = connected() ? virDomainLookupByUUIDString(worker_->conn, uuid.c_str()) : nullptr;
+    if (!dom) return done(tr("The virtual machine is gone, or libvirt is not reachable."));
+    std::thread([dom, op, name, done = std::move(done)] {
+        int rc = -1;
+        if (op == SnapshotOp::Take) {
+            const QByteArray xml = QStringLiteral("<domainsnapshot><name>%1</name></domainsnapshot>").arg(name.toHtmlEscaped()).toUtf8();
+            virDomainSnapshotPtr s = virDomainSnapshotCreateXML(dom, xml.constData(), 0); // libvirt's default: with its memory while it runs
+            rc = s ? 0 : -1;
+            if (s) virDomainSnapshotFree(s);
+        } else if (virDomainSnapshotPtr s = virDomainSnapshotLookupByName(dom, name.toUtf8().constData(), 0)) {
+            rc = op == SnapshotOp::Revert ? virDomainRevertToSnapshot(s, 0) : virDomainSnapshotDelete(s, 0);
+            virDomainSnapshotFree(s);
+        }
+        const QString error = rc < 0 ? QString::fromUtf8(virGetLastErrorMessage()) : QString();
+        virDomainFree(dom);
+        QMetaObject::invokeMethod(qApp, [done, error] { done(error); });
+    }).detach();
+}
+
 void LibvirtVms::control(const std::string& uuid, Action action)
 {
     virDomainPtr dom = connected() ? virDomainLookupByUUIDString(worker_->conn, uuid.c_str()) : nullptr;

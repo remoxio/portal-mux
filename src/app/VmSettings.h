@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDateTime>
 #include <QString>
 #include <QStringList>
 
@@ -20,3 +21,12 @@ struct VmSettings {
     bool localFiles = false;  // the host is this computer: Browse… picks its files
     bool running = false;
 };
+
+struct VmSnapshot {
+    QString name, description;
+    QDateTime created;
+    bool memory = false;  // its running state too: reverting resumes it
+    bool current = false; // the one it runs from
+};
+
+enum class SnapshotOp { Take, Revert, Delete };

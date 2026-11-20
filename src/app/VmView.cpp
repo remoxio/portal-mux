@@ -152,6 +152,8 @@ VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings
     serial_->setToolTip(tr("Its serial console in a terminal (a console device in the VM, a getty in the guest)"));
     vmSettings_ = make("device-desktop-cog", tr("Se&ttings…"), [this] { editSettings(); });
     vmSettings_->setToolTip(tr("Processors, memory and its CD/DVD"));
+    snapshots_ = make("history", tr("S&napshots…"), [this] { editSnapshots(); });
+    snapshots_->setToolTip(tr("Take one, go back to one, delete them"));
     addHost_ = make("plus", tr("&Add Host…"), [this] { editHost(nullptr); });
     addHost_->setToolTip(tr("A libvirt host over SSH"));
     editHost_ = make("pencil", tr("&Edit Host…"), [this] { editHost(selectedHost()); });
@@ -161,7 +163,7 @@ VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings
         s->setSeparator(true);
         return s;
     };
-    tree_->addActions({open_, serial_, vmSettings_, separator(), start_, pause_, separator(), shutdown_, reboot_, save_, separator(), forceOff_, reset_,
+    tree_->addActions({open_, serial_, vmSettings_, snapshots_, separator(), start_, pause_, separator(), shutdown_, reboot_, save_, separator(), forceOff_, reset_,
                        separator(), addHost_, editHost_, removeHost_});
 
     connect(tree_, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem* item) {
@@ -354,6 +356,7 @@ void VmView::updateActions()
     open_->setEnabled(vm);
     serial_->setEnabled(control && (s == State::Running || s == State::Paused));
     vmSettings_->setEnabled(control);
+    snapshots_->setEnabled(control);
     const bool remoteRow = host && host->remote() && !vm;
     editHost_->setEnabled(remoteRow);
     removeHost_->setEnabled(remoteRow);
@@ -396,5 +399,23 @@ void VmView::editSettings()
         dialog.addMore(tr("More in virt-manager…"), [virtManager, uri = host->uri(), uuid] {
             QProcess::startDetached(virtManager, {QStringLiteral("--connect"), uri, QStringLiteral("--show-domain-editor"), QString::fromStdString(uuid)});
         });
+    dialog.exec();
+}
+
+void VmView::editSnapshots()
+{
+    const Vm* vm = selected();
+    LibvirtVms* host = selectedHost();
+    if (!vm || !host) return;
+    const std::string uuid = vm->uuid;
+    VmSnapshotsDialog dialog(
+        QString::fromStdString(vm->name),
+        [host, uuid] {
+            const auto& vms = host->vms();
+            const auto it = std::find_if(vms.begin(), vms.end(), [&](const Vm& v) { return v.uuid == uuid; });
+            return it != vms.end() && (it->state == State::Running || it->state == State::Paused);
+        },
+        [host, uuid](QString& error) { return host->snapshots(uuid, error); },
+        [host, uuid](SnapshotOp op, const QString& name, VmSnapshotsDialog::Done done) { host->snapshot(uuid, op, name, std::move(done)); }, this);
     dialog.exec();
 }

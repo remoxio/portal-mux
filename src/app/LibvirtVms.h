@@ -7,6 +7,7 @@
 #include <QObject>
 
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -47,6 +48,9 @@ public:
     void control(const std::string& uuid, Action action);
     std::optional<VmSettings> settings(const std::string& uuid, QString& error) const;
     QString apply(const std::string& uuid, const VmSettings& was, const VmSettings& now); // the error, empty if done
+    std::vector<VmSnapshot> snapshots(const std::string& uuid, QString& error) const; // oldest first
+    // Off the UI thread; `done` on it with the error, empty if done
+    void snapshot(const std::string& uuid, SnapshotOp op, const QString& name, std::function<void(const QString&)> done);
 
 signals:
     void changed();
