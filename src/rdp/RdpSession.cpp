@@ -1,6 +1,7 @@
 #include "rdp/RdpSession.h"
 
 #include <freerdp/channels/disp.h>
+#include <freerdp/channels/rdpgfx.h>
 #include <freerdp/client.h>
 #include <freerdp/client/channels.h>
 #include <freerdp/client/client_cliprdr_file.h>
@@ -318,6 +319,8 @@ struct RdpSession::Callbacks {
                 s->dispReady_ = false;
             });
         } else {
+            // FreeRDP closes it on a frame it can't read (an H.264 one after a resize): the picture would stop for good
+            if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0 && s->connected_) s->gfxLost_ = true;
             freerdp_client_OnChannelDisconnectedEventHandler(context, e);
         }
     }
@@ -815,11 +818,11 @@ bool RdpSession::applySettings()
 }
 
 // dropped: reconnect with the cookie; client_auto_reconnect_ex() stalls closing the tab
-bool RdpSession::reconnect(std::stop_token stop)
+bool RdpSession::reconnect(std::stop_token stop, bool always)
 {
     const UINT32 info = freerdp_error_info(context_->instance);
-    if (stop.stop_requested() || !connection_.flag("autoReconnect") ||
-        (info != ERRINFO_SUCCESS && info != ERRINFO_GRAPHICS_SUBSYSTEM_FAILED))
+    if (stop.stop_requested() ||
+        (!always && (!connection_.flag("autoReconnect") || (info != ERRINFO_SUCCESS && info != ERRINFO_GRAPHICS_SUBSYSTEM_FAILED))))
         return false;
     listener_.onStateChanged(SessionState::Connecting);
     std::mutex mutex;
@@ -880,6 +883,20 @@ void RdpSession::run(std::stop_token stop)
             ResetEvent(wakeEvent_);
             tasks_.drain();
             checkFrozen();
+            if (gfxLost_.exchange(false)) {
+                WLog_WARN("portal-mux.rdp", "%s: graphics channel lost; reconnecting without H.264", label().c_str());
+                rdpSettings* st = context_->settings;
+                connected_ = false;
+                if (freerdp_settings_set_bool(st, FreeRDP_GfxH264, FALSE) && freerdp_settings_set_bool(st, FreeRDP_GfxAVC444, FALSE) &&
+                    reconnect(stop, true)) {
+                    connected_ = true;
+                    listener_.onStateChanged(SessionState::Connected);
+                    sendLayout();
+                    continue;
+                }
+                failed = true;
+                break;
+            }
         }
         connected_ = false;
     }

@@ -39,7 +39,7 @@ public:
 
 private:
     void run(std::stop_token stop);
-    bool reconnect(std::stop_token stop);
+    bool reconnect(std::stop_token stop, bool always = false); // always: also without auto-reconnect
     bool applySettings();
     void post(std::function<void()> task);
     void handlePointer(const PointerEvent& e);
@@ -64,6 +64,7 @@ private:
     std::atomic<std::chrono::steady_clock::rep> lastUpdate_{0}; // set by the paint thread
     std::chrono::steady_clock::time_point lastInput_;            // presses and wheel, the worker's
     std::atomic<bool> frozen_ = false;                           // logged: no update since input
+    std::atomic<bool> gfxLost_ = false;                          // FreeRDP closed the graphics channel mid-session
     int wantWidth_ = 1024, wantHeight_ = 768;
     double pixelRatio_ = 1;
     int sentScale_ = 0;
