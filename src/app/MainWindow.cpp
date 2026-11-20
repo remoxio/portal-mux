@@ -133,7 +133,7 @@ static void applyColorScheme(const QSettings* settings)
 #endif
 }
 
-// also the password of the tunnel's SSH server, as the "tunnel.password" option
+// its saved SSH servers too: the tunnel's password, the jump host's address, key and password
 static void readSecrets(QObject* context, QSettings* settings, Connection c, std::function<void(Connection)> done)
 {
     struct State {
@@ -147,6 +147,11 @@ static void readSecrets(QObject* context, QSettings* settings, Connection c, std
     for (const std::string& key : secretKeys(c.protocol)) state->sources.emplace_back(keychainKey(c.id, key), key);
     if (const auto via = findSshServer(settings, QString::fromStdString(c.option("tunnel"))); via && via->auth == QLatin1String("password"))
         state->sources.emplace_back(sshServerSecret(via->id), "tunnel.password");
+    if (const auto jump = findSshServer(settings, QString::fromStdString(c.option("jumpHost")))) {
+        c.options["jumpHost"] = jump->address().toStdString();
+        if (jump->auth == QLatin1String("publicKey")) c.options["jumpHost.keyFile"] = jump->keyFile.toStdString();
+        else state->sources.emplace_back(sshServerSecret(jump->id), "jumpHost.password");
+    }
     state->c = std::move(c);
     state->done = std::move(done);
     state->step = [context, weak = std::weak_ptr<State>(state)] { // weak: no self-reference cycle
@@ -685,7 +690,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(connectAction_, &QAction::triggered, this, [this] { connectTo(selectedId()); });
     connect(sftpAction_, &QAction::triggered, this, [this] {
         const Connection* found = findConnection(selectedId());
-        if (!found) return;
+        if (!found || !serversKnown(*found)) return;
         readSecrets(this, settings_, *found, [this](Connection c) {
             auto* view = new SftpView(rdc::SshConnection::fromConnection(c, knownHostsFile()));
             view->setProperty("protocol", QStringLiteral("SFTP"));
@@ -1378,6 +1383,17 @@ void MainWindow::deleteSelected()
     rebuildTree();
 }
 
+bool MainWindow::serversKnown(const Connection& c)
+{
+    for (const char* key : {"tunnel", "jumpHost"}) {
+        const QString id = QString::fromStdString(c.option(key));
+        if (QUuid::fromString(id).isNull() || findSshServer(settings_, id)) continue;
+        QMessageBox::warning(this, tr("SSH Servers"), tr("This connection's SSH server was removed in Settings. Choose another with Edit."));
+        return false;
+    }
+    return true;
+}
+
 void MainWindow::connectTo(const std::string& id)
 {
     const Connection* found = findConnection(id);
@@ -1389,6 +1405,7 @@ void MainWindow::connectTo(const std::string& id)
                 if (RemoteView* view = currentView()) view->setFocus();
                 return;
             }
+    if (!serversKnown(*found)) return;
     readSecrets(this, settings_, *found, [this](Connection c) { startSession(c); });
 }
 
@@ -1669,17 +1686,12 @@ QScrollArea* MainWindow::createDisplay(const Connection& c)
     if (const QString via = QString::fromStdString(c.option("tunnel")); !via.isEmpty()) {
         rdc::SshConnection::Params jump;
         if (const auto server = findSshServer(settings_, via)) {
-            const QString spec = server->user.isEmpty() ? server->host : server->user + QLatin1Char('@') + server->host;
-            jump = rdc::SshTunnel::parse(spec.toStdString());
+            jump = rdc::SshTunnel::parse(server->address().toStdString());
             if (server->auth == QLatin1String("publicKey")) jump.keyFile = server->keyFile.toStdString();
             jump.password = c.option("tunnel.password");
-        } else if (QUuid::fromString(via).isNull()) { // imported [user@]host[:port]
+        } else { // imported [user@]host[:port]
             jump = rdc::SshTunnel::parse(c.option("tunnel"));
             jump.keyFile = c.option("tunnel.keyFile");
-        } else {
-            QMessageBox::warning(this, tr("SSH tunnel"), tr("This connection's SSH server was removed in Settings. Choose another with Edit."));
-            delete scroll;
-            return nullptr;
         }
         jump.knownHostsFile = knownHostsFile();
         tunnel = std::make_unique<rdc::SshTunnel>(*view, jump, c.host, c.effectivePort());

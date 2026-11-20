@@ -17,7 +17,8 @@ class QSettings;
 // A server of Settings → SSH Servers
 struct SshServer {
     QString id, name, host, user, auth = QStringLiteral("password"), keyFile;
-    QString summary() const; // user@host · authentication
+    QString address() const; // [user@]host[:port]
+    QString summary() const; // and the authentication
 };
 std::vector<SshServer> loadSshServers(QSettings* settings);
 std::optional<SshServer> findSshServer(QSettings* settings, const QString& id);

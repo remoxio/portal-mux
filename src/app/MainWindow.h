@@ -69,6 +69,7 @@ private:
     void deleteSelected();
     void importFromKrdc();
     void connectTo(const std::string& id);
+    bool serversKnown(const rdc::Connection& c); // false, and says so, if its tunnel or jump host was removed
     void startSession(const rdc::Connection& connection);
     void runPreCommand(const rdc::Connection& connection, std::function<void()> next);
     void wakeHost(const rdc::Connection& connection, std::function<void()> next);

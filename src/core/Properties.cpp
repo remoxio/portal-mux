@@ -258,7 +258,9 @@ static std::vector<PropertyDef> sshProperties()
 {
     std::vector<PropertyDef> p = {
         {"keyFile", "Private key", "General", K::File, "", {}, 0, 0, "Empty = SSH agent and ~/.ssh default keys"},
-        {"jumpHost", "Jump hosts (ProxyJump)", "General", K::Text, "", {}, 0, 0, "[user@]host[:port][,...] — agent/default keys are used for the jump hosts"},
+        // an SSH server of Settings (its id); ~/.ssh/config's "[user@]host[:port][,...]" still works
+        {"jumpHost", "Jump host", "General", K::Choice, "", {{"", "None: connect directly"}}, 0, 0,
+         "The connection goes through this SSH server (ProxyJump); servers are added in Settings → SSH Servers"},
         {"command", "Run command instead of a shell", "General", K::Text, ""},
         {"compression", "Compression", "Advanced", K::Bool, "false"},
         {"keepalive", "Keepalive interval (s)", "Advanced", K::Int, "0", {}, 0, 3600, "0 = off"},

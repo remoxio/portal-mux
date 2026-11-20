@@ -37,6 +37,8 @@ SshConnection::Params SshConnection::fromConnection(const Connection& c, std::st
     p.port = c.effectivePort();
     p.knownHostsFile = std::move(knownHostsFile);
     p.jumpHost = c.option("jumpHost");
+    p.jumpKeyFile = c.option("jumpHost.keyFile");
+    p.jumpPassword = c.option("jumpHost.password");
     p.compression = c.flag("compression");
     return p;
 }
@@ -103,7 +105,7 @@ bool SshConnection::open(const std::function<bool()>& cancelled)
         if (cancelled_) error_.clear();
         return false;
     }
-    Auth a{session_, p_.user, p_.host, p_.password};
+    Auth a{session_, p_.user, p_.host, p_.password, p_.keyFile};
     return authenticate(a);
 }
 
@@ -230,9 +232,9 @@ bool SshConnection::authenticate(Auth& a)
     }
     const int methods = ssh_userauth_list(a.session, nullptr);
     if (methods & SSH_AUTH_METHOD_PUBLICKEY) {
-        if (!p_.keyFile.empty() && authKeyFile(a)) return true;
+        if (!a.keyFile.empty() && authKeyFile(a)) return true;
         if (!cancelled_ && getenv("SSH_AUTH_SOCK") && ssh_userauth_agent(a.session, nullptr) == SSH_AUTH_SUCCESS) return true;
-        if (!cancelled_ && p_.keyFile.empty() && ssh_userauth_publickey_auto(a.session, nullptr, nullptr) == SSH_AUTH_SUCCESS)
+        if (!cancelled_ && a.keyFile.empty() && ssh_userauth_publickey_auto(a.session, nullptr, nullptr) == SSH_AUTH_SUCCESS)
             return true;
     }
     if (!cancelled_ && error_.empty() && (methods & SSH_AUTH_METHOD_INTERACTIVE) && authKeyboardInteractive(a)) return true;
@@ -254,7 +256,7 @@ bool SshConnection::authenticate(Auth& a)
 
 bool SshConnection::authKeyFile(Auth& a)
 {
-    const std::string path = expandHome(p_.keyFile);
+    const std::string path = expandHome(a.keyFile);
     ssh_key key = nullptr;
     int rc = ssh_pki_import_privkey_file(path.c_str(), nullptr, noPassphrase, nullptr, &key);
     for (int tries = 0; rc != SSH_OK && tries < 3; ++tries) {
@@ -337,8 +339,10 @@ int SshConnection::jumpVerify(ssh_session s, void* self)
 
 int SshConnection::jumpAuthenticate(ssh_session s, void* self)
 {
-    Auth a{s, option(s, SSH_OPTIONS_USER), option(s, SSH_OPTIONS_HOST), {}}; // the saved password is the target's
-    return static_cast<SshConnection*>(self)->authenticate(a) ? SSH_OK : SSH_ERROR;
+    auto* c = static_cast<SshConnection*>(self);
+    Auth a{s, option(s, SSH_OPTIONS_USER), option(s, SSH_OPTIONS_HOST), c->p_.jumpPassword,
+           c->p_.jumpKeyFile.empty() ? c->p_.keyFile : c->p_.jumpKeyFile};
+    return c->authenticate(a) ? SSH_OK : SSH_ERROR;
 }
 
 } // namespace rdc

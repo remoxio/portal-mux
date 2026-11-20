@@ -299,7 +299,7 @@ Status on Linux, 2026-11-14. "verified" = tested end to end against the local te
 - [x] **RDP**: General (domain, view only, clipboard) · Display (window mode, desktop size, color depth, remote scale) · Experience (connection type, custom experience flags, GFX, H.264) · Local resources (audio local/remote/off, microphone, shared folders, printers, smart cards, keyboard layout) · Security (protocol, TLS level, restricted admin, Remote Credential Guard) · Gateway (host, port, usage, transport, own credentials) · Advanced (console session, start program/folder, load balance info, pre-connection blob, timeout) · SSH tunnel
 - [x] **VNC**: window mode, view only, clipboard, shared session, JPEG quality, compression, encodings, local cursor, encrypted-only, timeout, SSH tunnel
 - [x] **SPICE**: window mode, view only, clipboard, TLS port + CA + certificate subject, HTTP proxy, audio, shared folder (+ read-only), image compression, video codec, SSH tunnel
-- [x] **SSH**: key file, jump hosts (ProxyJump, with our host-key prompt and key/agent auth per hop), start command, terminal type, font, font size, scrollback, compression, keepalive
+- [x] **SSH**: key file, jump host (ProxyJump, with our host-key prompt; chosen from Settings → SSH Servers and logged in with that server's key or saved password; ~/.ssh/config's hop lists still work), start command, terminal type, font, font size, scrollback, compression, keepalive
 - Verified: dialog and storage; RDP window modes, fixed size and color depth (xrdp log), VNC scale + view only, SSH term/command/font, jump host. The rest is wired to the library setting but not exercised against a server that shows it.
 
 ### RDP file copy-paste (Phase 5, Linux part)

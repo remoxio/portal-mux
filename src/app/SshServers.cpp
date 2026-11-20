@@ -93,10 +93,11 @@ public:
 
 } // namespace
 
+QString SshServer::address() const { return user.isEmpty() ? host : user + QLatin1Char('@') + host; }
+
 QString SshServer::summary() const
 {
-    const QString where = user.isEmpty() ? host : user + QLatin1Char('@') + host;
-    return where + QStringLiteral(" · ") + (auth == QLatin1String("publicKey") ? SshServersPage::tr("Public key") : SshServersPage::tr("Password"));
+    return address() + QStringLiteral(" · ") + (auth == QLatin1String("publicKey") ? SshServersPage::tr("Public key") : SshServersPage::tr("Password"));
 }
 
 std::vector<SshServer> loadSshServers(QSettings* settings)

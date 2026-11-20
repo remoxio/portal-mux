@@ -173,7 +173,7 @@ void ConnectionDialog::buildPropertyTabs(const std::map<std::string, std::string
         case PropertyKind::Choice: {
             auto* e = new QComboBox;
             for (const rdc::Choice& ch : d.choices) e->addItem(tr(ch.label.c_str()), QString::fromStdString(ch.value));
-            if (d.key == "tunnel") {
+            if (d.key == "tunnel" || d.key == "jumpHost") {
                 e->setMinimumContentsLength(24);
                 for (const SshServer& s : sshServers_) {
                     e->addItem(icons::lucide("server"), s.name, s.id);
@@ -205,10 +205,11 @@ void ConnectionDialog::buildPropertyTabs(const std::map<std::string, std::string
             form->addRow(label + QLatin1Char(':'), field);
         if (form == generalForm_) generalRows_.push_back(field);
         editors_[d.key] = editor;
-        if (d.key == "tunnel") {
+        if (d.key == "tunnel" || d.key == "jumpHost") {
             auto* note = new QLabel(tr("SSH servers are added in Settings → SSH Servers."));
             note->setEnabled(false); // dimmed
             form->addRow(QString(), note);
+            if (form == generalForm_) generalRows_.push_back(note);
         }
     }
 }

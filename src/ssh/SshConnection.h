@@ -21,6 +21,7 @@ public:
         int port = 22;
         std::string knownHostsFile; // written on trust; ~/.ssh/known_hosts is also accepted, read-only
         std::string jumpHost;       // ProxyJump list; libssh then connects (not interruptible)
+        std::string jumpKeyFile, jumpPassword; // empty key: the target's
         bool compression = false;
     };
     static Params fromConnection(const Connection& c, std::string knownHostsFile);
@@ -39,7 +40,7 @@ public:
 private:
     struct Auth {
         ssh_session session;
-        std::string user, host, password;
+        std::string user, host, password, keyFile;
         bool passwordUsed = false;
     };
     bool connectSocket(const std::function<bool()>& cancelled);
