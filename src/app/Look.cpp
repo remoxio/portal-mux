@@ -70,6 +70,9 @@ public:
         case CT_PushButton:
             s.setHeight(std::max(s.height(), 32));
             break;
+        case CT_MenuBarItem: // 16 px between titles, as Spark Commander; windows11 adds 34
+            if (!size.isEmpty()) s.setWidth(size.width() + 16);
+            break;
         case CT_MenuItem: // MenuFlyoutItem: margin 4,2, padding 11,4,11,5, icon and check columns 28
             if (const auto* item = qstyleoption_cast<const QStyleOptionMenuItem*>(option)) {
                 if (item->menuItemType == QStyleOptionMenuItem::Separator) return {size.width(), 3};
