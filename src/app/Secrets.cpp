@@ -190,6 +190,16 @@ void loadKey(std::function<void()> done)
 }
 
 // asks to unlock when `prompt`; false if still locked or there is no master password
+// the asker's window, else the active one, else the main one: a prompt without a parent can open behind the window it blocks
+QWidget* promptParent(QObject* context)
+{
+    if (auto* widget = qobject_cast<QWidget*>(context); widget && widget->window()->isVisible()) return widget->window();
+    if (QWidget* active = QApplication::activeWindow()) return active;
+    for (QWidget* top : QApplication::topLevelWidgets())
+        if (top->inherits("QMainWindow") && top->isVisible()) return top;
+    return nullptr;
+}
+
 void withKey(QObject* context, bool prompt, std::function<void(bool)> done)
 {
     loadKey([ctx = QPointer<QObject>(context), prompt, done] {
@@ -199,7 +209,7 @@ void withKey(QObject* context, bool prompt, std::function<void(bool)> done)
             if (v.prompting) return v.afterPrompt.push_back([ctx, done] {
                 if (ctx) done(bool(vault().key));
             });
-            unlock(QApplication::activeWindow());
+            unlock(promptParent(ctx));
         }
         done(bool(v.key));
     });
@@ -320,9 +330,9 @@ void read(const std::string& id, QObject* context, std::function<void(QString)> 
 
 void write(const std::string& id, const QString& password, QObject* context, std::function<void(QString)> done)
 {
-    withKey(context, true, [id, password, done](bool ready) {
+    withKey(context, true, [id, password, done, ctx = QPointer<QObject>(context)](bool ready) {
         Vault& v = vault();
-        if (!ready && v.salt.isEmpty() && !v.declined) ask(QApplication::activeWindow(), true);
+        if (!ready && v.salt.isEmpty() && !v.declined) ask(promptParent(ctx), true);
         if (!v.key) return done(v.salt.isEmpty() ? tr("No master password was chosen.") : tr("The saved passwords are locked."));
         const QString name = QString::fromStdString(id);
         v.passwords[name] = seal(*v.key, name.toUtf8(), password.toUtf8());
