@@ -13,7 +13,6 @@
 class QComboBox;
 class QLabel;
 class QListWidget;
-class QPushButton;
 class QSettings;
 
 // A server of Settings → SSH Servers
@@ -49,7 +48,7 @@ private:
     void save() const;
     void showList();
     void edit(int row); // -1: a new one
-    void remove();
+    void remove(int row);
 
     QSettings* settings_;
     std::vector<SshServer> servers_;
@@ -57,5 +56,4 @@ private:
     QStringList forgotten_;           // removed servers' ids
     QListWidget* list_;
     QLabel* empty_;
-    QPushButton* remove_;
 };

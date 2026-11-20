@@ -1,5 +1,7 @@
 #include "app/PageRail.h"
 
+#include "app/Look.h"
+
 #include <QListWidget>
 #include <QPainter>
 #include <QStyledItemDelegate>
@@ -69,10 +71,8 @@ public:
             p->drawRoundedRect(QRectF(r.left(), r.center().y() - 8, 3, 16), 1.5, 1.5);
         }
 #else
-        if (selected) { // the accent also when the window isn't active, as AppKit's sidebars
-            p->setBrush(o.palette.color(QPalette::Active, QPalette::Accent));
-            p->drawRoundedRect(r, 6, 6);
-            text = o.palette.color(QPalette::Active, QPalette::HighlightedText);
+        if (selected) {
+            look::paintSelection(p, r, o.palette, 6);
         } else if (o.state & QStyle::State_MouseOver) {
             p->setBrush(subtle);
             p->drawRoundedRect(r, 6, 6);

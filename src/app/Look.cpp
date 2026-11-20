@@ -312,4 +312,17 @@ void apply()
 #endif
 }
 
+void paintSelection(QPainter* p, const QRectF& rect, const QPalette& palette, qreal radius)
+{
+    const QColor accent = palette.color(QPalette::Active, QPalette::Accent); // also when the window isn't active
+    QColor fill = accent;
+    fill.setAlphaF(0.2);
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing);
+    p->setPen(QPen(accent, 1));
+    p->setBrush(fill);
+    p->drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
+    p->restore();
+}
+
 } // namespace look

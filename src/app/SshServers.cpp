@@ -2,6 +2,7 @@
 
 #include "app/ConnectionStore.h"
 #include "app/Icons.h"
+#include "app/Look.h"
 #include "app/Prompts.h"
 #include "ssh/SshConnection.h"
 #include "ssh/SshTunnel.h"
@@ -25,6 +26,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QSettings>
+#include <QShortcut>
 #include <QStyledItemDelegate>
 #include <QToolTip>
 #include <QUuid>
@@ -122,20 +124,34 @@ private:
     std::jthread worker_;
 };
 
-// name over user@host, a line between rows, a pencil on the right
+// name over user@host, a line between rows, icon buttons on the right
 class ServerRow : public QStyledItemDelegate {
 public:
-    ServerRow(std::function<void(int)> onEdit, QObject* parent) : QStyledItemDelegate(parent), onEdit_(std::move(onEdit)) {}
+    struct Button {
+        const char* icon; // Tabler
+        const char* tip;  // QT_TRANSLATE_NOOP("SshServersPage", …)
+        std::function<void(int row)> run;
+    };
+    ServerRow(std::vector<Button> buttons, QObject* parent) : QStyledItemDelegate(parent), buttons_(std::move(buttons)) {}
 
-    static QRectF editRect(const QRectF& r) { return {r.right() - 6 - editBox, r.center().y() - editBox / 2.0, qreal(editBox), qreal(editBox)}; }
+    static QRectF buttonRect(const QRectF& r, size_t i) // from the right
+    {
+        return {r.right() - 6 - editBox * qreal(i + 1), r.center().y() - editBox / 2.0, qreal(editBox), qreal(editBox)};
+    }
+    int buttonAt(const QRectF& r, QPointF pos) const
+    {
+        for (size_t i = 0; i < buttons_.size(); ++i)
+            if (buttonRect(r, i).contains(pos)) return int(i);
+        return -1;
+    }
 
     bool editorEvent(QEvent* event, QAbstractItemModel* model, const QStyleOptionViewItem& option, const QModelIndex& index) override
     {
         const auto type = event->type();
         if (type == QEvent::MouseButtonRelease || type == QEvent::MouseButtonDblClick) {
             auto* mouse = static_cast<QMouseEvent*>(event);
-            if (mouse->button() == Qt::LeftButton && editRect(option.rect).contains(mouse->position())) {
-                if (type == QEvent::MouseButtonRelease) onEdit_(index.row());
+            if (const int b = buttonAt(option.rect, mouse->position()); mouse->button() == Qt::LeftButton && b >= 0) {
+                if (type == QEvent::MouseButtonRelease) buttons_[size_t(b)].run(index.row());
                 return true; // not activated as well
             }
         }
@@ -144,9 +160,9 @@ public:
 
     bool helpEvent(QHelpEvent* event, QAbstractItemView* view, const QStyleOptionViewItem& option, const QModelIndex& index) override
     {
-        if (event->type() != QEvent::ToolTip || !editRect(option.rect).contains(event->pos()))
-            return QStyledItemDelegate::helpEvent(event, view, option, index);
-        QToolTip::showText(event->globalPos(), SshServersPage::tr("Edit"), view, editRect(option.rect).toRect());
+        const int b = event->type() == QEvent::ToolTip ? buttonAt(option.rect, event->pos()) : -1;
+        if (b < 0) return QStyledItemDelegate::helpEvent(event, view, option, index);
+        QToolTip::showText(event->globalPos(), SshServersPage::tr(buttons_[size_t(b)].tip), view, buttonRect(option.rect, size_t(b)).toRect());
         return true;
     }
 
@@ -171,12 +187,8 @@ public:
         p->save();
         p->setRenderHint(QPainter::Antialiasing);
         const qreal textLeft = r.left() + 8 + iconSize + gap;
-        if (o.state & QStyle::State_Selected) { // the accent also when the window isn't active, as AppKit's lists
-            p->setPen(Qt::NoPen);
-            p->setBrush(o.palette.color(QPalette::Active, QPalette::Accent));
-            p->drawRoundedRect(r.adjusted(0, 1, 0, -1), 6, 6);
-            text = dim = o.palette.color(QPalette::Active, QPalette::HighlightedText);
-            dim.setAlphaF(0.8);
+        if (o.state & QStyle::State_Selected) {
+            look::paintSelection(p, r.adjusted(0, 1, 0, -1), o.palette, 6);
         } else if (index.row() > 0) {
             QColor line = text;
             line.setAlphaF(0.1);
@@ -191,7 +203,7 @@ public:
         p->drawPixmap(QPointF(r.left() + 8, r.center().y() - iconSize / 2.0), icon);
         const QFont smallFont = small(o.font);
         const int nameHeight = o.fontMetrics.height(), lineHeight = QFontMetrics(smallFont).height();
-        const qreal top = r.center().y() - (nameHeight + lineHeight) / 2.0, width = editRect(r).left() - gap - textLeft;
+        const qreal top = r.center().y() - (nameHeight + lineHeight) / 2.0, width = buttonRect(r, buttons_.size() - 1).left() - gap - textLeft;
         p->setPen(text);
         p->setFont(o.font);
         p->drawText(QRectF(textLeft, top, width, nameHeight), Qt::AlignLeft | Qt::AlignVCenter,
@@ -200,17 +212,19 @@ public:
         p->setFont(smallFont);
         p->drawText(QRectF(textLeft, top + nameHeight, width, lineHeight), Qt::AlignLeft | Qt::AlignVCenter,
                     QFontMetrics(smallFont).elidedText(index.data(Qt::UserRole).toString(), Qt::ElideRight, int(width)));
-        QPixmap pencil = icons::tabler("pencil").pixmap(QSize(editSize, editSize), p->device()->devicePixelRatioF());
-        QPainter tint(&pencil);
-        tint.setCompositionMode(QPainter::CompositionMode_SourceIn);
-        tint.fillRect(pencil.rect(), dim);
-        tint.end();
-        p->drawPixmap(editRect(r).center() - QPointF(editSize, editSize) / 2, pencil);
+        for (size_t i = 0; i < buttons_.size(); ++i) {
+            QPixmap glyph = icons::tabler(buttons_[i].icon).pixmap(QSize(editSize, editSize), p->device()->devicePixelRatioF());
+            QPainter tint(&glyph);
+            tint.setCompositionMode(QPainter::CompositionMode_SourceIn);
+            tint.fillRect(glyph.rect(), dim);
+            tint.end();
+            p->drawPixmap(buttonRect(r, i).center() - QPointF(editSize, editSize) / 2, glyph);
+        }
         p->restore();
     }
 
 private:
-    std::function<void(int)> onEdit_;
+    std::vector<Button> buttons_;
 };
 
 } // namespace
@@ -251,7 +265,10 @@ std::optional<SshServer> findSshServer(QSettings* settings, const QString& id)
 SshServersPage::SshServersPage(QSettings* settings, QWidget* parent) : QWidget(parent), settings_(settings)
 {
     list_ = new QListWidget;
-    list_->setItemDelegate(new ServerRow([this](int row) { edit(row); }, list_));
+    list_->setItemDelegate(new ServerRow({{"pencil", QT_TRANSLATE_NOOP("SshServersPage", "Edit"), [this](int row) { edit(row); }},
+                                          {"trash", QT_TRANSLATE_NOOP("SshServersPage", "Remove"), [this](int row) { remove(row); }}},
+                                         list_));
+    new QShortcut(QKeySequence::Delete, list_, [this] { remove(list_->currentRow()); }, Qt::WidgetShortcut);
     list_->setFrameShape(QFrame::NoFrame);
     list_->setAttribute(Qt::WA_MacShowFocusRect, false);
     list_->viewport()->setAutoFillBackground(false);
@@ -263,12 +280,9 @@ SshServersPage::SshServersPage(QSettings* settings, QWidget* parent) : QWidget(p
     empty_->setMinimumHeight(56);
     auto* add = new QPushButton(QStringLiteral("+"));
     add->setToolTip(tr("Add an SSH server"));
-    remove_ = new QPushButton(QStringLiteral("−"));
-    remove_->setToolTip(tr("Remove the selected SSH server"));
     auto* buttons = new QHBoxLayout;
     buttons->addStretch();
     buttons->addWidget(add);
-    buttons->addWidget(remove_);
     auto* card = new QGroupBox;
     auto* cardLayout = new QVBoxLayout(card);
     cardLayout->addWidget(list_);
@@ -278,10 +292,8 @@ SshServersPage::SshServersPage(QSettings* settings, QWidget* parent) : QWidget(p
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(card);
 
-    connect(list_, &QListWidget::currentRowChanged, this, [this](int row) { remove_->setEnabled(row >= 0); });
     connect(list_, &QListWidget::itemActivated, this, [this](QListWidgetItem* item) { edit(list_->row(item)); });
     connect(add, &QPushButton::clicked, this, [this] { edit(-1); });
-    connect(remove_, &QPushButton::clicked, this, &SshServersPage::remove);
 
     servers_ = loadSshServers(settings_);
     showList();
@@ -443,9 +455,8 @@ void SshServersPage::edit(int row)
     sheet->open();
 }
 
-void SshServersPage::remove()
+void SshServersPage::remove(int row)
 {
-    const int row = list_->currentRow();
     if (row < 0 || row >= int(servers_.size())) return;
     const SshServer& s = servers_[row];
     QMessageBox box(QMessageBox::Question, tr("Remove SSH Server"), tr("Remove \"%1\"? Its saved password goes too.").arg(s.name),
