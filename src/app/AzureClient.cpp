@@ -165,7 +165,11 @@ void AzureClient::send(const QByteArray& method, const QString& url, Failed fail
     QNetworkRequest request{QUrl(url)};
     request.setRawHeader("Authorization", "Bearer " + access_.toLatin1());
     request.setTransferTimeout(20000);
-    if (method == "POST") request.setHeader(QNetworkRequest::ContentLengthHeader, 0); // Resource Manager insists
+    request.setRawHeader("Accept", "application/json");
+    if (method == "POST") { // as Microsoft's SDKs: without them, Resource Manager says 411, the serial console 415
+        request.setHeader(QNetworkRequest::ContentLengthHeader, 0);
+        request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    }
     QNetworkReply* reply = network_.sendCustomRequest(request, method, QByteArray());
     connect(reply, &QNetworkReply::finished, this, [=, this] {
         reply->deleteLater();
@@ -179,7 +183,8 @@ void AzureClient::send(const QByteArray& method, const QString& url, Failed fail
         if (status < 200 || status >= 300) {
             const QString text = azure::errorText(body);
             return failed({status == 401 ? Problem::SignIn : Problem::Other,
-                           text.isEmpty() ? QStringLiteral("%1 %2").arg(status).arg(reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString())
+                           text.isEmpty() ? QStringLiteral("HTTP %1 %2") // HTTP/2 has no reason phrase
+                                                .arg(status).arg(reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString()).trimmed()
                                           : text});
         }
         done(body);

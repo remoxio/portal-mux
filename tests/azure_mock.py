@@ -184,6 +184,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                              r"/providers/Microsoft\.SerialConsole/serialPorts/0/connect", url.path, re.IGNORECASE):
             if m.group(1) not in vms:
                 return self.arm_error(404, "NotFound", "No such VM.")
+            if self.headers.get("Content-Type") != "application/json":  # as the real one
+                return self.send_json(415, {})
             return self.send_json(200, {"connectionString": f"ws://127.0.0.1:{args.port}/serial/{m.group(1)}/client"})
         m = re.fullmatch(r"/subscriptions/sub-1/resourcegroups/rg-demo/providers/microsoft\.compute/virtualmachines/([^/]+)/(start|restart|deallocate|poweroff)",
                          url.path, re.IGNORECASE)
