@@ -109,7 +109,6 @@ private:
     void showView(QWidget* page, bool on); // its activity bar icon; a hidden view's open panel switches to the first
     void setSidebar(SidebarMode mode, int view);
     void applySidebarLayout();
-    void applyTitleBar();
     void openTestPattern();
     std::string knownHostsFile() const;
     void addSessionTab(QWidget* page, const QString& name, const QString& toolTip, int at = -1);
@@ -138,7 +137,7 @@ private:
     QSplitter* splitter_;
     ActivityBar* activityBar_;
     QStackedWidget* views_;
-    QWidget* body_; // activity bar and splitter, under macOS's title bar
+    QWidget* body_; // activity bar and splitter
     SidebarMode sidebarMode_ = SidebarMode::Docked;
     int panelWidth_ = 300;
     QTreeWidget* tree_;
@@ -164,7 +163,6 @@ private:
     void fillSessionsMenu(); // every session: a tab or a detached window
     std::vector<int> viewOrder() const;     // as the user put them (sidebar/viewOrder)
     void applyViewOrder();
-    QWidget* titleBar_ = nullptr; // macOS
     QToolBar* sessionBar_;
     QList<QAction*> separators_; // shared by the session toolbars
     int sessionBarTextWidth_ = 0;

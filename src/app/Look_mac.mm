@@ -13,13 +13,11 @@
 #include <QStyleOption>
 #include <QTabBar>
 #include <QTabWidget>
-#include <QToolButton>
 #include <QTranslator>
 
 #import <AppKit/AppKit.h>
 
 #include <algorithm>
-#include <utility>
 
 namespace {
 
@@ -37,7 +35,6 @@ public:
     int pixelMetric(PixelMetric metric, const QStyleOption* option, const QWidget* widget) const override
     {
         if (metric == PM_ToolBarIconSize) return 22; // Breeze's, as on KDE and Windows
-        if (metric == PM_ToolBarSeparatorExtent && capsules(widget)) return 10;
         if (metric == PM_TabBarTabOverlap && tabView(widget)) return 0;
         if (metric == PM_TabBarBaseOverlap && tabView(widget)) return tabHeight / 2; // the bar sits on the pane's edge
         if ((metric == PM_LayoutLeftMargin || metric == PM_LayoutTopMargin || metric == PM_LayoutRightMargin || metric == PM_LayoutBottomMargin) &&
@@ -67,7 +64,6 @@ public:
 
     void drawControl(ControlElement element, const QStyleOption* option, QPainter* p, const QWidget* widget) const override
     {
-        if (element == CE_ToolBar && capsules(widget)) return; // the title bar draws its capsules
         if (const auto* frame = qobject_cast<const QFocusFrame*>(widget); element == CE_FocusFrame && frame) {
             // Qt's ring has smaller corners than the text field
             const int h = proxy()->pixelMetric(PM_FocusFrameHMargin, option, widget), v = proxy()->pixelMetric(PM_FocusFrameVMargin, option, widget);
@@ -116,7 +112,7 @@ public:
     }
 
     // group boxes as cards: a small title over a rounded box
-    void drawCards(ComplexControl control, const QStyleOptionComplex* option, QPainter* p, const QWidget* widget) const
+    void drawComplexControl(ComplexControl control, const QStyleOptionComplex* option, QPainter* p, const QWidget* widget) const override
     {
         const auto* box = qstyleoption_cast<const QStyleOptionGroupBox*>(option);
         if (control != CC_GroupBox || !box || !card(widget)) return QProxyStyle::drawComplexControl(control, option, p, widget);
@@ -131,30 +127,6 @@ public:
         proxy()->drawItemText(p, subControlRect(control, option, SC_GroupBoxLabel, widget), Qt::AlignLeft | Qt::AlignVCenter | Qt::TextHideMnemonic,
                               box->palette, box->state & State_Enabled, box->text, QPalette::WindowText);
         p->restore();
-    }
-
-    void drawComplexControl(ComplexControl control, const QStyleOptionComplex* option, QPainter* p, const QWidget* widget) const override
-    {
-        // a button in a capsule: a rounded highlight, not AppKit's bezel
-        const auto* tool = qstyleoption_cast<const QStyleOptionToolButton*>(option);
-        if (control == CC_ToolButton && tool && widget && capsules(widget->parentWidget())) {
-            QStyleOptionToolButton plain = *tool;
-            const bool lit = tool->state & (State_On | State_Sunken), hover = tool->state & State_MouseOver && tool->state & State_Enabled;
-            if (lit || hover) {
-                QColor ink = tool->palette.color(QPalette::WindowText);
-                ink.setAlphaF(lit ? 0.14 : 0.07);
-                p->save();
-                p->setRenderHint(QPainter::Antialiasing);
-                p->setPen(Qt::NoPen);
-                p->setBrush(ink);
-                const QRectF r = QRectF(tool->rect).adjusted(1, 1, -1, -1);
-                p->drawRoundedRect(r, r.height() / 2, r.height() / 2);
-                p->restore();
-            }
-            plain.state &= ~(State_On | State_Sunken | State_MouseOver | State_Raised);
-            return QProxyStyle::drawComplexControl(control, &plain, p, widget);
-        }
-        drawCards(control, option, p, widget);
     }
 
     QRect subElementRect(SubElement element, const QStyleOption* option, const QWidget* widget) const override
@@ -183,7 +155,6 @@ public:
 
     void drawPrimitive(PrimitiveElement element, const QStyleOption* option, QPainter* p, const QWidget* widget) const override
     {
-        if (element == PE_IndicatorToolBarSeparator && capsules(widget)) return; // the gap between capsules
         if (element != PE_FrameTabWidget || !tabView(widget)) return QProxyStyle::drawPrimitive(element, option, p, widget);
         QColor ink = option->palette.color(QPalette::WindowText);
         const bool dark = ink.lightness() > 128;
@@ -249,8 +220,6 @@ private:
 
     static constexpr int tabHeight = 24;
     static constexpr qreal tabRadius = 7, fieldRadius = 6.5, ringWidth = 3.5;
-
-    static bool capsules(const QWidget* widget) { return widget && widget->property("capsules").toBool(); }
 
     static bool card(const QWidget* widget)
     {

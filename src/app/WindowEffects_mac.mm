@@ -66,36 +66,3 @@ bool windowEffects::setBlurBehind(QWidget* window, bool enable, const QRegion& r
     blur.frame = NSMakeRect(NSMinX(view.frame) + r.x(), NSMaxY(view.frame) - r.y() - r.height(), r.width(), r.height());
     return true;
 }
-
-static NSWindow* nsWindow(QWidget* window) { return reinterpret_cast<NSView*>(window->winId()).window; }
-
-void windowEffects::unifiedTitleBar(QWidget* window)
-{
-    NSWindow* w = nsWindow(window);
-    w.titleVisibility = NSWindowTitleHidden;
-    if (!w.toolbar) w.toolbar = [[[NSToolbar alloc] init] autorelease];
-    w.toolbar.displayMode = NSToolbarDisplayModeIconOnly; // with labels it is 66 pt
-    w.toolbarStyle = NSWindowToolbarStyleUnified;
-}
-
-int windowEffects::titleBarButtonsEnd(QWidget* window)
-{
-    NSButton* zoom = [nsWindow(window) standardWindowButton:NSWindowZoomButton];
-    return zoom && !zoom.hidden ? int(NSMaxX([zoom convertRect:zoom.bounds toView:nil])) : 0;
-}
-
-int windowEffects::titleBarHeight(QWidget* window)
-{
-    NSWindow* w = nsWindow(window);
-    return int(NSHeight(w.frame) - NSHeight(w.contentLayoutRect)); // Qt's safe area adds a few points
-}
-
-void windowEffects::titleBarDoubleClicked(QWidget* window)
-{
-    NSWindow* w = nsWindow(window);
-    NSString* action = [NSUserDefaults.standardUserDefaults stringForKey:@"AppleActionOnDoubleClick"];
-    if ([action isEqualToString:@"Minimize"])
-        [w performMiniaturize:nil];
-    else if (![action isEqualToString:@"None"])
-        [w performZoom:nil];
-}
