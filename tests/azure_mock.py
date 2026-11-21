@@ -8,14 +8,23 @@ The sign-in page answers at once with a redirect to the app's local port (code +
 Refresh tokens rotate on every use; access tokens last --expire seconds. Subscription "Pay-As-You-Go" lists three VMs
 over two pages (web-linux running, win-app deallocated, db-private stopped with only a private IP); "Old Trial" is
 disabled. Power actions take 4 s through starting/stopping/deallocating.
+Serial console (--serial-disabled: switched off for the subscription): win-app has no boot diagnostics; the others
+answer the token with a getty-like "login:" (any user, password "serial"), then a bash in a pty in --dir.
 """
 import argparse
 import base64
 import hashlib
 import http.server
 import json
+import os
+import pty
 import re
 import secrets
+import select
+import signal
+import struct
+import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -25,14 +34,26 @@ USER = "ann@contoso.example"
 lock = threading.Lock()
 codes, access, refresh = {}, {}, set()  # code -> (challenge, redirect); token -> expiry
 vms = {}  # name -> dict
+LOGIN = r"""
+import getpass, os, sys
+name = sys.argv[1]
+print(f"\nUbuntu 24.04.1 LTS {name} ttyS0\n")
+while True:
+    user = input(f"{name} login: ")
+    if getpass.getpass("Password: ") == "serial" and user:
+        break
+    print("\nLogin incorrect\n")
+os.execvp("bash", ["bash", "--norc", "--noprofile", "-i"])
+"""
 
 
 def b64url(data):
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
-def vm(name, os, admin, power, private, public):
-    return {"name": name, "os": os, "admin": admin, "power": power, "until": 0, "next": power, "private": private, "public": public}
+def vm(name, system, admin, power, private, public, boot=True):
+    return {"name": name, "os": system, "admin": admin, "power": power, "until": 0, "next": power, "private": private, "public": public,
+            "boot": boot}
 
 
 def vm_id(name, lower=False):
@@ -47,6 +68,8 @@ def tick():
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"  # a websocket upgrade needs it
+
     def log_message(self, fmt, *args):
         print(self.command, self.path.split("?")[0], fmt % args, flush=True)
 
@@ -75,6 +98,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         url = urllib.parse.urlsplit(self.path)
         q = dict(urllib.parse.parse_qsl(url.query))
+        if m := re.fullmatch(r"/serial/([^/]+)/client", url.path):
+            return self.serial(m.group(1))
         if re.fullmatch(r"/[^/]+/oauth2/v2\.0/authorize", url.path):
             redirect = q.get("redirect_uri", "")
             if not re.fullmatch(r"http://localhost:\d+", redirect) or q.get("code_challenge_method") != "S256":
@@ -98,6 +123,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send_json(200, {"value": [
                     {"subscriptionId": "sub-1", "displayName": "Pay-As-You-Go", "state": "Enabled", "tenantId": TENANT_ID},
                     {"subscriptionId": "sub-2", "displayName": "Old Trial", "state": "Disabled", "tenantId": TENANT_ID}]})
+            if url.path == "/subscriptions/sub-1/providers/Microsoft.SerialConsole/consoleServices/default":
+                return self.send_json(200, {"properties": {"disabled": args.serial_disabled}})
             if re.fullmatch(r"/subscriptions/sub-2/.*", url.path):
                 return self.arm_error(409, "ReadOnlyDisabledSubscription", "The subscription is disabled.")
             if url.path == "/subscriptions/sub-1/providers/Microsoft.Compute/virtualMachines":
@@ -124,6 +151,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return {"id": vm_id(v["name"]), "name": v["name"], "location": "westeurope", "properties": {
             "hardwareProfile": {"vmSize": "Standard_B2s"}, "storageProfile": {"osDisk": {"osType": v["os"]}},
             "osProfile": {"computerName": v["name"], "adminUsername": v["admin"]},
+            "diagnosticsProfile": {"bootDiagnostics": {"enabled": v["boot"]}},
             "networkProfile": {"networkInterfaces": [{"id": f"/subscriptions/sub-1/resourceGroups/RG-Demo/providers/Microsoft.Network/networkInterfaces/{v['name']}-nic"}]}}}
 
     def authorized(self):
@@ -152,6 +180,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if self.headers.get("Content-Length") is None:
             return self.arm_error(411, "LengthRequired", "Content-Length is required.")
+        if m := re.fullmatch(r"/subscriptions/sub-1/resourcegroups/rg-demo/providers/microsoft\.compute/virtualmachines/([^/]+)"
+                             r"/providers/Microsoft\.SerialConsole/serialPorts/0/connect", url.path, re.IGNORECASE):
+            if m.group(1) not in vms:
+                return self.arm_error(404, "NotFound", "No such VM.")
+            return self.send_json(200, {"connectionString": f"ws://127.0.0.1:{args.port}/serial/{m.group(1)}/client"})
         m = re.fullmatch(r"/subscriptions/sub-1/resourcegroups/rg-demo/providers/microsoft\.compute/virtualmachines/([^/]+)/(start|restart|deallocate|poweroff)",
                          url.path, re.IGNORECASE)
         with lock:
@@ -172,6 +205,98 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.arm_error(409, "OperationNotAllowed", f"Cannot {action} a VM that is {v['power']}.")
         self.send_json(202, {}, [("Azure-AsyncOperation", "http://127.0.0.1/op"), ("Retry-After", "4")])
 
+    def serial(self, name):
+        """As the serial console's websocket: a first message, the token as the answer, then the port's text both ways."""
+        accept = base64.b64encode(hashlib.sha1((self.headers["Sec-WebSocket-Key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest())
+        self.send_response(101)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept.decode())
+        self.end_headers()
+        self.wfile.flush()
+        self.close_connection = True  # no HTTP after it
+        client, buf, pid, fd = self.connection, b"", 0, -1
+        v = vms.get(name)
+        if not v or v["power"] not in ("running", "starting"):
+            print("serial: not running", name, flush=True)
+            return client.sendall(ws_frame(8, struct.pack(">H", 1011) + b"The VM is not running."))
+        client.sendall(ws_frame(1, b'{"status":"connected"}'))
+        try:
+            while True:
+                readable = select.select([client] + ([fd] if fd >= 0 else []), [], [], 0.5)[0]
+                if fd in readable:
+                    try:
+                        out = os.read(fd, 65536)
+                    except OSError:
+                        out = b""
+                    if not out:
+                        return client.sendall(ws_frame(8, struct.pack(">H", 1000)))
+                    try:  # text frames when they can be, as the real one may
+                        out.decode()
+                        client.sendall(ws_frame(1, out))
+                    except UnicodeDecodeError:
+                        client.sendall(ws_frame(2, out))
+                if client not in readable:
+                    continue
+                chunk = client.recv(65536)
+                if not chunk:
+                    return
+                buf += chunk
+                while (frame := ws_parse(buf)) is not None:
+                    op, payload, buf = frame
+                    if op == 8:
+                        return client.sendall(ws_frame(8, payload[:2]))
+                    if op == 9:
+                        client.sendall(ws_frame(10, payload))
+                    if op not in (0, 1, 2):
+                        continue
+                    if pid == 0:
+                        if access.get(payload.decode(errors="replace"), 0) < time.time():
+                            print("serial: bad token", flush=True)
+                            return client.sendall(ws_frame(8, struct.pack(">H", 1008) + b"Unauthorized"))
+                        print("serial: token accepted", name, flush=True)
+                        pid, fd = pty.fork()
+                        if pid == 0:
+                            os.chdir(args.dir)
+                            os.execvpe(sys.executable, [sys.executable, "-I", "-c", LOGIN, name],
+                                       dict(os.environ, TERM="xterm-256color", PS1=f"azureuser@{name}:\\w$ "))
+                    else:
+                        os.write(fd, payload)
+        except OSError:
+            pass
+        finally:
+            if pid:
+                os.kill(pid, signal.SIGHUP)
+                os.waitpid(pid, 0)
+                os.close(fd)
+            print("serial: closed", name, flush=True)
+
+
+def ws_parse(buf):
+    if len(buf) < 2:
+        return None
+    op, masked, n, i = buf[0] & 0x0F, buf[1] & 0x80, buf[1] & 0x7F, 2
+    if n == 126:
+        if len(buf) < 4:
+            return None
+        n, i = struct.unpack(">H", buf[2:4])[0], 4
+    elif n == 127:
+        if len(buf) < 10:
+            return None
+        n, i = struct.unpack(">Q", buf[2:10])[0], 10
+    mask = buf[i:i + 4] if masked else b"\0\0\0\0"
+    i += 4 if masked else 0
+    if len(buf) < i + n:
+        return None
+    payload = bytes(b ^ mask[k % 4] for k, b in enumerate(buf[i:i + n]))
+    return op, payload, buf[i + n:]
+
+
+def ws_frame(op, payload):
+    n = len(payload)
+    head = bytes([0x80 | op]) + (bytes([n]) if n < 126 else bytes([126]) + struct.pack(">H", n) if n < 65536 else bytes([127]) + struct.pack(">Q", n))
+    return head + payload
+
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
@@ -181,9 +306,12 @@ if __name__ == "__main__":
     p.add_argument("--windows-ip", default="127.0.0.1")
     p.add_argument("--expire", type=int, default=3599)
     p.add_argument("--deny", action="store_true")
+    p.add_argument("--serial-disabled", action="store_true")
+    p.add_argument("--dir", default=None, help="where the serial console's shell starts (a new temporary folder)")
     args = p.parse_args()
+    args.dir = args.dir or tempfile.mkdtemp(prefix="azure-mock-")
     for v in (vm("web-linux", "Linux", args.linux_admin, "running", "10.0.0.4", args.linux_ip),
-              vm("win-app", "Windows", "portaladmin", "deallocated", "10.0.0.5", args.windows_ip),
+              vm("win-app", "Windows", "portaladmin", "deallocated", "10.0.0.5", args.windows_ip, boot=False),
               vm("db-private", "Linux", "azureuser", "stopped", "10.0.0.6", None)):
         vms[v["name"]] = v
     http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()

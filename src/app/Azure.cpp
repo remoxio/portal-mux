@@ -71,6 +71,8 @@ std::vector<Vm> vms(const QJsonArray& value)
         vm.size = p.value(QLatin1String("hardwareProfile")).toObject().value(QLatin1String("vmSize")).toString().toStdString();
         vm.os = p.value(QLatin1String("storageProfile")).toObject().value(QLatin1String("osDisk")).toObject().value(QLatin1String("osType")).toString().toStdString();
         vm.admin = p.value(QLatin1String("osProfile")).toObject().value(QLatin1String("adminUsername")).toString().toStdString();
+        vm.bootDiagnostics =
+            p.value(QLatin1String("diagnosticsProfile")).toObject().value(QLatin1String("bootDiagnostics")).toObject().value(QLatin1String("enabled")).toBool();
         for (const QJsonValue& nic : p.value(QLatin1String("networkProfile")).toObject().value(QLatin1String("networkInterfaces")).toArray()) {
             const QJsonObject n = nic.toObject();
             const std::string nicId = n.value(QLatin1String("id")).toString().toStdString();

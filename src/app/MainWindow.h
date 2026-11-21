@@ -99,6 +99,7 @@ private:
     bool confirmCloseTab(int index);
     void openHyperVConsole(const QString& hostId, const std::string& vmId);
     void openAzureConsole(const QString& key);
+    void openAzureSerial(const QString& key, QWidget* replace = nullptr);
     void openProxmoxConsole(const rdc::Connection& connection, const QString& key, QWidget* replace, const QString& address,
                             QObject* tunnel);
     void openProxmoxTerminal(const QString& key, QWidget* replace, const QString& name, const QString& address,

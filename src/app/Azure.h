@@ -32,6 +32,7 @@ struct Vm {
     std::string os;    // "Windows" or "Linux"
     std::string admin; // its administrator account
     std::string power; // running, deallocated, stopped, starting, stopping, deallocating; empty: not known
+    bool bootDiagnostics = false; // the serial console needs them
     std::vector<std::string> nics;
     std::string privateIp, publicIp;
     std::string key() const; // the ID in lower case: Azure doesn't keep its case

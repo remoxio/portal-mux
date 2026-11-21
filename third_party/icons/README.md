@@ -23,9 +23,12 @@ The theme icons Qt's own widgets ask for (a line edit's clear button, message bo
 as breeze-icons' own `generate-symbolic-dark` does: the stylesheet's Text colour `#fcfcfc`, Background `#2a2e32`.
 Each folder has a short `index.theme`; `breeze/COPYING-ICONS` is the licence.
 
-## brands/: the Proxmox mark
+## brands/: the Proxmox and Azure marks
 
 `proxmox-line.svg` (the sidebar's Proxmox tab and the server rows) is drawn for Portal Mux: the logo's four chevrons
 as 2 px lines on Lucide's grid, so it matches the Lucide icons beside it; `currentColor`, like the others.
-Proxmox® is a registered trademark of Proxmox Server Solutions GmbH; the About dialog says so. Its media kit and
+`azure-line.svg` (the sidebar's Azure tab and the account rows) is drawn the same way: the Azure "A"'s outline with
+its notch and its counter.
+Proxmox® is a registered trademark of Proxmox Server Solutions GmbH; Microsoft and Azure are trademarks of the Microsoft
+group of companies; the About dialog says so. Its media kit and
 usage guidelines: https://www.proxmox.com/en/news/media-kit.

@@ -38,6 +38,8 @@ public:
     void refresh();
     using Fail = std::function<void(const QString& message)>;
     void control(const azure::Vm& vm, const QString& action, Fail onFail); // start, restart, deallocate, powerOff
+    // its serial console's websocket, and the token to send it first
+    void serialConsole(const azure::Vm& vm, std::function<void(QUrl url, QString token)> done, Fail onFail);
 
 signals:
     void changed();                                // its VMs, its state, or the account (who signed in)

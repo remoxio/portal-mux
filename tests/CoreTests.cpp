@@ -559,7 +559,7 @@ static void azureTests()
     const QJsonArray model = QJsonDocument::fromJson(R"([
         {"id":"/subscriptions/S1/resourceGroups/RG1/providers/Microsoft.Compute/virtualMachines/web","name":"web","location":"westeurope",
          "properties":{"hardwareProfile":{"vmSize":"Standard_B1s"},"storageProfile":{"osDisk":{"osType":"Linux"}},
-                       "osProfile":{"adminUsername":"azureuser"},
+                       "osProfile":{"adminUsername":"azureuser"},"diagnosticsProfile":{"bootDiagnostics":{"enabled":true}},
                        "networkProfile":{"networkInterfaces":[{"id":"/x/nic-b"},{"id":"/x/NIC-A","properties":{"primary":true}}]}}},
         {"id":"/subscriptions/S1/resourceGroups/rg2/providers/Microsoft.Compute/virtualMachines/App","name":"App",
          "properties":{"storageProfile":{"osDisk":{"osType":"Windows"}},"networkProfile":{"networkInterfaces":[{"id":"/x/nic-c"}]}}}
@@ -569,6 +569,7 @@ static void azureTests()
     const azure::Vm& web = vms[1];
     assert(web.subscription == "S1" && web.resourceGroup == "RG1" && web.size == "Standard_B1s" && web.os == "Linux" && web.admin == "azureuser");
     assert(web.nics.size() == 2 && web.nics[0] == "/x/NIC-A"); // the primary first
+    assert(web.bootDiagnostics && !vms[0].bootDiagnostics);
 
     azure::applyPower(vms, QJsonDocument::fromJson(R"([
         {"id":"/SUBSCRIPTIONS/s1/resourcegroups/rg1/providers/Microsoft.Compute/virtualMachines/WEB",

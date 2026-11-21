@@ -27,9 +27,12 @@ public:
     QList<QAction*> titleActions() const;
     // key: "<account id>/<the VM's key>"; open: its console, RDP for Windows, SSH for Linux
     VmConsole* console(const QString& key, std::function<void(VmConsole*, const rdc::Connection&)> open);
+    // its serial console's websocket and token; a failure is shown here
+    void serialConsole(const QString& key, std::function<void(const QString& name, const QString& address, const QUrl& url, const QString& token)> ready);
 
 signals:
     void openRequested(const QString& key);
+    void serialRequested(const QString& key);
     void message(const QString& text);
 
 protected:
@@ -45,7 +48,7 @@ private:
     void rebuild();
     using Target = std::function<std::pair<AzureClient*, const azure::Vm*>()>;
     struct Actions {
-        QAction *open, *start, *restart, *deallocate, *powerOff, *portal;
+        QAction *open, *serial, *start, *restart, *deallocate, *powerOff, *portal;
     };
     Actions makeActions(QObject* owner, const Target& target); // for the selected row, or one VM's tab
     void updateActions();

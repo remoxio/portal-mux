@@ -1,6 +1,8 @@
 #include "app/AzureClient.h"
 
 #include <QDesktopServices>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QTcpServer>
@@ -9,7 +11,7 @@
 #include <memory>
 
 static const QString computeApi = QStringLiteral("2024-07-01"), networkApi = QStringLiteral("2024-05-01"),
-                     subscriptionsApi = QStringLiteral("2022-12-01");
+                     subscriptionsApi = QStringLiteral("2022-12-01"), serialApi = QStringLiteral("2024-07-01");
 
 AzureClient::AzureClient(azure::Account account, QObject* parent) : QObject(parent), account_(std::move(account))
 {
@@ -262,5 +264,29 @@ void AzureClient::control(const azure::Vm& vm, const QString& action, Fail onFai
             if (v.key() == key && now) v.power = now; // at once; the next lists confirm it
         emit changed();
         QTimer::singleShot(3000, this, &AzureClient::refresh);
+    });
+}
+
+// as `az serial-console connect`
+void AzureClient::serialConsole(const azure::Vm& vm, std::function<void(QUrl, QString)> done, Fail onFail)
+{
+    auto failed = [this, onFail](const Error& e) {
+        if (e.problem != Problem::Other) fail(e);
+        onFail(e.message);
+    };
+    const QString status = azure::armUrl() + QStringLiteral("/subscriptions/") + QString::fromStdString(vm.subscription) +
+                           QStringLiteral("/providers/Microsoft.SerialConsole/consoleServices/default?api-version=") + serialApi;
+    // shortcut: the CLI asks https://<region>.management.azure.com when boot diagnostics use one's own storage account; do so if Azure refuses
+    const QString connect = azure::armUrl() + QString::fromStdString(vm.id) +
+                            QStringLiteral("/providers/Microsoft.SerialConsole/serialPorts/0/connect?api-version=") + serialApi;
+    send("GET", status, failed, [=, this](const QByteArray& body) {
+        if (QJsonDocument::fromJson(body).object().value(QLatin1String("properties")).toObject().value(QLatin1String("disabled")).toBool(true))
+            return onFail(tr("The serial console is switched off for this subscription (az serial-console enable)."));
+        send("POST", connect, failed, [=, this](const QByteArray& body) {
+            const QUrl url(QJsonDocument::fromJson(body).object().value(QLatin1String("connectionString")).toString());
+            if (!url.isValid() || (url.scheme() != QLatin1String("wss") && url.scheme() != QLatin1String("ws")))
+                return onFail(tr("Azure sent no serial console address."));
+            done(url, access_);
+        });
     });
 }

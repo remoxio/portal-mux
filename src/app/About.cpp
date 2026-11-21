@@ -98,8 +98,8 @@ void showAbout(QWidget* parent)
                         .arg(QLatin1String(p.website), QLatin1String(p.name), dim, QLatin1String(p.licence), tr(p.what));
     }
     list += QStringLiteral("<p style='margin-top:12px'><small style='color:%1'>%2</small></p>")
-                .arg(dim, tr("Proxmox® is a registered trademark of Proxmox Server Solutions GmbH. Other product names and "
-                             "logos are trademarks of their owners."));
+                .arg(dim, tr("Proxmox® is a registered trademark of Proxmox Server Solutions GmbH. Microsoft and Azure are trademarks of "
+                             "the Microsoft group of companies. Other product names and logos are trademarks of their owners."));
     auto* parts = new QLabel(list);
     parts->setWordWrap(true);
     parts->setOpenExternalLinks(true);
