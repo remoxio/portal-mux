@@ -1,5 +1,8 @@
 #include "app/Secrets.h"
 
+#include "app/Icons.h"
+
+#include <QAction>
 #include <QApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -228,6 +231,12 @@ void applyMaster(const QString& master)
     keep(key);
 }
 
+bool matches(const QString& master)
+{
+    const Vault& v = vault();
+    return bool(open(derive(master, v.salt, v.rounds), checkName, v.check));
+}
+
 bool tryMaster(const QString& master)
 {
     Vault& v = vault();
@@ -238,15 +247,18 @@ bool tryMaster(const QString& master)
     return true;
 }
 
-// choose: a new one, typed twice; else the one that unlocks
-bool ask(QWidget* parent, bool choose)
+// choose: a new one, typed twice; else the one that unlocks; reveal: to show a saved one, also when unlocked
+bool ask(QWidget* parent, bool choose, bool reveal = false)
 {
     Vault& v = vault();
     QDialog dialog(parent);
-    dialog.setWindowTitle(!choose ? tr("Unlock Saved Passwords") : v.salt.isEmpty() ? tr("Master Password") : tr("Change Master Password"));
-    auto* text = new QLabel(choose ? tr("Saved passwords are encrypted with the master password. This computer's keychain keeps its key, "
-                                        "so it is asked for only where that is missing. If it is forgotten, only the saved passwords are lost.")
-                                   : tr("This computer's keychain has no key for the saved passwords. Enter the master password."));
+    dialog.setWindowTitle(reveal   ? tr("Show Password")
+                          : !choose ? tr("Unlock Saved Passwords")
+                          : v.salt.isEmpty() ? tr("Master Password") : tr("Change Master Password"));
+    auto* text = new QLabel(reveal ? tr("Enter the master password to see the saved password.")
+                            : choose ? tr("Saved passwords are encrypted with the master password. This computer's keychain keeps its key, "
+                                          "so it is asked for only where that is missing. If it is forgotten, only the saved passwords are lost.")
+                                     : tr("This computer's keychain has no key for the saved passwords. Enter the master password."));
     text->setWordWrap(true);
     auto* first = new QLineEdit;
     auto* again = new QLineEdit;
@@ -269,7 +281,7 @@ bool ask(QWidget* parent, bool choose)
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
         QApplication::setOverrideCursor(Qt::WaitCursor);
-        const bool right = choose || tryMaster(first->text());
+        const bool right = choose || (reveal && v.key ? matches(first->text()) : tryMaster(first->text())); // unlocked: no keychain write
         if (choose) applyMaster(first->text());
         QApplication::restoreOverrideCursor();
         if (right) return dialog.accept();
@@ -284,7 +296,7 @@ bool ask(QWidget* parent, bool choose)
     layout->addWidget(buttons);
     dialog.setFixedWidth(460);
     const bool done = dialog.exec() == QDialog::Accepted;
-    if (!done) { // once per batch of requests
+    if (!done && !reveal) { // once per batch of requests
         v.declined = true;
         QTimer::singleShot(0, qApp, [] { vault().declined = false; });
     }
@@ -347,6 +359,43 @@ void remove(const std::string& id)
 {
     if (QString error; vault().passwords.erase(QString::fromStdString(id))) save(&error);
     removeOld(id);
+}
+
+bool saved(const std::string& id) { return vault().passwords.count(QString::fromStdString(id)) > 0; }
+
+void attach(QLineEdit* field, const std::string& id, std::function<void()> deleted)
+{
+    QAction* eye = field->addAction(icons::lucide("eye"), QLineEdit::TrailingPosition);
+    QAction* trash = field->addAction(icons::lucide("trash"), QLineEdit::TrailingPosition);
+    trash->setToolTip(tr("Delete the saved password"));
+    trash->setVisible(saved(id));
+    auto show = [field, eye](bool on) {
+        field->setEchoMode(on ? QLineEdit::Normal : QLineEdit::Password);
+        eye->setIcon(icons::lucide(on ? "eye-off" : "eye"));
+        eye->setToolTip(on ? tr("Hide the password") : tr("Show the password"));
+    };
+    show(false);
+    QObject::connect(eye, &QAction::triggered, field, [field, id, show] {
+        const bool on = field->echoMode() != QLineEdit::Normal;
+        if (!on || !field->text().isEmpty() || !saved(id)) return show(on); // typed here: no secret
+        if (!ask(field->window(), false, true)) return;
+        read(id, field, [field, show](const QString& password) {
+            field->setText(password);
+            show(true);
+        });
+    });
+    QObject::connect(trash, &QAction::triggered, field, [field, id, trash, show, deleted] {
+        QMessageBox box(QMessageBox::Question, tr("Delete Password"), tr("Delete the saved password? It is asked for when connecting then."),
+                        QMessageBox::Yes | QMessageBox::No, field->window());
+        box.setDefaultButton(QMessageBox::No);
+        box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's dialog: Enter presses the first button
+        if (box.exec() != QMessageBox::Yes) return;
+        remove(id);
+        field->clear();
+        show(false);
+        trash->setVisible(false);
+        if (deleted) deleted();
+    });
 }
 
 void status(QObject* context, std::function<void(Status)> done)

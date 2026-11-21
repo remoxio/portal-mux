@@ -1,6 +1,7 @@
 #include "app/ConnectionDialog.h"
 
 #include "app/Icons.h"
+#include "app/Secrets.h"
 #include "core/Properties.h"
 
 #include <QCheckBox>
@@ -24,7 +25,15 @@ using rdc::PropertyDef;
 using rdc::PropertyKind;
 using rdc::Protocol;
 
-static constexpr const char* secretPlaceholder = "Unchanged";
+std::string connectionSecret(const std::string& id, const std::string& property) { return property.empty() ? id : id + "/" + property; }
+
+// says whether one is saved; an eye shows it, a trash can deletes it
+static void secretField(QLineEdit* field, const std::string& id, const QString& none)
+{
+    field->setEchoMode(QLineEdit::Password);
+    field->setPlaceholderText(secrets::saved(id) ? ConnectionDialog::tr("Saved") : none);
+    secrets::attach(field, id, [field, none] { field->setPlaceholderText(none); });
+}
 
 static QWidget* withBrowse(QLineEdit* edit, bool directory)
 {
@@ -78,8 +87,7 @@ ConnectionDialog::ConnectionDialog(const rdc::Connection& c, const QStringList& 
     port_->setValue(c.port);
     username_ = text(c.username);
     password_ = new QLineEdit;
-    password_->setEchoMode(QLineEdit::Password);
-    password_->setPlaceholderText(c.id.empty() ? tr("Ask when connecting") : tr(secretPlaceholder));
+    secretField(password_, connectionSecret(c.id, ""), tr("Ask when connecting"));
 
     generalForm_->addRow(tr("&Name:"), name_);
     generalForm_->addRow(tr("&Group:"), group_);
@@ -151,10 +159,7 @@ void ConnectionDialog::buildPropertyTabs(const std::map<std::string, std::string
         case PropertyKind::Text:
         case PropertyKind::Secret: {
             auto* e = new QLineEdit(d.kind == PropertyKind::Secret ? QString() : value);
-            if (d.kind == PropertyKind::Secret) {
-                e->setEchoMode(QLineEdit::Password);
-                e->setPlaceholderText(original_.id.empty() ? QString() : tr(secretPlaceholder));
-            }
+            if (d.kind == PropertyKind::Secret) secretField(e, connectionSecret(original_.id, d.key), {});
             editor = field = e;
             break;
         }

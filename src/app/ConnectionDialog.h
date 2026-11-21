@@ -14,6 +14,9 @@ class QLineEdit;
 class QSpinBox;
 class QTabWidget;
 
+// a connection's saved secret's name; property "": its password
+std::string connectionSecret(const std::string& id, const std::string& property);
+
 // One tab per property group of the protocol (Properties.h)
 class ConnectionDialog : public QDialog {
     Q_OBJECT

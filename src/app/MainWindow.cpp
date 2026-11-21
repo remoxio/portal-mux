@@ -109,11 +109,6 @@ static constexpr int ReadOnlyRole = Qt::UserRole + 1;
 static constexpr int WindowRole = Qt::UserRole + 2; // Sessions: a detached window
 static constexpr int FoldRole = Qt::UserRole + 3;   // a group's id for its folding
 
-static std::string keychainKey(const std::string& id, const std::string& property)
-{
-    return property.empty() ? id : id + "/" + property;
-}
-
 static std::vector<std::string> secretKeys(rdc::Protocol protocol)
 {
     using rdc::Protocol;
@@ -149,7 +144,7 @@ static void readSecrets(QObject* context, QSettings* settings, Connection c, std
         std::function<void()> step;
     };
     auto state = std::make_shared<State>();
-    for (const std::string& key : secretKeys(c.protocol)) state->sources.emplace_back(keychainKey(c.id, key), key);
+    for (const std::string& key : secretKeys(c.protocol)) state->sources.emplace_back(connectionSecret(c.id, key), key);
     if (const auto via = findSshServer(settings, QString::fromStdString(c.option("tunnel"))); via && via->auth == QLatin1String("password"))
         state->sources.emplace_back(sshServerSecret(via->id), "tunnel.password");
     if (const auto jump = findSshServer(settings, QString::fromStdString(c.option("jumpHost")))) {
@@ -1361,7 +1356,7 @@ void MainWindow::editConnection(Connection connection)
     const std::string id = store_.upsert(dialog.connection());
     if (!saveStore()) return;
     for (const auto& [key, value] : dialog.secrets())
-        secrets::write(keychainKey(id, key), value, this, [this](QString error) {
+        secrets::write(connectionSecret(id, key), value, this, [this](QString error) {
             if (!error.isEmpty())
                 QMessageBox::warning(this, tr("Passwords"),
                                      tr("The password was not saved: %1\n"
@@ -1421,7 +1416,7 @@ void MainWindow::deleteSelected()
     const std::vector<std::string> keys = secretKeys(c->protocol);
     store_.remove(id); // c dangles from here on
     if (saveStore())
-        for (const std::string& key : keys) secrets::remove(keychainKey(id, key));
+        for (const std::string& key : keys) secrets::remove(connectionSecret(id, key));
     rebuildTree();
 }
 

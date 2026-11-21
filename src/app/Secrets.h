@@ -5,6 +5,7 @@
 #include <functional>
 #include <string>
 
+class QLineEdit;
 class QObject;
 class QWidget;
 
@@ -17,6 +18,10 @@ void read(const std::string& id, QObject* context, std::function<void(QString pa
 // the first one asks to choose a master password
 void write(const std::string& id, const QString& password, QObject* context, std::function<void(QString error)> done);
 void remove(const std::string& id);
+bool saved(const std::string& id); // without unlocking anything
+// A password field's saved password: an eye shows it once the master password is typed again, a trash can deletes it
+// after asking. The eye shows typed text at once. deleted: after a deletion.
+void attach(QLineEdit* field, const std::string& id, std::function<void()> deleted = {});
 
 struct Status {
     bool master = false, locked = false;

@@ -265,8 +265,8 @@ std::optional<SshServer> findSshServer(QSettings* settings, const QString& id)
 SshServersPage::SshServersPage(QSettings* settings, QWidget* parent) : QWidget(parent), settings_(settings)
 {
     list_ = new QListWidget;
-    list_->setItemDelegate(new ServerRow({{"pencil", QT_TRANSLATE_NOOP("SshServersPage", "Edit"), [this](int row) { edit(row); }},
-                                          {"trash", QT_TRANSLATE_NOOP("SshServersPage", "Remove"), [this](int row) { remove(row); }}},
+    list_->setItemDelegate(new ServerRow({{"trash", QT_TRANSLATE_NOOP("SshServersPage", "Remove"), [this](int row) { remove(row); }},
+                                          {"pencil", QT_TRANSLATE_NOOP("SshServersPage", "Edit"), [this](int row) { edit(row); }}}, // from the right
                                          list_));
     new QShortcut(QKeySequence::Delete, list_, [this] { remove(list_->currentRow()); }, Qt::WidgetShortcut);
     list_->setFrameShape(QFrame::NoFrame);
@@ -355,11 +355,11 @@ void SshServersPage::edit(int row)
     auth->setCurrentIndex(std::max(0, auth->findData(s.auth)));
     auto* password = new QLineEdit(passwords_.value(s.id));
     password->setEchoMode(QLineEdit::Password);
-    password->setPlaceholderText(tr("Ask when connecting"));
-    if (!adding && !passwords_.contains(s.id))
-        secrets::read(sshServerSecret(s.id), password, [password](const QString& stored) {
-            if (!stored.isEmpty()) password->setPlaceholderText(tr("Saved"));
-        });
+    password->setPlaceholderText(!passwords_.contains(s.id) && secrets::saved(sshServerSecret(s.id)) ? tr("Saved") : tr("Ask when connecting"));
+    secrets::attach(password, sshServerSecret(s.id), [this, password, id = s.id] {
+        passwords_.remove(id);
+        password->setPlaceholderText(tr("Ask when connecting"));
+    });
     auto* keyFile = new QLineEdit(s.keyFile);
     keyFile->setPlaceholderText(tr("Empty = SSH agent and ~/.ssh default keys"));
     auto* browse = new QPushButton(tr("Browse…"));
@@ -371,8 +371,8 @@ void SshServersPage::edit(int row)
     auto* form = new QFormLayout;
     form->addRow(tr("&Name:"), name);
     form->addRow(tr("&Host:"), host);
-    form->addRow(tr("&User name:"), user);
     form->addRow(tr("&Authentication:"), auth);
+    form->addRow(tr("&User name:"), user);
     form->addRow(tr("&Password:"), password);
     form->addRow(tr("Private &key:"), keyRow);
     auto showAuth = [form, auth, password, keyRow] {
