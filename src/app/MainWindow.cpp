@@ -1355,8 +1355,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     if (watched == body_ && event->type() == QEvent::Paint && body_->layout()->contentsMargins().top() > 0) {
         QPainter(body_).fillRect(0, 0, body_->width(), 1, lineColor());
     }
-    if (event->type() == QEvent::Paint && ((watched == views_ && sidebarMode_ == SidebarMode::Overlay) ||
-                                           (watched == activityBar_ && sidebarMode_ == SidebarMode::Collapsed))) {
+    if (event->type() == QEvent::Paint && ((watched == views_ && sidebarMode_ == SidebarMode::Overlay) || watched == activityBar_)) {
         auto* w = static_cast<QWidget*>(watched);
         QPainter(w).fillRect(w->width() - 1, 0, 1, w->height(), lineColor());
     }
