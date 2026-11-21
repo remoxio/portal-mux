@@ -14,7 +14,12 @@ namespace azure {
 
 static QString tr(const char* text) { return QCoreApplication::translate("Azure", text); }
 
-static const QString scope = QStringLiteral("https://management.azure.com/user_impersonation offline_access openid profile");
+// Resource Manager by its old name, as the Azure CLI asks for it: the serial console trusts no other ("Connection not trusted")
+static QString scopeOf(const Account& account)
+{
+    return QStringLiteral("https://management.core.windows.net//%1 offline_access openid profile")
+        .arg(account.client() == cliClientId ? QStringLiteral(".default") : QStringLiteral("user_impersonation")); // one's own app: no setup
+}
 
 std::string Vm::key() const { return QString::fromStdString(id).toLower().toStdString(); }
 
@@ -168,7 +173,7 @@ QUrl authorizeUrl(const Account& account, const QString& redirect, const QByteAr
     QUrlQuery query;
     for (const auto& [key, value] : std::initializer_list<std::pair<const char*, QString>>{
              {"client_id", QString::fromStdString(account.client())}, {"response_type", QStringLiteral("code")}, {"redirect_uri", redirect},
-             {"response_mode", QStringLiteral("query")}, {"scope", scope}, {"state", state}, {"code_challenge", QString::fromLatin1(challenge)},
+             {"response_mode", QStringLiteral("query")}, {"scope", scopeOf(account)}, {"state", state}, {"code_challenge", QString::fromLatin1(challenge)},
              {"code_challenge_method", QStringLiteral("S256")}, {"prompt", QStringLiteral("select_account")}})
         query.addQueryItem(QLatin1String(key), QString::fromLatin1(QUrl::toPercentEncoding(value)));
     QUrl url(endpoint(account, "authorize"));
@@ -186,13 +191,13 @@ static QByteArray form(std::initializer_list<std::pair<const char*, QString>> fi
 QByteArray codeForm(const Account& account, const QString& code, const QString& redirect, const QByteArray& verifier)
 {
     return form({{"client_id", QString::fromStdString(account.client())}, {"grant_type", QStringLiteral("authorization_code")}, {"code", code},
-                 {"redirect_uri", redirect}, {"code_verifier", QString::fromLatin1(verifier)}, {"scope", scope}});
+                 {"redirect_uri", redirect}, {"code_verifier", QString::fromLatin1(verifier)}, {"scope", scopeOf(account)}});
 }
 
 QByteArray refreshForm(const Account& account, const QString& refreshToken)
 {
     return form({{"client_id", QString::fromStdString(account.client())}, {"grant_type", QStringLiteral("refresh_token")},
-                 {"refresh_token", refreshToken}, {"scope", scope}});
+                 {"refresh_token", refreshToken}, {"scope", scopeOf(account)}});
 }
 
 std::optional<Redirect> parseRedirect(const QByteArray& request)

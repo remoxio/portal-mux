@@ -600,6 +600,10 @@ static void azureTests()
     const QUrlQuery query(url);
     assert(query.queryItemValue(QStringLiteral("redirect_uri"), QUrl::FullyDecoded) == "http://localhost:4711");
     assert(query.queryItemValue(QStringLiteral("client_id")) == azure::cliClientId && query.queryItemValue(QStringLiteral("state")) == "st");
+    assert(query.queryItemValue(QStringLiteral("scope"), QUrl::FullyDecoded).startsWith("https://management.core.windows.net//.default "));
+    account.clientId = "my-app";
+    assert(azure::refreshForm(account, QStringLiteral("r")).contains("management.core.windows.net%2F%2Fuser_impersonation"));
+    account.clientId.clear();
     assert(azure::refreshForm(account, QStringLiteral("a+b/c=")).contains("refresh_token=a%2Bb%2Fc%3D"));
 
     const auto r = azure::parseRedirect("GET /?code=0.AX-y&state=st HTTP/1.1\r\nHost: localhost\r\n\r\n");

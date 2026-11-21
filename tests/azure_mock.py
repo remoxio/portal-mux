@@ -32,7 +32,7 @@ import urllib.parse
 TENANT_ID = "11111111-2222-3333-4444-555555555555"
 USER = "ann@contoso.example"
 lock = threading.Lock()
-codes, access, refresh = {}, {}, set()  # code -> (challenge, redirect); token -> expiry
+codes, access, refresh = {}, {}, set()  # code -> (challenge, redirect); token -> (expiry, scope)
 vms = {}  # name -> dict
 LOGIN = r"""
 import getpass, os, sys
@@ -86,9 +86,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def arm_error(self, status, code, message):
         self.send_json(status, {"error": {"code": code, "message": message}})
 
-    def tokens(self):
+    def tokens(self, scope):
         token = secrets.token_urlsafe(24)
-        access[token] = time.time() + args.expire
+        access[token] = (time.time() + args.expire, scope)
         new_refresh = "rt+" + secrets.token_urlsafe(24) + "/="  # characters a form must encode
         refresh.add(new_refresh)
         claims = b64url(json.dumps({"preferred_username": USER, "tid": TENANT_ID}).encode())
@@ -156,7 +156,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def authorized(self):
         token = self.headers.get("Authorization", "").removeprefix("Bearer ")
-        if access.get(token, 0) < time.time():
+        if access.get(token, (0, ""))[0] < time.time():
             self.arm_error(401, "ExpiredAuthenticationToken", "The access token expired.")
             return False
         return True
@@ -171,10 +171,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     challenge, redirect = codes.pop(form.get("code"), (None, None))
                     if challenge != b64url(hashlib.sha256(form.get("code_verifier", "").encode()).digest()) or redirect != form.get("redirect_uri"):
                         return self.send_json(400, {"error": "invalid_grant", "error_description": "AADSTS70008: Bad code or verifier.\r\nTrace ID: 1"})
-                    return self.send_json(200, self.tokens())
+                    return self.send_json(200, self.tokens(form.get("scope", "")))
                 if form.get("grant_type") == "refresh_token" and form.get("refresh_token") in refresh:
                     refresh.discard(form["refresh_token"])
-                    return self.send_json(200, self.tokens())
+                    return self.send_json(200, self.tokens(form.get("scope", "")))
             return self.send_json(400, {"error": "invalid_grant", "error_description": "AADSTS700082: The refresh token has expired.\r\nTrace ID: 2"})
         if not self.authorized():
             return
@@ -253,9 +253,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     if op not in (0, 1, 2):
                         continue
                     if pid == 0:
-                        if access.get(payload.decode(errors="replace"), 0) < time.time():
-                            print("serial: bad token", flush=True)
-                            return client.sendall(ws_frame(8, struct.pack(">H", 1008) + b"Unauthorized"))
+                        expiry, scope = access.get(payload.decode(errors="replace"), (0, ""))
+                        if expiry < time.time() or "https://management.core.windows.net/" not in scope:  # as the real one: the CLI's audience only
+                            print("serial: token refused", scope, flush=True)
+                            return client.sendall(ws_frame(8, struct.pack(">H", 1008) + b"Connection not trusted"))
                         print("serial: token accepted", name, flush=True)
                         pid, fd = pty.fork()
                         if pid == 0:
