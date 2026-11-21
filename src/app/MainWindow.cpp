@@ -325,7 +325,7 @@ MainWindow::MainWindow(QWidget* parent)
 {
     setWindowTitle(QStringLiteral("Portal Mux"));
 #ifdef Q_OS_MACOS
-    // the toolbar in the title bar, which spans the window as ForkLift's
+    // the toolbar in the title bar, which spans the window
     setWindowFlag(Qt::ExpandedClientAreaHint);
     setWindowFlag(Qt::NoTitleBarBackgroundHint);
     setAttribute(Qt::WA_ContentsMarginsRespectsSafeArea, false);
