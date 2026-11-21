@@ -4,12 +4,18 @@
 #include <QTabBar>
 #include <QVBoxLayout>
 
+// Breeze's 30 px tabs are lower than the desktop's other tab bars: 34
+class TallTabBar : public QTabBar {
+protected:
+    QSize tabSizeHint(int index) const override { return QTabBar::tabSizeHint(index) + QSize(0, 4); }
+};
+
 // QTabWidget's API, with the session's toolbar between the tabs and the pages
 class SessionTabs : public QWidget {
     Q_OBJECT
 
 public:
-    explicit SessionTabs(QWidget* parent = nullptr) : QWidget(parent), bar_(new QTabBar), stack_(new QStackedWidget)
+    explicit SessionTabs(QWidget* parent = nullptr) : QWidget(parent), bar_(new TallTabBar), stack_(new QStackedWidget)
     {
         layout_ = new QVBoxLayout(this);
         layout_->setContentsMargins(0, 0, 0, 0);
