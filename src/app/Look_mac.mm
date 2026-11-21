@@ -37,6 +37,7 @@ public:
     {
         if (metric == PM_ToolBarIconSize) return 22; // Breeze's, as on KDE and Windows
         if (metric == PM_TabBarTabOverlap && (tabView(widget) || pills(widget))) return 0;
+        if ((metric == PM_TabCloseIndicatorWidth || metric == PM_TabCloseIndicatorHeight) && widget && pills(widget->parentWidget())) return 16;
         if (metric == PM_TabBarBaseOverlap && tabView(widget)) return tabHeight / 2; // the bar sits on the pane's edge
         if ((metric == PM_LayoutLeftMargin || metric == PM_LayoutTopMargin || metric == PM_LayoutRightMargin || metric == PM_LayoutBottomMargin) &&
             card(widget))
@@ -162,9 +163,9 @@ public:
             p->setBrush(ink);
             p->drawEllipse(r);
         }
-        ink.setAlphaF(0.75);
-        p->setPen(QPen(ink, 1.25, Qt::SolidLine, Qt::RoundCap));
-        const qreal half = 3.5;
+        ink.setAlphaF(option->state & State_MouseOver ? 1 : 0.75);
+        p->setPen(QPen(ink, 1.2, Qt::SolidLine, Qt::RoundCap));
+        const qreal half = 3;
         const QPointF c = r.center();
         p->drawLine(c + QPointF(-half, -half), c + QPointF(half, half));
         p->drawLine(c + QPointF(-half, half), c + QPointF(half, -half));
@@ -194,6 +195,13 @@ public:
         if (const auto* tab = qstyleoption_cast<const QStyleOptionTab*>(option); element == SE_TabBarTabText && tab && pills(widget) && tab->icon.isNull()) {
             const int side = std::max(tab->leftButtonSize.width(), tab->rightButtonSize.width()) + 12; // centred, clear of the close button
             return tab->rect.adjusted(side, 0, -side, 0);
+        }
+        if (const auto* tab = qstyleoption_cast<const QStyleOptionTab*>(option);
+            (element == SE_TabBarTabLeftButton || element == SE_TabBarTabRightButton) && tab && pills(widget)) {
+            // in the pill's round end, as Terminal's
+            const QSize size = element == SE_TabBarTabLeftButton ? tab->leftButtonSize : tab->rightButtonSize;
+            const int x = element == SE_TabBarTabLeftButton ? tab->rect.left() + 15 : tab->rect.right() - 14;
+            return QRect(QPoint(x - size.width() / 2, tab->rect.center().y() + 1 - size.height() / 2), size);
         }
         if (element == SE_GroupBoxLayoutItem && card(widget)) return option->rect; // Qt's leaves the title out, so it crowds what is above
         return QProxyStyle::subElementRect(element, option, widget);
