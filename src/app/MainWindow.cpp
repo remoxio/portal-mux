@@ -393,6 +393,17 @@ MainWindow::MainWindow(QWidget* parent)
         if (DetachedWindow* window = activeDetached()) delete window->page(); // its window closes with it
         else closeTab(tabs_->currentIndex());
     });
+    filesAction_ = new QAction(icons::lucide("panel-left"), tr("&Files"), this);
+    filesAction_->setCheckable(true);
+    filesAction_->setToolTip(tr("The remote files beside the terminal (SFTP): upload, download, following its folder"));
+    connect(filesAction_, &QAction::triggered, this, [this](bool on) {
+        TerminalView* terminal = terminalOf(currentPage());
+        if (!terminal || !terminal->sidePanel()) return;
+        settings_->setValue(QStringLiteral("terminal/filePanel"), on);
+        terminal->setSidePanelShown(on);
+        if (on && terminal->property("sessionState").toInt() == int(SessionState::Connected))
+            if (auto* files = qobject_cast<SftpView*>(terminal->sidePanel())) files->start(terminal->takeTypedPassword());
+    });
     detachAction_ = new QAction(icons::lucide("external-link"), tr("&Detach Tab"), this);
     detachAction_->setToolTip(tr("This session in its own window; closing the window puts it back"));
     connect(detachAction_, &QAction::triggered, this, [this] { detachTab(tabs_->currentIndex()); });
@@ -709,6 +720,7 @@ MainWindow::MainWindow(QWidget* parent)
             view->setProperty("address", QString::fromStdString(c.username.empty() ? c.host : c.username + "@" + c.host));
             connect(view, &SftpView::closeRequested, view, &QObject::deleteLater);
             addSessionTab(view, tr("%1 (files)").arg(QString::fromStdString(c.name)), QString::fromStdString(c.host));
+            view->start();
         });
     });
     connect(tree_, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem* item) {
@@ -1593,7 +1605,10 @@ void MainWindow::openSession(const Connection& c, QWidget* replace)
         });
         if (local) terminal->start(std::make_unique<rdc::LocalTerminalSession>(*terminal, c));
         else if (c.protocol != Protocol::SSH) terminal->start(std::make_unique<rdc::StreamTerminalSession>(*terminal, c));
-        else terminal->start(std::make_unique<rdc::SshTerminalSession>(*terminal, c, knownHostsFile()));
+        else {
+            terminal->start(std::make_unique<rdc::SshTerminalSession>(*terminal, c, knownHostsFile()));
+            addFilePanel(terminal, c);
+        }
         terminal->setFocus();
         return;
     }
@@ -1790,6 +1805,19 @@ void MainWindow::openVmConsole(LibvirtVms* host, const std::string& uuid)
     (void)host;
     (void)uuid;
 #endif
+}
+
+void MainWindow::addFilePanel(TerminalView* terminal, const Connection& c)
+{
+    auto* files = new SftpView(rdc::SshConnection::fromConnection(c, knownHostsFile()), true);
+    terminal->setSidePanel(files);
+    terminal->setSidePanelShown(settings_->value(QStringLiteral("terminal/filePanel"), true).toBool());
+    connect(terminal, &TerminalView::stateChanged, files, [terminal, files](SessionState s) {
+        if (s == SessionState::Connected && terminal->sidePanelShown()) files->start(terminal->takeTypedPassword()); // its host key known now
+    });
+    connect(terminal, &TerminalView::directoryChanged, files, &SftpView::follow);
+    connect(terminal, &TerminalView::titleChanged, files, &SftpView::followTitle);
+    updateSessionActions(); // its Files button
 }
 
 void MainWindow::addVmTab(VmConsole* console)
@@ -2215,7 +2243,8 @@ QList<QAction*> MainWindow::sessionTools(QWidget* page) const
         if (!is({"Android", "Moonlight", "Test"})) tools << sendKeysMenu_->menuAction();
         if (is({"SPICE"})) tools << nullptr << usbAction_;
         if (is({"Moonlight"})) tools << nullptr << relaunchAction_;
-    } else if (terminalOf(page)) {
+    } else if (TerminalView* terminal = terminalOf(page)) {
+        if (terminal->sidePanel()) tools << filesAction_;
         tools << nullptr << reconnectAction_;
     }
     return tools << nullptr << disconnectAction_;
@@ -2248,6 +2277,9 @@ void MainWindow::updateSessionActions()
                        sendKeysMenu_->menuAction()})
         a->setEnabled(view);
     reconnectAction_->setEnabled(view || terminalOf(currentPage()));
+    const TerminalView* terminal = terminalOf(currentPage());
+    filesAction_->setEnabled(terminal && terminal->sidePanel());
+    filesAction_->setChecked(terminal && terminal->sidePanelShown());
     usbAction_->setEnabled(view && currentPage()->property("protocol").toString() == QLatin1String("SPICE"));
     relaunchAction_->setEnabled(view && currentPage()->property("protocol").toString() == QLatin1String("Moonlight"));
     detachAction_->setEnabled(tabs_->count() > 0);

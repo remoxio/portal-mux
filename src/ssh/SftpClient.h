@@ -29,6 +29,7 @@ public:
     ~SftpClient() { stop(); }
 
     void start(Done opened);
+    void setPassword(std::string password) { params_.password = std::move(password); } // before start()
     void stop();
     std::string home() const { return home_; }
 

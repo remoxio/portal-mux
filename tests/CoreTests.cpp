@@ -358,6 +358,17 @@ static void gameStreamTests()
     assert((GetVirtualKeyCodeFromVirtualScanCode(0x138, WINPR_KBD_TYPE_IBM_ENHANCED) & 0xFF) == VK_RMENU);
 }
 
+static void titleFolderTests()
+{
+    const QString home = QStringLiteral("/home/al");
+    assert(titleFolder(QStringLiteral("al@box: ~/src/my dir"), home) == QStringLiteral("/home/al/src/my dir")); // Debian
+    assert(titleFolder(QStringLiteral("al@box:~"), home) == home);                                              // Fedora
+    assert(titleFolder(QStringLiteral("al@box:/etc"), home) == QStringLiteral("/etc"));
+    for (const char* none : {"vim notes.txt", "al@box: ~bob/x", "box: /etc", "al@box: relative/dir"})
+        assert(titleFolder(QLatin1String(none), home).isEmpty());
+    assert(titleFolder(QStringLiteral("al@box: ~/x"), {}).isEmpty());
+}
+
 static void addressTests()
 {
     using rdc::Protocol;
@@ -547,6 +558,7 @@ int main()
     videoDecoderTests();
     sshConfigTests();
     domainXmlTests();
+    titleFolderTests();
     krdcImportTests();
     propertyTests();
     rectTests();

@@ -16,3 +16,6 @@ std::optional<rdc::Connection> connectionFromFile(const QString& path, QString* 
 
 // Empty if not a MAC address
 QByteArray magicPacket(const QString& mac);
+
+// The folder in a terminal title as "user@host: ~/dir" (many prompts set it); ~ is home. Empty if none.
+QString titleFolder(const QString& title, const QString& home);

@@ -4,6 +4,7 @@
 #include "core/Session.h"
 
 #include <QAbstractScrollArea>
+#include <QPointer>
 #include <QElapsedTimer>
 #include <QFont>
 
@@ -34,6 +35,13 @@ public:
     void onError(std::string message) override;
     bool askTrust(const std::string& title, const std::string& details, bool* always) override;
     bool askCredentials(const std::string& prompt, rdc::Credentials& creds) override;
+
+    // a widget left of the terminal, as wide as its edge is dragged; null: none
+    void setSidePanel(QWidget* panel);
+    QWidget* sidePanel() const { return side_; }
+    void setSidePanelShown(bool on);
+    bool sidePanelShown() const { return side_ && !side_->isHidden(); }
+    std::string takeTypedPassword(); // what the login prompt was answered with, once
     void onData(std::string bytes) override;
 
     struct Callbacks;
@@ -45,6 +53,7 @@ signals:
     void reconnectRequested();
     void gridChanged();
     void bell();
+    void directoryChanged(const QString& path); // the shell's, by OSC 7
 
 protected:
     bool event(QEvent* event) override;
@@ -59,7 +68,7 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
     void scrollContentsBy(int, int) override;
-    bool focusNextPrevChild(bool) override { return false; } // Tab goes to the shell
+    bool focusNextPrevChild(bool next) override; // Tab goes to the shell
 
 private:
     using Line = std::vector<VTermScreenCell>;
@@ -85,6 +94,7 @@ private:
     void openFind();
     void find(bool older, bool restart);
     void placeFindBar();
+    void placeSidePanel();
 
     int rows_ = 24, cols_ = 80; // before vt_: used to create it
     VTerm* vt_;
@@ -106,6 +116,11 @@ private:
     bool altScreen_ = false;
     int wheelRest_ = 0; // eighths of a degree not yet sent as a wheel step
     std::string titlePart_; // the title arrives in pieces
+    std::string oscPart_;   // OSC 7 too
+    QPointer<QWidget> side_;
+    QWidget* sideEdge_ = nullptr;
+    int sideWidth_ = 280;
+    std::string typedPassword_; // written by the worker before it reports Connected
     QWidget* findBar_ = nullptr;
     QLineEdit* findText_ = nullptr;
     QLabel* findStatus_ = nullptr;

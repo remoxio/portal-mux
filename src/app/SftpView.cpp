@@ -1,7 +1,12 @@
 #include "app/SftpView.h"
+#include "app/Addresses.h"
 #include "app/Icons.h"
 
 #include <QDateTime>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
+#include <QToolButton>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -16,40 +21,85 @@
 
 static constexpr int DirRole = Qt::UserRole;
 
-SftpView::SftpView(rdc::SshConnection::Params params, QWidget* parent) : QWidget(parent), client_(*this, std::move(params))
+SftpView::SftpView(rdc::SshConnection::Params params, bool panel, QWidget* parent) : QWidget(parent), client_(*this, std::move(params))
 {
     pathEdit_ = new QLineEdit;
-    auto* up = new QPushButton(icons::lucide("arrow-up"), tr("&Up"));
-    auto* refresh = new QPushButton(icons::lucide("refresh-cw"), tr("&Refresh"));
-    auto* uploadButton = new QPushButton(icons::lucide("upload"), tr("U&pload…"));
-    auto* downloadButton = new QPushButton(icons::lucide("download"), tr("&Download…"));
+    QAbstractButton *up, *refresh, *uploadButton, *downloadButton;
+    if (panel) { // icons, the path under them
+        auto button = [](const char* icon, const QString& tip) {
+            auto* b = new QToolButton;
+            b->setIcon(icons::lucide(icon));
+            b->setToolTip(tip);
+            b->setAutoRaise(true);
+            return b;
+        };
+        up = button("arrow-up", tr("Up"));
+        refresh = button("refresh-cw", tr("Refresh"));
+        uploadButton = button("upload", tr("Upload… (or drop files on the list)"));
+        downloadButton = button("download", tr("Download the selected files…"));
+        follow_ = button("terminal", tr("Follow the terminal's folder"));
+        follow_->setCheckable(true);
+        follow_->setChecked(true);
+        connect(follow_, &QToolButton::toggled, this, [this](bool on) {
+            if (on) setBusy(tr("Follows the terminal: its prompt must report the folder (OSC 7, or the window title)."));
+        });
+    } else {
+        up = new QPushButton(icons::lucide("arrow-up"), tr("&Up"));
+        refresh = new QPushButton(icons::lucide("refresh-cw"), tr("&Refresh"));
+        uploadButton = new QPushButton(icons::lucide("upload"), tr("U&pload…"));
+        downloadButton = new QPushButton(icons::lucide("download"), tr("&Download…"));
+    }
     list_ = new QTreeWidget;
     list_->setHeaderLabels({tr("Name"), tr("Size"), tr("Modified")});
     list_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     list_->setRootIsDecorated(false);
     list_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    list_->header()->setStretchLastSection(false);
+    list_->setColumnHidden(2, panel);
+    list_->viewport()->setAcceptDrops(true);
+    list_->viewport()->installEventFilter(this);
     status_ = new QLabel;
+    status_->setWordWrap(panel);
 
     auto* bar = new QHBoxLayout;
-    bar->addWidget(up);
-    bar->addWidget(pathEdit_, 1);
-    bar->addWidget(refresh);
-    bar->addWidget(uploadButton);
-    bar->addWidget(downloadButton);
     auto* layout = new QVBoxLayout(this);
-    layout->addLayout(bar);
+    if (panel) {
+        layout->setContentsMargins(4, 2, 0, 2);
+        layout->setSpacing(2);
+        bar->setSpacing(0);
+        for (QAbstractButton* b : {up, refresh, uploadButton, downloadButton}) bar->addWidget(b);
+        bar->addStretch();
+        bar->addWidget(follow_);
+        layout->addLayout(bar);
+        layout->addWidget(pathEdit_);
+        list_->setFrameShape(QFrame::NoFrame);
+    } else {
+        bar->addWidget(up);
+        bar->addWidget(pathEdit_, 1);
+        bar->addWidget(refresh);
+        bar->addWidget(uploadButton);
+        bar->addWidget(downloadButton);
+        layout->addLayout(bar);
+    }
     layout->addWidget(list_, 1);
     layout->addWidget(status_);
 
-    connect(up, &QPushButton::clicked, this, [this] { open(QFileInfo(path_).path()); });
-    connect(refresh, &QPushButton::clicked, this, [this] { open(path_); });
+    connect(up, &QAbstractButton::clicked, this, [this] { open(QFileInfo(path_).path()); });
+    connect(refresh, &QAbstractButton::clicked, this, [this] { open(path_); });
     connect(pathEdit_, &QLineEdit::returnPressed, this, [this] { open(pathEdit_->text()); });
-    connect(uploadButton, &QPushButton::clicked, this, &SftpView::upload);
-    connect(downloadButton, &QPushButton::clicked, this, &SftpView::download);
+    connect(uploadButton, &QAbstractButton::clicked, this, qOverload<>(&SftpView::upload));
+    connect(downloadButton, &QAbstractButton::clicked, this, &SftpView::download);
     connect(list_, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem* item) {
         if (item->data(0, DirRole).toBool()) open(path_ + QLatin1Char('/') + item->text(0));
     });
+    setBusy(panel ? tr("Connects once the terminal is logged in.") : QString());
+}
 
+void SftpView::start(const std::string& password)
+{
+    if (started_) return;
+    started_ = true;
+    if (!password.empty()) client_.setPassword(password);
     setBusy(tr("Connecting…"));
     client_.start([this](std::string error) {
         const QString home = QString::fromStdString(client_.home());
@@ -126,9 +176,42 @@ void SftpView::download()
     }
 }
 
-void SftpView::upload()
+void SftpView::follow(const QString& path)
 {
-    const QStringList files = QFileDialog::getOpenFileNames(this, tr("Upload files"), QDir::homePath());
+    precise_ = true;
+    if (follow_ && follow_->isChecked() && started_ && QDir::cleanPath(path) != path_) open(path);
+}
+
+void SftpView::followTitle(const QString& title)
+{
+    if (precise_ || !follow_ || !follow_->isChecked() || !started_) return;
+    const QString path = titleFolder(title, QString::fromStdString(client_.home()));
+    if (!path.isEmpty() && QDir::cleanPath(path) != path_) open(path);
+}
+
+bool SftpView::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == list_->viewport() && (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove)) {
+        auto* drag = static_cast<QDropEvent*>(event);
+        if (drag->mimeData()->hasUrls() && started_) drag->acceptProposedAction();
+        return true;
+    }
+    if (watched == list_->viewport() && event->type() == QEvent::Drop) {
+        auto* drop = static_cast<QDropEvent*>(event);
+        QStringList files;
+        for (const QUrl& url : drop->mimeData()->urls())
+            if (url.isLocalFile() && QFileInfo(url.toLocalFile()).isFile()) files << url.toLocalFile();
+        upload(files);
+        drop->acceptProposedAction();
+        return true;
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void SftpView::upload() { upload(QFileDialog::getOpenFileNames(this, tr("Upload files"), QDir::homePath())); }
+
+void SftpView::upload(const QStringList& files)
+{
     for (const QString& file : files) {
         const QString name = QFileInfo(file).fileName();
         setBusy(tr("Uploading %1…").arg(name));

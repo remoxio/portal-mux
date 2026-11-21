@@ -18,11 +18,13 @@
 #include <QPushButton>
 #include <QScrollBar>
 #include <QToolButton>
+#include <QUrl>
 
 #include <algorithm>
 #include <climits>
 #include <cstring>
 #include <functional>
+#include <utility>
 
 using rdc::SessionState;
 
@@ -135,8 +137,23 @@ struct TerminalView::Callbacks {
         return 1;
     }
 
+    static int osc(int command, VTermStringFragment frag, void* user)
+    {
+        if (command != 7) return 0;
+        TerminalView* v = view(user);
+        if (frag.initial) v->oscPart_.clear();
+        v->oscPart_.append(frag.str, frag.len);
+        if (frag.final) { // file://host/path
+            const QUrl url(QString::fromUtf8(v->oscPart_));
+            if (url.isLocalFile() || url.scheme() == QLatin1String("file")) emit v->directoryChanged(url.path());
+        }
+        return 1;
+    }
+
     static void output(const char* s, size_t len, void* user) { view(user)->send(s, len); }
 };
+
+static const VTermStateFallbacks fallbacks = {nullptr, nullptr, TerminalView::Callbacks::osc, nullptr, nullptr, nullptr, nullptr};
 
 static const VTermScreenCallbacks screenCallbacks = {
     TerminalView::Callbacks::damage,
@@ -163,6 +180,7 @@ TerminalView::TerminalView(QWidget* parent)
     vterm_set_utf8(vt_, 1);
     vterm_output_set_callback(vt_, Callbacks::output, this);
     vterm_screen_set_callbacks(screen_, &screenCallbacks, this);
+    vterm_screen_set_unrecognised_fallbacks(screen_, &fallbacks, this);
     VTermColor fg, bg;
     vterm_color_rgb(&fg, uint8_t(defaultFg.red()), uint8_t(defaultFg.green()), uint8_t(defaultFg.blue()));
     vterm_color_rgb(&bg, uint8_t(defaultBg.red()), uint8_t(defaultBg.green()), uint8_t(defaultBg.blue()));
@@ -235,7 +253,55 @@ bool TerminalView::askTrust(const std::string& title, const std::string& details
 
 bool TerminalView::askCredentials(const std::string& prompt, rdc::Credentials& creds)
 {
-    return prompts::credentials(prompts_, this, QString::fromStdString(prompt), creds);
+    const bool ok = prompts::credentials(prompts_, this, QString::fromStdString(prompt), creds);
+    if (ok) typedPassword_ = creds.password;
+    return ok;
+}
+
+std::string TerminalView::takeTypedPassword() { return std::exchange(typedPassword_, {}); }
+
+void TerminalView::setSidePanel(QWidget* panel)
+{
+    delete side_;
+    side_ = panel;
+    if (side_) {
+        side_->setParent(this);
+        if (!sideEdge_) {
+            sideEdge_ = new QWidget(this);
+            sideEdge_->setCursor(Qt::SplitHCursor);
+            sideEdge_->installEventFilter(this);
+        }
+        side_->show();
+    }
+    placeSidePanel();
+}
+
+void TerminalView::setSidePanelShown(bool on)
+{
+    if (!side_) return;
+    side_->setVisible(on);
+    placeSidePanel();
+    if (!on && side_->isAncestorOf(QApplication::focusWidget())) setFocus();
+}
+
+void TerminalView::placeSidePanel()
+{
+    const bool shown = sidePanelShown();
+    const int width = std::clamp(sideWidth_, 160, std::max(160, this->width() / 2));
+    setViewportMargins(shown ? width + 5 : 0, 0, 0, 0); // 5: the edge to drag
+    if (sideEdge_) sideEdge_->setVisible(shown);
+    if (shown) {
+        const QRect r = contentsRect();
+        side_->setGeometry(r.left(), r.top(), width, r.height());
+        sideEdge_->setGeometry(r.left() + width, r.top(), 5, r.height());
+    }
+    resizeTerminal();
+}
+
+bool TerminalView::focusNextPrevChild(bool next)
+{
+    if (side_ && side_->isAncestorOf(QApplication::focusWidget())) return QAbstractScrollArea::focusNextPrevChild(next);
+    return false;
 }
 
 void TerminalView::onData(std::string bytes)
@@ -318,7 +384,7 @@ void TerminalView::resizeTerminal()
 void TerminalView::resizeEvent(QResizeEvent* event)
 {
     QAbstractScrollArea::resizeEvent(event);
-    resizeTerminal();
+    placeSidePanel();
     placeFindBar();
 }
 
@@ -584,6 +650,19 @@ void TerminalView::placeFindBar()
 
 bool TerminalView::eventFilter(QObject* watched, QEvent* event)
 {
+    if (watched == sideEdge_) {
+        if (event->type() == QEvent::MouseMove && (static_cast<QMouseEvent*>(event)->buttons() & Qt::LeftButton)) {
+            sideWidth_ = mapFromGlobal(static_cast<QMouseEvent*>(event)->globalPosition().toPoint()).x() - contentsRect().left();
+            placeSidePanel();
+            return true;
+        }
+        if (event->type() == QEvent::Paint) { // a line in a separator's shade
+            QPainter p(sideEdge_);
+            p.fillRect(sideEdge_->rect(), palette().window());
+            p.fillRect(QRect(2, 0, 1, sideEdge_->height()), palette().mid());
+            return true;
+        }
+    }
     if (watched == findText_ && event->type() == QEvent::KeyPress) {
         const auto* key = static_cast<QKeyEvent*>(event);
         if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) {

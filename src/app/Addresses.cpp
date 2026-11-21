@@ -212,3 +212,14 @@ QByteArray magicPacket(const QString& mac)
     for (int i = 0; i < 16; ++i) packet += address;
     return packet;
 }
+
+QString titleFolder(const QString& title, const QString& home)
+{
+    static const QRegularExpression prompt(QStringLiteral("^[^@\\s]+@[^:\\s]+:\\s*((?:~|/).*)$"));
+    const QRegularExpressionMatch m = prompt.match(title);
+    if (!m.hasMatch()) return {};
+    QString path = m.captured(1).trimmed();
+    if (!path.startsWith(QLatin1Char('~'))) return path;
+    if ((path.size() > 1 && path[1] != QLatin1Char('/')) || home.isEmpty()) return {}; // ~user: not known here
+    return home + path.mid(1);
+}
