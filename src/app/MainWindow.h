@@ -32,6 +32,8 @@ class QToolBar;
 class RemoteView;
 class SessionTabs;
 class TerminalView;
+class VmConsole;
+class VmView;
 class QListWidget;
 class QTreeWidget;
 
@@ -78,8 +80,10 @@ private:
     // replace: a reconnect, skips the commands
     void openSession(const rdc::Connection& connection, QWidget* replace = nullptr);
     QScrollArea* createDisplay(const rdc::Connection& connection);
+    TerminalView* createTerminal(const rdc::Connection& connection, const QString& address, const QString& protocol = {});
     TerminalView* addTerminalTab(const rdc::Connection& connection, const QString& address, int at, const QString& protocol = {}); // not started
     void openVmConsole(LibvirtVms* host, const std::string& uuid);
+    void addVmTab(VmConsole* console); // named by its windowTitle()
     void openVmSerial(LibvirtVms* host, const std::string& uuid, QWidget* replace = nullptr);
     void showProxmoxConsole(const QString& key);
     void showSessionState(QWidget* page, const QString& name, rdc::SessionState state);
@@ -91,7 +95,7 @@ private:
     void reattach(QWidget* detachedWindow);
     void styleStatusCells();
     bool confirmCloseTab(int index);
-    void openHyperVConsole(const rdc::Connection& console);
+    void openHyperVConsole(const QString& hostId, const std::string& vmId);
     void openProxmoxConsole(const rdc::Connection& connection, const QString& key, QWidget* replace, const QString& address,
                             QObject* tunnel);
     void openProxmoxTerminal(const QString& key, QWidget* replace, const QString& name, const QString& address,
@@ -122,6 +126,7 @@ private:
     std::vector<rdc::Connection> sshConfig_;
 
     ProxmoxView* proxmox_ = nullptr;
+    VmView* kvm_ = nullptr; // with libvirt
     HyperVView* hyperv_ = nullptr;
     QSettings* settings_;
     bool blurPending_ = false;

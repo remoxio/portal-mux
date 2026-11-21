@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/Proxmox.h"
+#include "app/VmConsole.h"
 #include "core/Session.h"
 
 #include <QPointer>
@@ -27,6 +28,7 @@ public:
     ProxmoxView(QSettings* settings, QString configDir, QWidget* parent = nullptr);
 
     QList<QAction*> titleActions() const;
+    VmConsole* console(const QString& key); // its tab, with its power buttons; null if its server is gone
     // key: "<server id>/<node>/<type>/<vmid>"
     void requestConsole(const QString& key, QWidget* replace);
 
@@ -50,10 +52,17 @@ private:
     void storeSecret(ProxmoxClient* client, const QString& secret);
     void fix(ProxmoxClient* client); // what its row's state asks for: log in, check the certificate, retry
     void rebuild();
+    using Target = std::function<std::pair<ProxmoxClient*, std::optional<proxmox::Guest>>()>;
+    struct Actions {
+        QAction *console, *start, *shutdown, *stop, *reboot, *reset, *suspend, *resume;
+    };
+    Actions makeActions(QObject* owner, const Target& target); // for the selected row, or one guest's tab
     void updateActions();
+    void updateActions(const Actions& a, const std::optional<proxmox::Guest>& g) const;
     ProxmoxClient* selectedClient() const;
     std::optional<proxmox::Guest> selectedGuest() const;
-    void act(const QString& action);
+    std::pair<ProxmoxClient*, std::optional<proxmox::Guest>> find(const QString& key) const;
+    void act(ProxmoxClient* client, const proxmox::Guest& guest, const QString& action);
     void refreshAll();
     struct Console {
         QPointer<ProxmoxClient> client;
@@ -75,5 +84,7 @@ private:
     QLabel* note_;
     Folding* folding_;
     QTimer poll_;
-    QAction *add_, *refresh_, *console_, *start_, *shutdown_, *stop_, *reboot_, *reset_, *suspend_, *resume_, *edit_, *remove_;
+    Actions actions_; // the selected row's
+    QAction *add_, *refresh_, *edit_, *remove_;
+    int following_ = 0; // open tabs: poll while the view is hidden too
 };

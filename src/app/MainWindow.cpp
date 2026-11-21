@@ -16,9 +16,9 @@
 #include "app/Keymap.h"
 #ifdef PORTAL_MUX_LIBVIRT
 #include "app/LibvirtVms.h"
-#include "app/VmConsole.h"
 #include "app/VmView.h"
 #endif
+#include "app/VmConsole.h"
 #include "app/RemoteView.h"
 #include "app/PageRail.h"
 #include "app/SessionTabs.h"
@@ -281,6 +281,12 @@ static DetachedWindow* activeDetached()
     return nullptr;
 }
 
+static TerminalView* terminalOf(QWidget* page) // the page, or the terminal in it
+{
+    if (auto* terminal = qobject_cast<TerminalView*>(page)) return terminal;
+    return page ? page->findChild<TerminalView*>() : nullptr;
+}
+
 static DetachedWindow* detachedOf(const QTreeWidgetItem* item) // only if it still exists
 {
     const QObject* window = item ? item->data(0, WindowRole).value<QObject*>() : nullptr;
@@ -342,7 +348,7 @@ MainWindow::MainWindow(QWidget* parent)
     reconnectAction_ = new QAction(icons::lucide("refresh-cw"), tr("&Reconnect"), this);
     connect(reconnectAction_, &QAction::triggered, this, [this] {
         if (RemoteView* view = currentView()) emit view->reconnectRequested();
-        else if (auto* terminal = qobject_cast<TerminalView*>(currentPage())) emit terminal->reconnectRequested();
+        else if (auto* terminal = terminalOf(currentPage())) emit terminal->reconnectRequested();
     });
     // scancodes for RDP etc., keysyms for VNC
     sendKeysMenu_ = new QMenu(tr("Send &Keys"), this);
@@ -587,7 +593,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(sidebarNew, &QAction::triggered, newAction, &QAction::trigger);
     addView("connections", icons::lucide("network"), tr("Connections"), connectionsPage, {sidebarNew});
 #ifdef PORTAL_MUX_LIBVIRT
-    auto* vmView = new VmView(settings_);
+    auto* vmView = kvm_ = new VmView(settings_);
     connect(vmView, &VmView::vmsChanged, this, &MainWindow::updateStatusInfo);
     connect(vmView, &VmView::openRequested, this, &MainWindow::openVmConsole);
     connect(vmView, &VmView::serialRequested, this, [this](LibvirtVms* host, const std::string& uuid) { openVmSerial(host, uuid); });
@@ -1139,7 +1145,7 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
     QGroupBox* sshFont = fontBox(tr("SSH terminal"), tr("Fixed-width fonts only; connections with their own font keep it."),
                                  QStringLiteral("font/terminal"), QFontDatabase::FixedFont, [this](const QFont&) {
                                      for (int i = 0; i < tabs_->count(); ++i)
-                                         if (auto* terminal = qobject_cast<TerminalView*>(tabs_->widget(i))) configureTerminal(terminal);
+                                         if (auto* terminal = terminalOf(tabs_->widget(i))) configureTerminal(terminal);
                                  });
 
     auto* pages = new QListWidget;
@@ -1238,7 +1244,7 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
     if (const QString saved = settings_->value(QStringLiteral("font/main")).toString(); !saved.isEmpty()) font.fromString(saved);
     QApplication::setFont(font);
     for (int i = 0; i < tabs_->count(); ++i)
-        if (auto* terminal = qobject_cast<TerminalView*>(tabs_->widget(i))) configureTerminal(terminal);
+        if (auto* terminal = terminalOf(tabs_->widget(i))) configureTerminal(terminal);
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
@@ -1608,12 +1614,18 @@ void MainWindow::openSession(const Connection& c, QWidget* replace)
 
 TerminalView* MainWindow::addTerminalTab(const Connection& c, const QString& address, int at, const QString& protocol)
 {
+    TerminalView* terminal = createTerminal(c, address, protocol);
+    addSessionTab(terminal, QString::fromStdString(c.name), c.protocol == Protocol::Local ? tr("This computer") : QString::fromStdString(c.host), at);
+    return terminal;
+}
+
+TerminalView* MainWindow::createTerminal(const Connection& c, const QString& address, const QString& protocol)
+{
     const QString name = QString::fromStdString(c.name);
     auto* terminal = new TerminalView;
     terminal->setProperty("protocol", protocol.isEmpty() ? protocolLabel(c.protocol) : protocol);
     terminal->setProperty("address", address);
     connect(terminal, &TerminalView::gridChanged, this, &MainWindow::updateStatusInfo);
-    addSessionTab(terminal, name, c.protocol == Protocol::Local ? tr("This computer") : QString::fromStdString(c.host), at);
     connect(terminal, &TerminalView::stateChanged, this, [this, terminal, name](SessionState s) { showSessionState(terminal, name, s); });
     connect(terminal, &TerminalView::closeRequested, terminal, &QObject::deleteLater);
     terminal->setProperty("ownFont", QString::fromStdString(c.option("font")));
@@ -1753,38 +1765,45 @@ QScrollArea* MainWindow::createDisplay(const Connection& c)
 void MainWindow::openVmConsole(LibvirtVms* host, const std::string& uuid)
 {
 #ifdef PORTAL_MUX_LIBVIRT
+    const QString key = host->uri() + QLatin1Char('/') + QString::fromStdString(uuid);
     for (int i = 0; i < tabs_->count(); ++i)
-        if (auto* console = qobject_cast<VmConsole*>(tabs_->widget(i)); console && console->vms() == host && console->uuid() == uuid) {
+        if (tabs_->widget(i)->property("vmKey").toString() == key) {
             tabs_->setCurrentIndex(i);
-            if (RemoteView* view = currentView()) view->setFocus();
+            tabs_->widget(i)->setFocus();
             return;
         }
     const auto vm = std::find_if(host->vms().begin(), host->vms().end(), [&](const LibvirtVms::Vm& v) { return v.uuid == uuid; });
     if (vm == host->vms().end()) return;
-    auto* console = new VmConsole(host, uuid, [this](const Connection& c) -> QWidget* { return createDisplay(c); });
-    console->setProperty("protocol", vm->display ? protocolLabel(vm->display->protocol) : QStringLiteral("SPICE"));
-    connect(console, &VmConsole::closeRequested, console, &QObject::deleteLater);
-    const auto describe = [this, console, host, uuid](Protocol protocol) {
-        console->setProperty("protocol", protocolLabel(protocol));
+    VmConsole* console = kvm_->console(host, uuid, [this, host, uuid](VmConsole* console) {
         const auto vm = std::find_if(host->vms().begin(), host->vms().end(), [&](const LibvirtVms::Vm& v) { return v.uuid == uuid; });
-        const bool shown = vm != host->vms().end() && vm->display;
+        if (vm == host->vms().end() || !vm->display) return;
+        const auto& d = *vm->display;
         const QString where = host->remote() ? host->name() + QStringLiteral(" · ") : QString();
-        console->setProperty("address", shown ? where + QStringLiteral("%1:%2").arg(QString::fromStdString(vm->display->host))
-                                                            .arg(vm->display->port > 0 ? vm->display->port : vm->display->number("tlsPort"))
-                                              : QString());
-        updateSessionActions();
-        updateActiveList();
-        updateStatusInfo();
-    };
-    connect(console, &VmConsole::displayChanged, this, describe);
-    addSessionTab(console, QString::fromStdString(vm->name), tr("Virtual machine"));
-    if (vm->display) describe(vm->display->protocol); // the console opened it before we listened
-    if (RemoteView* view = currentView()) view->setFocus();
-    updateSessionActions();
+        console->setProperty("protocol", protocolLabel(d.protocol));
+        console->setProperty("address", where + QStringLiteral("%1:%2").arg(QString::fromStdString(d.host)).arg(d.port > 0 ? d.port : d.number("tlsPort")));
+        console->setDisplay(createDisplay(d));
+    });
+    console->setProperty("vmKey", key);
+    console->setProperty("protocol", vm->display ? protocolLabel(vm->display->protocol) : QStringLiteral("SPICE"));
+    addVmTab(console);
 #else
     (void)host;
     (void)uuid;
 #endif
+}
+
+void MainWindow::addVmTab(VmConsole* console)
+{
+    connect(console, &VmConsole::closeRequested, console, &QObject::deleteLater);
+    connect(console, &VmConsole::changed, this, [this] {
+        updateSessionActions();
+        updateActiveList();
+        updateStatusInfo();
+    });
+    addSessionTab(console, console->windowTitle(), tr("Virtual machine"));
+    console->follow();
+    if (!console->display()) console->setFocus();
+    updateSessionActions();
 }
 
 void MainWindow::showProxmoxConsole(const QString& key)
@@ -1792,70 +1811,66 @@ void MainWindow::showProxmoxConsole(const QString& key)
     for (int i = 0; i < tabs_->count(); ++i)
         if (tabs_->widget(i)->property("proxmoxKey").toString() == key) {
             tabs_->setCurrentIndex(i);
-            if (RemoteView* view = currentView()) view->setFocus();
-            else tabs_->widget(i)->setFocus(); // a container's terminal
+            tabs_->widget(i)->setFocus();
             return;
         }
-    proxmox_->requestConsole(key, nullptr);
+    VmConsole* console = proxmox_->console(key);
+    if (!console) return;
+    console->setProperty("proxmoxKey", key);
+    console->setProperty("protocol", key.section(QLatin1Char('/'), 2, 2) == QLatin1String("lxc") ? QStringLiteral("Terminal") : QStringLiteral("VNC"));
+    addVmTab(console);
 }
 
-void MainWindow::openProxmoxConsole(const Connection& c, const QString& key, QWidget* replace, const QString& address, QObject* tunnel)
+void MainWindow::openProxmoxConsole(const Connection& c, const QString&, QWidget* replace, const QString& address, QObject* tunnel)
 {
-    int at = -1;
-    if (replace) {
-        at = tabs_->indexOf(replace);
-        tabs_->removeTab(at);
-        replace->deleteLater();
-    }
-    QScrollArea* scroll = createDisplay(c);
+    auto* console = qobject_cast<VmConsole*>(replace);
+    QScrollArea* scroll = console ? createDisplay(c) : nullptr;
     if (!scroll) {
         delete tunnel;
         return;
     }
     if (tunnel) tunnel->setParent(scroll);
-    auto* view = qobject_cast<RemoteView*>(scroll->widget());
-    scroll->setProperty("proxmoxKey", key);
-    scroll->setProperty("address", address);
-    addSessionTab(scroll, QString::fromStdString(c.name), address, at);
-    connect(view, &RemoteView::reconnectRequested, this, [this, scroll, key] { proxmox_->requestConsole(key, scroll); });
-    connect(view, &RemoteView::closeRequested, scroll, &QObject::deleteLater);
-    view->setFocus();
-    updateSessionActions();
+    console->setProperty("protocol", protocolLabel(c.protocol));
+    console->setProperty("address", address);
+    console->setDisplay(scroll);
 }
 
-void MainWindow::openHyperVConsole(const Connection& console)
+void MainWindow::openHyperVConsole(const QString& hostId, const std::string& vmId)
 {
+    const QString key = hostId + QLatin1Char('/') + QString::fromStdString(vmId);
     for (int i = 0; i < tabs_->count(); ++i)
-        if (tabs_->widget(i)->property("connectionId") == QString::fromStdString(console.id)) {
+        if (tabs_->widget(i)->property("hypervKey").toString() == key) {
             tabs_->setCurrentIndex(i);
-            if (RemoteView* view = currentView()) view->setFocus();
+            tabs_->widget(i)->setFocus();
             return;
         }
-    readSecrets(this, settings_, console, [this](Connection c) {
-        if (c.password.empty()) c.password = c.option("tunnel.password"); // the server's Windows account
-        openSession(c);
+    VmConsole* console = hyperv_->console(hostId, vmId, [this](VmConsole* console, const Connection& c) {
+        readSecrets(this, settings_, c, [this, target = QPointer<VmConsole>(console)](Connection c) {
+            if (!target) return;
+            if (c.password.empty()) c.password = c.option("tunnel.password"); // the server's Windows account
+            target->setProperty("address", QString::fromStdString(c.option("address")));
+            target->setDisplay(createDisplay(c));
+        });
     });
+    if (!console) return;
+    console->setProperty("hypervKey", key);
+    console->setProperty("protocol", QStringLiteral("RDP"));
+    addVmTab(console);
 }
 
-void MainWindow::openProxmoxTerminal(const QString& key, QWidget* replace, const QString& name, const QString& address,
+void MainWindow::openProxmoxTerminal(const QString&, QWidget* replace, const QString& name, const QString& address,
                                      const std::function<std::unique_ptr<rdc::TerminalSession>(rdc::TerminalListener&)>& make)
 {
-    int at = -1;
-    if (replace) {
-        at = tabs_->indexOf(replace);
-        tabs_->removeTab(at);
-        replace->deleteLater();
-    }
+    auto* console = qobject_cast<VmConsole*>(replace);
+    if (!console) return;
     Connection c;
     c.protocol = Protocol::Serial;
     c.name = name.toStdString();
     c.host = address.toStdString();
-    TerminalView* terminal = addTerminalTab(c, address, at, QStringLiteral("Terminal")); // with the terminals, not as a serial line
-    terminal->setProperty("proxmoxKey", key);
-    connect(terminal, &TerminalView::reconnectRequested, this, [this, terminal, key] { proxmox_->requestConsole(key, terminal); });
+    TerminalView* terminal = createTerminal(c, address, QStringLiteral("Terminal"));
+    console->setProperty("address", address);
+    console->setDisplay(terminal);
     terminal->start(make(*terminal));
-    terminal->setFocus();
-    updateSessionActions();
 }
 
 void MainWindow::openVmSerial(LibvirtVms* host, const std::string& uuid, QWidget* replace)
@@ -1980,15 +1995,10 @@ void MainWindow::updateStatusInfo()
             fps = tr("%1 fps").arg(d.fps);
         }
         mode = d.viewOnly ? tr("View only") : d.grabbed ? tr("Keys grabbed") : QString();
-    } else if (auto* terminal = qobject_cast<TerminalView*>(page)) {
+    } else if (auto* terminal = terminalOf(page)) {
         size = QStringLiteral("%1×%2").arg(terminal->grid().width()).arg(terminal->grid().height());
     }
-#ifdef PORTAL_MUX_LIBVIRT
-    else if (auto* console = qobject_cast<VmConsole*>(page)) {
-        for (const LibvirtVms::Vm& vm : console->vms()->vms())
-            if (vm.uuid == console->uuid()) mode = VmView::stateText(vm.state);
-    }
-#endif
+    if (auto* console = qobject_cast<VmConsole*>(page)) mode = console->state();
     const auto set = [](QLabel* cell, const QString& text) {
         cell->setText(text);
         cell->setVisible(!text.isEmpty());
@@ -2118,7 +2128,7 @@ bool MainWindow::confirmCloseTab(int index)
 {
     QWidget* page = tabs_->widget(index);
     const auto* view = page ? page->findChild<RemoteView*>() : nullptr;
-    const auto* terminal = qobject_cast<TerminalView*>(page);
+    const auto* terminal = terminalOf(page);
     if (!(view && view->live()) && !(terminal && terminal->live())) return true;
     QMessageBox box(QMessageBox::Question, tr("Close Tab"),
                     tr("Disconnect from \"%1\" and close its tab?").arg(tabs_->tabText(index).remove(QLatin1Char('&'))),
@@ -2195,7 +2205,9 @@ QList<QAction*> MainWindow::sessionTools(QWidget* page) const
     auto is = [&](std::initializer_list<const char*> names) {
         return std::any_of(names.begin(), names.end(), [&](const char* name) { return protocol == QLatin1String(name); });
     };
-    QList<QAction*> tools{fullScreenAction_}; // nullptr: a separator
+    QList<QAction*> tools; // nullptr: a separator
+    if (qobject_cast<VmConsole*>(page)) tools << page->actions() << nullptr; // its power buttons
+    tools << fullScreenAction_;
     if (page->findChild<RemoteView*>()) {
         tools << scaleAction_ << nullptr << screenshotAction_;
         if (!is({"Moonlight", "Test"})) tools << clipboardAction_;
@@ -2203,7 +2215,7 @@ QList<QAction*> MainWindow::sessionTools(QWidget* page) const
         if (!is({"Android", "Moonlight", "Test"})) tools << sendKeysMenu_->menuAction();
         if (is({"SPICE"})) tools << nullptr << usbAction_;
         if (is({"Moonlight"})) tools << nullptr << relaunchAction_;
-    } else if (qobject_cast<TerminalView*>(page)) {
+    } else if (terminalOf(page)) {
         tools << nullptr << reconnectAction_;
     }
     return tools << nullptr << disconnectAction_;
@@ -2235,7 +2247,7 @@ void MainWindow::updateSessionActions()
     for (QAction* a : {screenshotAction_, viewOnlyAction_, clipboardAction_, localCursorAction_, grabKeysAction_, scaleAction_,
                        sendKeysMenu_->menuAction()})
         a->setEnabled(view);
-    reconnectAction_->setEnabled(view || qobject_cast<TerminalView*>(currentPage()));
+    reconnectAction_->setEnabled(view || terminalOf(currentPage()));
     usbAction_->setEnabled(view && currentPage()->property("protocol").toString() == QLatin1String("SPICE"));
     relaunchAction_->setEnabled(view && currentPage()->property("protocol").toString() == QLatin1String("Moonlight"));
     detachAction_->setEnabled(tabs_->count() > 0);

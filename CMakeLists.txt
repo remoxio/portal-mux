@@ -117,6 +117,7 @@ qt_add_executable(portal-mux WIN32 MACOSX_BUNDLE
     src/app/Secrets.cpp
     src/app/SshServers.cpp
     src/app/SessionTabs.h
+    src/app/VmConsole.cpp
     src/app/VmSettingsDialog.cpp
     src/app/WebSocketTunnel.cpp
     src/app/WindowEffects.cpp
@@ -148,7 +149,7 @@ if(UNIX AND NOT APPLE)
 endif()
 pkg_check_modules(LIBVIRT IMPORTED_TARGET libvirt) # optional: running local VMs in the connection list
 if(LIBVIRT_FOUND)
-    target_sources(portal-mux PRIVATE src/app/DomainXml.cpp src/app/LibvirtConsole.cpp src/app/LibvirtVms.cpp src/app/VmConsole.cpp src/app/VmView.cpp)
+    target_sources(portal-mux PRIVATE src/app/DomainXml.cpp src/app/LibvirtConsole.cpp src/app/LibvirtVms.cpp src/app/VmView.cpp)
     target_compile_definitions(portal-mux PRIVATE PORTAL_MUX_LIBVIRT)
     target_link_libraries(portal-mux PRIVATE PkgConfig::LIBVIRT)
 else()

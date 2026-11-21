@@ -125,35 +125,12 @@ VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings
     layout->addWidget(note_);
     layout->addWidget(tree_, 1);
 
+    actions_ = makeActions(this, [this] { return std::pair<LibvirtVms*, const Vm*>(selectedHost(), selected()); });
     auto make = [this](const char* icon, const QString& text, std::function<void()> run) {
         auto* a = new QAction(icons::lucide(icon), text, this);
         connect(a, &QAction::triggered, this, run);
         return a;
     };
-    open_ = make("monitor", tr("&Open"), [this] {
-        if (const Vm* vm = selected()) emit openRequested(selectedHost(), vm->uuid);
-    });
-    open_->setToolTip(tr("Its console: the display, or a power button while it is off"));
-    start_ = make("play", tr("&Start"), [this] { // Resume while paused, as virt-manager's Run
-        const Vm* vm = selected();
-        act(vm && LibvirtVms::allowed(Action::Resume, vm->state) ? Action::Resume : Action::Start);
-    });
-    pause_ = make("pause", tr("&Pause"), [this] { act(Action::Pause); });
-    shutdown_ = make("power", tr("Shut &Down"), [this] { act(Action::Shutdown); });
-    shutdown_->setToolTip(tr("Asks the guest system to shut down"));
-    reboot_ = make("rotate-cw", tr("&Reboot"), [this] { act(Action::Reboot); });
-    save_ = make("save", tr("Sa&ve"), [this] { act(Action::Save); });
-    save_->setToolTip(tr("Saves its memory to disk and stops it; Start continues where it was"));
-    forceOff_ = make("power-off", tr("Force &Off"), [this] { act(Action::ForceOff); });
-    reset_ = make("rotate-ccw", tr("R&eset"), [this] { act(Action::Reset); });
-    serial_ = make("terminal", tr("Serial &Console"), [this] {
-        if (const Vm* vm = selected()) emit serialRequested(selectedHost(), vm->uuid);
-    });
-    serial_->setToolTip(tr("Its serial console in a terminal (a console device in the VM, a getty in the guest)"));
-    vmSettings_ = make("settings", tr("Se&ttings…"), [this] { editSettings(); });
-    vmSettings_->setToolTip(tr("Processors, memory and its CD/DVD"));
-    snapshots_ = make("rotate-ccw-clock", tr("S&napshots…"), [this] { editSnapshots(); });
-    snapshots_->setToolTip(tr("Take one, go back to one, delete them"));
     addHost_ = make("plus", tr("&Add Host…"), [this] { editHost(nullptr); });
     addHost_->setToolTip(tr("A libvirt host over SSH"));
     editHost_ = make("pencil", tr("&Edit Host…"), [this] { editHost(selectedHost()); });
@@ -163,14 +140,15 @@ VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings
         s->setSeparator(true);
         return s;
     };
-    tree_->addActions({open_, serial_, vmSettings_, snapshots_, separator(), start_, pause_, separator(), shutdown_, reboot_, save_, separator(), forceOff_, reset_,
-                       separator(), addHost_, editHost_, removeHost_});
+    const Actions& a = actions_;
+    tree_->addActions({a.open, a.serial, a.settings, a.snapshots, separator(), a.start, a.pause, separator(), a.shutdown, a.reboot, a.save,
+                       separator(), a.forceOff, a.reset, separator(), addHost_, editHost_, removeHost_});
 
     connect(tree_, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem* item) {
-        if (!item->data(0, Qt::UserRole).toString().isEmpty()) open_->trigger();
+        if (!item->data(0, Qt::UserRole).toString().isEmpty()) actions_.open->trigger();
         else foldLater(tree_, tree_->indexFromItem(item));
     });
-    connect(tree_, &QTreeWidget::currentItemChanged, this, &VmView::updateActions);
+    connect(tree_, &QTreeWidget::currentItemChanged, this, qOverload<>(&VmView::updateActions));
 
     const char* testUri = std::getenv("PORTAL_MUX_LIBVIRT_URI"); // test:///<file>: fake VMs for UI tests
 #if defined(_WIN32) || defined(Q_OS_MACOS)
@@ -189,7 +167,86 @@ VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings
     rebuild();
 }
 
-QList<QAction*> VmView::titleActions() const { return {addHost_, open_, start_, pause_, shutdown_, forceOff_}; }
+QList<QAction*> VmView::titleActions() const { return {addHost_}; }
+
+VmView::Actions VmView::makeActions(QObject* owner, const Target& target)
+{
+    auto make = [this, owner, target](const char* icon, const QString& text, std::function<void(LibvirtVms*, const Vm&)> run) {
+        auto* a = new QAction(icons::lucide(icon), text, owner);
+        connect(a, &QAction::triggered, this, [target, run] {
+            const auto [host, vm] = target();
+            if (host && vm) run(host, *vm);
+        });
+        return a;
+    };
+    Actions a;
+    a.open = make("monitor", tr("&Open"), [this](LibvirtVms* host, const Vm& vm) { emit openRequested(host, vm.uuid); });
+    a.open->setToolTip(tr("Its tab: the display, or a power button while it is off"));
+    a.start = make("play", tr("&Start"), [this](LibvirtVms* host, const Vm& vm) { // Resume while paused, as virt-manager's Run
+        act(host, vm, LibvirtVms::allowed(Action::Resume, vm.state) ? Action::Resume : Action::Start);
+    });
+    auto control = [this](Action action) { return [this, action](LibvirtVms* host, const Vm& vm) { act(host, vm, action); }; };
+    a.pause = make("pause", tr("&Pause"), control(Action::Pause));
+    a.shutdown = make("power", tr("Shut &Down"), control(Action::Shutdown));
+    a.shutdown->setToolTip(tr("Asks the guest system to shut down"));
+    a.reboot = make("rotate-cw", tr("&Reboot"), control(Action::Reboot));
+    a.save = make("save", tr("Sa&ve"), control(Action::Save));
+    a.save->setToolTip(tr("Saves its memory to disk and stops it; Start continues where it was"));
+    a.forceOff = make("power-off", tr("Force &Off"), control(Action::ForceOff));
+    a.reset = make("rotate-ccw", tr("R&eset"), control(Action::Reset));
+    a.serial = make("terminal", tr("Serial &Console"), [this](LibvirtVms* host, const Vm& vm) { emit serialRequested(host, vm.uuid); });
+    a.serial->setToolTip(tr("Its serial console in a terminal (a console device in the VM, a getty in the guest)"));
+    a.settings = make("settings", tr("Se&ttings…"), [this](LibvirtVms* host, const Vm& vm) { editSettings(host, vm.uuid); });
+    a.settings->setToolTip(tr("Processors, memory and its CD/DVD"));
+    a.snapshots = make("rotate-ccw-clock", tr("S&napshots…"), [this](LibvirtVms* host, const Vm& vm) { editSnapshots(host, vm.uuid); });
+    a.snapshots->setToolTip(tr("Take one, go back to one, delete them"));
+    return a;
+}
+
+VmConsole* VmView::console(LibvirtVms* host, const std::string& uuid, VmConsole::Open openDisplay)
+{
+    auto find = [host, uuid]() -> const Vm* {
+        const auto& vms = host->vms();
+        const auto it = std::find_if(vms.begin(), vms.end(), [&](const Vm& v) { return v.uuid == uuid; });
+        return it == vms.end() ? nullptr : &*it;
+    };
+    auto status = [host, find]() -> std::optional<VmConsole::Status> {
+        const Vm* vm = find();
+        if (!vm) return host->connected() ? std::nullopt : std::optional(VmConsole::Status{.known = false});
+        VmConsole::Status s;
+        s.name = QString::fromStdString(vm->name);
+        s.state = stateText(vm->state);
+        const bool control = host->connected() && !host->readOnly();
+        switch (vm->state) {
+        case State::ShutOff: s.text = tr("Shut off. The button starts it."); break;
+        case State::Saved: s.text = tr("Saved. The button starts it where it was."); break;
+        case State::Crashed: s.text = tr("Crashed. The button starts it again."); break;
+        case State::ShuttingDown: s.text = tr("Shutting down…"); break;
+        default: s.text = tr("%1, without a SPICE or VNC display on the network.").arg(stateText(vm->state)); break;
+        }
+        if (!control) s.text = tr("Read-only access to libvirt: it cannot be started from here.");
+        s.startable = control && LibvirtVms::allowed(Action::Start, vm->state);
+        if (const auto& d = vm->display)
+            s.display = QStringLiteral("%1:%2:%3:%4").arg(QString::fromStdString(d->host)).arg(d->port)
+                            .arg(QString::fromStdString(d->option("tlsPort")), QString::fromStdString(d->password));
+        return s;
+    };
+    auto* console = new VmConsole(status, [host, uuid] { host->control(uuid, Action::Start); }, std::move(openDisplay));
+    if (const Vm* vm = find()) console->setWindowTitle(QString::fromStdString(vm->name));
+    connect(host, &LibvirtVms::changed, console, &VmConsole::follow);
+    connect(host, &QObject::destroyed, console, &VmConsole::closeRequested); // its host was removed
+    connect(host, &LibvirtVms::failed, console, [console, uuid](const QString& failed) { // the error itself: this view's dialog
+        if (failed.toStdString() == uuid) console->startFailed();
+    });
+    const Actions a = makeActions(console, [host, find] { return std::pair<LibvirtVms*, const Vm*>(host, find()); });
+    auto* separator = new QAction(console);
+    separator->setSeparator(true);
+    console->addActions({a.start, a.pause, a.shutdown, a.reboot, a.forceOff, separator, a.settings, a.snapshots});
+    auto update = [this, a, host, find] { updateActions(a, host, find()); };
+    connect(host, &LibvirtVms::changed, console, update);
+    update();
+    return console;
+}
 
 void VmView::addHost(const QString& name, const std::string& uri)
 {
@@ -339,36 +396,38 @@ void VmView::rebuild()
 
 void VmView::updateActions()
 {
-    const Vm* vm = selected();
     LibvirtVms* host = selectedHost();
-    const bool control = vm && host && host->connected() && !host->readOnly();
-    const State s = vm ? vm->state : State::Other;
-    auto allowed = [&](Action a) { return control && LibvirtVms::allowed(a, s); };
-    const bool resume = LibvirtVms::allowed(Action::Resume, s);
-    start_->setText(resume ? tr("&Resume") : tr("&Start"));
-    start_->setEnabled(allowed(Action::Start) || allowed(Action::Resume));
-    pause_->setEnabled(allowed(Action::Pause));
-    shutdown_->setEnabled(allowed(Action::Shutdown));
-    reboot_->setEnabled(allowed(Action::Reboot));
-    save_->setEnabled(allowed(Action::Save));
-    forceOff_->setEnabled(allowed(Action::ForceOff));
-    reset_->setEnabled(allowed(Action::Reset));
-    open_->setEnabled(vm);
-    serial_->setEnabled(control && (s == State::Running || s == State::Paused));
-    vmSettings_->setEnabled(control);
-    snapshots_->setEnabled(control);
+    const Vm* vm = selected();
+    updateActions(actions_, host, vm);
     const bool remoteRow = host && host->remote() && !vm;
     editHost_->setEnabled(remoteRow);
     removeHost_->setEnabled(remoteRow);
 }
 
-void VmView::act(Action action)
+void VmView::updateActions(const Actions& a, LibvirtVms* host, const Vm* vm) const
 {
-    const Vm* vm = selected();
-    LibvirtVms* host = selectedHost();
-    if (!vm || !host) return;
-    const QString name = QString::fromStdString(vm->name);
-    const std::string uuid = vm->uuid; // vm may be gone after the question below
+    const bool control = vm && host && host->connected() && !host->readOnly();
+    const State s = vm ? vm->state : State::Other;
+    auto allowed = [&](Action a) { return control && LibvirtVms::allowed(a, s); };
+    const bool resume = LibvirtVms::allowed(Action::Resume, s);
+    a.start->setText(resume ? tr("&Resume") : tr("&Start"));
+    a.start->setEnabled(allowed(Action::Start) || allowed(Action::Resume));
+    a.pause->setEnabled(allowed(Action::Pause));
+    a.shutdown->setEnabled(allowed(Action::Shutdown));
+    a.reboot->setEnabled(allowed(Action::Reboot));
+    a.save->setEnabled(allowed(Action::Save));
+    a.forceOff->setEnabled(allowed(Action::ForceOff));
+    a.reset->setEnabled(allowed(Action::Reset));
+    a.open->setEnabled(vm);
+    a.serial->setEnabled(control && (s == State::Running || s == State::Paused));
+    a.settings->setEnabled(control);
+    a.snapshots->setEnabled(control);
+}
+
+void VmView::act(LibvirtVms* host, const Vm& vm, Action action)
+{
+    const QString name = QString::fromStdString(vm.name);
+    const std::string uuid = vm.uuid; // vm may be gone after the question below
     if (action == Action::ForceOff || action == Action::Reset) {
         const bool off = action == Action::ForceOff;
         QMessageBox box(QMessageBox::Warning, off ? tr("Force Off") : tr("Reset"),
@@ -384,12 +443,10 @@ void VmView::act(Action action)
     host->control(uuid, action);
 }
 
-void VmView::editSettings()
+void VmView::editSettings(LibvirtVms* host, const std::string& uuid)
 {
-    const Vm* vm = selected();
-    LibvirtVms* host = selectedHost();
-    if (!vm || !host) return;
-    const std::string uuid = vm->uuid;
+    const auto vm = std::find_if(host->vms().begin(), host->vms().end(), [&](const Vm& v) { return v.uuid == uuid; });
+    if (vm == host->vms().end()) return;
     const QString name = QString::fromStdString(vm->name);
     QString error;
     const std::optional<VmSettings> was = host->settings(uuid, error);
@@ -402,12 +459,10 @@ void VmView::editSettings()
     dialog.exec();
 }
 
-void VmView::editSnapshots()
+void VmView::editSnapshots(LibvirtVms* host, const std::string& uuid)
 {
-    const Vm* vm = selected();
-    LibvirtVms* host = selectedHost();
-    if (!vm || !host) return;
-    const std::string uuid = vm->uuid;
+    const auto vm = std::find_if(host->vms().begin(), host->vms().end(), [&](const Vm& v) { return v.uuid == uuid; });
+    if (vm == host->vms().end()) return;
     VmSnapshotsDialog dialog(
         QString::fromStdString(vm->name),
         [host, uuid] {

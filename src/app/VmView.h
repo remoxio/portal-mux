@@ -1,9 +1,11 @@
 #pragma once
 
 #include "app/LibvirtVms.h"
+#include "app/VmConsole.h"
 
 #include <QWidget>
 
+#include <functional>
 #include <vector>
 
 class Folding;
@@ -20,6 +22,7 @@ public:
     explicit VmView(QSettings* settings, QWidget* parent = nullptr);
 
     QList<QAction*> titleActions() const;
+    VmConsole* console(LibvirtVms* host, const std::string& uuid, VmConsole::Open openDisplay); // its tab, with its power buttons
 
     static QString stateText(LibvirtVms::State state);
 
@@ -34,9 +37,15 @@ private:
     void updateActions();
     LibvirtVms* selectedHost() const; // of the selected VM or host row
     const LibvirtVms::Vm* selected() const;
-    void act(LibvirtVms::Action action);
-    void editSettings();
-    void editSnapshots();
+    using Target = std::function<std::pair<LibvirtVms*, const LibvirtVms::Vm*>()>;
+    struct Actions {
+        QAction *open, *serial, *settings, *snapshots, *start, *pause, *shutdown, *reboot, *save, *forceOff, *reset;
+    };
+    Actions makeActions(QObject* owner, const Target& target); // for the selected row, or one VM's tab
+    void updateActions(const Actions& a, LibvirtVms* host, const LibvirtVms::Vm* vm) const;
+    void act(LibvirtVms* host, const LibvirtVms::Vm& vm, LibvirtVms::Action action);
+    void editSettings(LibvirtVms* host, const std::string& uuid);
+    void editSnapshots(LibvirtVms* host, const std::string& uuid);
     void addHost(const QString& name, const std::string& uri);
     void editHost(LibvirtVms* host); // null: a new one
     void removeHost(LibvirtVms* host, bool ask = true);
@@ -48,5 +57,6 @@ private:
     QTreeWidget* tree_;
     QLabel* note_; // no hosts yet
     Folding* folding_;
-    QAction *open_, *serial_, *vmSettings_, *snapshots_, *start_, *pause_, *shutdown_, *reboot_, *save_, *forceOff_, *reset_, *addHost_, *editHost_, *removeHost_;
+    Actions actions_; // the selected row's
+    QAction *addHost_, *editHost_, *removeHost_;
 };

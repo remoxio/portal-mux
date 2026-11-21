@@ -1,44 +1,53 @@
 #pragma once
 
-#include "app/LibvirtVms.h"
-
+#include <QPointer>
 #include <QWidget>
 
 #include <functional>
+#include <optional>
 
 class QLabel;
 class QStackedLayout;
 class QToolButton;
 
-// A VM's console tab: its display while running, a power button while off
+// A VM's tab, from any hypervisor: its console while it runs, a power button and its state while not.
+// Its actions() are its toolbar's power buttons; its windowTitle() the VM's name.
 class VmConsole : public QWidget {
     Q_OBJECT
 
 public:
-    using MakeDisplay = std::function<QWidget*(const rdc::Connection&)>;
-    VmConsole(LibvirtVms* vms, std::string uuid, MakeDisplay makeDisplay, QWidget* parent = nullptr);
+    struct Status {
+        QString name, state, text; // state: a word or two for the status bar; text: under the power button
+        bool startable = false;
+        QString display;    // what its console connects to, another one reconnects; empty: none
+        bool known = true;  // false: its host is not reachable, keep what is shown
+    };
+    using Follow = std::function<std::optional<Status>()>; // nullopt: the VM is gone
+    using Open = std::function<void(VmConsole*)>;         // makes its console and hands it to setDisplay(), now or later
+    VmConsole(Follow status, std::function<void()> start, Open openDisplay, QWidget* parent = nullptr);
 
-    const std::string& uuid() const { return uuid_; }
-    LibvirtVms* vms() const { return vms_; }
+    void follow(); // its state may have changed
+    void setDisplay(QWidget* display);
+    void startFailed();
+    QWidget* display() const { return display_; }
+    const QString& state() const { return state_; }
 
 signals:
-    void closeRequested(); // the VM was deleted, or an error on its display was dismissed
-    void displayChanged(rdc::Protocol protocol);
+    void closeRequested(); // the VM was deleted, or an error on its console was dismissed
+    void changed(); // its console or its state
 
 private:
-    void follow();
-    void showDisplay(const rdc::Connection& display);
     void dropDisplay();
-    void showPower(const LibvirtVms::Vm& vm);
 
-    LibvirtVms* vms_;
-    std::string uuid_;
-    MakeDisplay makeDisplay_;
+    Follow statusOf_;
+    std::function<void()> start_;
+    Open openDisplay_;
     QStackedLayout* stack_;
     QWidget* power_;
     QToolButton* button_;
     QLabel *name_, *status_;
-    QWidget* display_ = nullptr;
-    rdc::Connection shown_; // what display_ connects to
-    bool starting_ = false; // the button was pressed; until libvirt reports it running, or an error
+    QPointer<QWidget> display_; // a terminal may end itself
+    QString shown_;         // the display asked for
+    QString state_;
+    bool starting_ = false; // the button was pressed: until it runs, or an error
 };

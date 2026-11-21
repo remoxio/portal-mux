@@ -146,20 +146,8 @@ HyperVView::HyperVView(QSettings* settings, QString configDir, QWidget* parent)
         connect(a, &QAction::triggered, this, run);
         return a;
     };
-    open_ = make("monitor", tr("&Open"), [this] { open(); });
-    open_->setToolTip(tr("Its console; starts it first if it is off"));
-    start_ = make("play", tr("&Start"), [this] {
-        const Vm* vm = selected();
-        act(vm && hyperv::allowed(Action::Resume, vm->state) ? Action::Resume : Action::Start);
-    });
-    pause_ = make("pause", tr("&Pause"), [this] { act(Action::Pause); });
-    shutdown_ = make("power", tr("Shut &Down"), [this] { act(Action::Shutdown); });
-    shutdown_->setToolTip(tr("Asks the guest system to shut down (needs Hyper-V's integration services in it)"));
-    reboot_ = make("rotate-cw", tr("&Restart"), [this] { act(Action::Reboot); });
-    save_ = make("save", tr("Sa&ve"), [this] { act(Action::Save); });
-    save_->setToolTip(tr("Saves its memory to disk and stops it; Start continues where it was"));
-    turnOff_ = make("power-off", tr("&Turn Off"), [this] { act(Action::TurnOff); });
-    reset_ = make("rotate-ccw", tr("R&eset"), [this] { act(Action::Reset); });
+    actions_ = makeActions(this, [this] { return std::pair<HyperVHost*, const Vm*>(selectedHost(), selected()); });
+    const Actions& a = actions_;
     addHost_ = make("plus", tr("&Add Host…"), [this] { addHost(); });
     addHost_->setToolTip(tr("A Hyper-V host from Settings → SSH Servers"));
     removeHost_ = make("trash", tr("Re&move Host"), [this] { removeHost(selectedHost()); });
@@ -168,11 +156,11 @@ HyperVView::HyperVView(QSettings* settings, QString configDir, QWidget* parent)
         s->setSeparator(true);
         return s;
     };
-    tree_->addActions({open_, separator(), start_, pause_, separator(), shutdown_, reboot_, save_, separator(), turnOff_, reset_,
+    tree_->addActions({a.open, separator(), a.start, a.pause, separator(), a.shutdown, a.reboot, a.save, separator(), a.turnOff, a.reset,
                        separator(), addHost_, removeHost_});
 
     connect(tree_, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem* item) {
-        if (!item->data(0, Qt::UserRole).toString().isEmpty()) return open();
+        if (!item->data(0, Qt::UserRole).toString().isEmpty()) return actions_.open->trigger();
         if (!item->parent()) return foldLater(tree_, tree_->indexFromItem(item));
         HyperVHost* host = selectedHost(); // a hint row
         if (!host) return;
@@ -191,7 +179,7 @@ HyperVView::HyperVView(QSettings* settings, QString configDir, QWidget* parent)
             emit message(tr("Installing Hyper-V's PowerShell module on %1…").arg(host->server().name));
         }
     });
-    connect(tree_, &QTreeWidget::currentItemChanged, this, &HyperVView::updateActions);
+    connect(tree_, &QTreeWidget::currentItemChanged, this, qOverload<>(&HyperVView::updateActions));
 
     const int n = settings_->beginReadArray(QStringLiteral("hypervHosts"));
     for (int i = 0; i < n; ++i) {
@@ -203,7 +191,87 @@ HyperVView::HyperVView(QSettings* settings, QString configDir, QWidget* parent)
     for (const QString& id : std::as_const(ids_)) connectHost(id);
 }
 
-QList<QAction*> HyperVView::titleActions() const { return {addHost_, open_, start_, pause_, shutdown_, turnOff_}; }
+QList<QAction*> HyperVView::titleActions() const { return {addHost_}; }
+
+HyperVView::Actions HyperVView::makeActions(QObject* owner, const Target& target)
+{
+    auto make = [this, owner, target](const char* icon, const QString& text, std::function<void(HyperVHost*, const Vm&)> run) {
+        auto* a = new QAction(icons::lucide(icon), text, owner);
+        connect(a, &QAction::triggered, this, [target, run] {
+            const auto [host, vm] = target();
+            if (host && vm) run(host, *vm);
+        });
+        return a;
+    };
+    auto control = [this](Action action) { return [this, action](HyperVHost* host, const Vm& vm) { act(host, vm, action); }; };
+    Actions a;
+    a.open = make("monitor", tr("&Open"), [this](HyperVHost* host, const Vm& vm) { emit openRequested(host->server().id, vm.id); });
+    a.open->setToolTip(tr("Its tab: the console, or a power button while it is off"));
+    a.start = make("play", tr("&Start"), [this](HyperVHost* host, const Vm& vm) {
+        act(host, vm, hyperv::allowed(Action::Resume, vm.state) ? Action::Resume : Action::Start);
+    });
+    a.pause = make("pause", tr("&Pause"), control(Action::Pause));
+    a.shutdown = make("power", tr("Shut &Down"), control(Action::Shutdown));
+    a.shutdown->setToolTip(tr("Asks the guest system to shut down (needs Hyper-V's integration services in it)"));
+    a.reboot = make("rotate-cw", tr("&Restart"), control(Action::Reboot));
+    a.save = make("save", tr("Sa&ve"), control(Action::Save));
+    a.save->setToolTip(tr("Saves its memory to disk and stops it; Start continues where it was"));
+    a.turnOff = make("power-off", tr("&Turn Off"), control(Action::TurnOff));
+    a.reset = make("rotate-ccw", tr("R&eset"), control(Action::Reset));
+    return a;
+}
+
+std::pair<HyperVHost*, const Vm*> HyperVView::find(const QString& hostId, const std::string& vmId) const
+{
+    const auto host = hosts_.find(hostId);
+    if (host == hosts_.end()) return {nullptr, nullptr};
+    for (const Vm& vm : host->second->vms())
+        if (vm.id == vmId) return {host->second, &vm};
+    return {host->second, nullptr};
+}
+
+VmConsole* HyperVView::console(const QString& hostId, const std::string& vmId, std::function<void(VmConsole*, const rdc::Connection&)> open)
+{
+    const auto [host, vm] = find(hostId, vmId);
+    if (!host || !vm) return nullptr;
+    auto status = [this, hostId, vmId]() -> std::optional<VmConsole::Status> {
+        if (!ids_.contains(hostId)) return std::nullopt; // its host was removed
+        const auto [host, vm] = find(hostId, vmId);
+        if (!vm) return host && host->status() == Status::Connected ? std::nullopt : std::optional(VmConsole::Status{.known = false});
+        VmConsole::Status s;
+        s.name = QString::fromStdString(vm->name);
+        s.state = stateText(vm->state);
+        switch (vm->state) {
+        case State::Off: s.text = tr("Off. The button starts it."); break;
+        case State::Saved: s.text = tr("Saved. The button starts it where it was."); break;
+        default: s.text = s.state; break;
+        }
+        s.startable = host->status() == Status::Connected && hyperv::allowed(Action::Start, vm->state);
+        if (vm->state == State::Running || vm->state == State::Paused) s.display = QStringLiteral("running");
+        return s;
+    };
+    auto start = [this, hostId, vmId] {
+        if (const auto [host, vm] = find(hostId, vmId); host && vm) host->control(vm->id, Action::Start);
+    };
+    auto openDisplay = [this, hostId, vmId, open = std::move(open)](VmConsole* console) {
+        if (const auto [host, vm] = find(hostId, vmId); host && vm) open(console, connection(host, *vm));
+    };
+    auto* console = new VmConsole(status, start, openDisplay);
+    console->setWindowTitle(QString::fromStdString(vm->name));
+    connect(this, &HyperVView::changed, console, &VmConsole::follow);
+    connect(this, &HyperVView::hostFailed, console, [console, hostId](const QString& id) {
+        if (id == hostId) console->startFailed();
+    });
+    const Actions a = makeActions(console, [this, hostId, vmId] { return find(hostId, vmId); });
+    console->addActions({a.start, a.pause, a.shutdown, a.reboot, a.turnOff});
+    auto update = [this, a, hostId, vmId] {
+        const auto [host, vm] = find(hostId, vmId);
+        updateActions(a, host, vm);
+    };
+    connect(this, &HyperVView::changed, console, update);
+    update();
+    return console;
+}
 
 void HyperVView::save() const
 {
@@ -223,7 +291,6 @@ void HyperVView::connectHost(const QString& id)
     auto create = [this, server = *server](const QString& password) {
         if (!ids_.contains(server.id)) return; // removed meanwhile
         if (const auto old = hosts_.find(server.id); old != hosts_.end()) {
-            if (pendingOpen_.first == old->second) pendingOpen_ = {};
             delete old->second;
             hosts_.erase(old);
         }
@@ -232,7 +299,7 @@ void HyperVView::connectHost(const QString& id)
         connect(host, &HyperVHost::changed, this, [this, host] { hostChanged(host); });
         connect(host, &HyperVHost::statsChanged, tree_->viewport(), qOverload<>(&QWidget::update));
         connect(host, &HyperVHost::failed, this, [this, host](const QString& text) {
-            if (pendingOpen_.first == host) pendingOpen_ = {};
+            emit hostFailed(host->server().id);
             QMessageBox::warning(this, tr("Hyper-V"), tr("%1: %2").arg(host->server().name, text));
         });
         rebuild();
@@ -249,7 +316,6 @@ void HyperVView::reloadServers()
         if (!server) {
             ids_.removeAll(id);
             if (host != hosts_.end()) {
-                if (pendingOpen_.first == host->second) pendingOpen_ = {};
                 delete host->second;
                 hosts_.erase(host);
             }
@@ -312,7 +378,6 @@ void HyperVView::removeHost(HyperVHost* host)
     box.setDefaultButton(QMessageBox::No);
     box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's box: Enter presses the first button
     if (box.exec() != QMessageBox::Yes) return;
-    if (pendingOpen_.first == host) pendingOpen_ = {};
     ids_.removeAll(host->server().id);
     hosts_.erase(host->server().id);
     delete host;
@@ -339,16 +404,10 @@ const Vm* HyperVView::selected() const
     return nullptr;
 }
 
-void HyperVView::hostChanged(HyperVHost* host)
+void HyperVView::hostChanged(HyperVHost*)
 {
     rebuild();
-    if (pendingOpen_.first != host) return;
-    for (const Vm& vm : host->vms())
-        if (vm.id == pendingOpen_.second && vm.state == State::Running) {
-            pendingOpen_ = {};
-            emit openRequested(console(host, vm));
-            return;
-        }
+    emit changed();
 }
 
 void HyperVView::rebuild()
@@ -423,28 +482,30 @@ void HyperVView::updateActions()
 {
     const Vm* vm = selected();
     const HyperVHost* host = selectedHost();
-    const bool control = vm && host && host->status() == Status::Connected;
-    const State s = vm ? vm->state : State::Other;
-    auto allowed = [&](Action a) { return control && hyperv::allowed(a, s); };
-    start_->setText(hyperv::allowed(Action::Resume, s) ? tr("&Resume") : tr("&Start"));
-    start_->setEnabled(allowed(Action::Start) || allowed(Action::Resume));
-    pause_->setEnabled(allowed(Action::Pause));
-    shutdown_->setEnabled(allowed(Action::Shutdown));
-    reboot_->setEnabled(allowed(Action::Reboot));
-    save_->setEnabled(allowed(Action::Save));
-    turnOff_->setEnabled(allowed(Action::TurnOff));
-    reset_->setEnabled(allowed(Action::Reset));
-    open_->setEnabled(control && (active(s) || hyperv::allowed(Action::Start, s)));
+    updateActions(actions_, host, vm);
     removeHost_->setEnabled(host && !vm);
 }
 
-void HyperVView::act(Action action)
+void HyperVView::updateActions(const Actions& a, const HyperVHost* host, const Vm* vm) const
 {
-    const Vm* vm = selected();
-    HyperVHost* host = selectedHost();
-    if (!vm || !host) return;
-    const QString name = QString::fromStdString(vm->name);
-    const std::string id = vm->id; // vm may be gone after the question below
+    const bool control = vm && host && host->status() == Status::Connected;
+    const State s = vm ? vm->state : State::Other;
+    auto allowed = [&](Action a) { return control && hyperv::allowed(a, s); };
+    a.start->setText(hyperv::allowed(Action::Resume, s) ? tr("&Resume") : tr("&Start"));
+    a.start->setEnabled(allowed(Action::Start) || allowed(Action::Resume));
+    a.pause->setEnabled(allowed(Action::Pause));
+    a.shutdown->setEnabled(allowed(Action::Shutdown));
+    a.reboot->setEnabled(allowed(Action::Reboot));
+    a.save->setEnabled(allowed(Action::Save));
+    a.turnOff->setEnabled(allowed(Action::TurnOff));
+    a.reset->setEnabled(allowed(Action::Reset));
+    a.open->setEnabled(vm);
+}
+
+void HyperVView::act(HyperVHost* host, const Vm& vm, Action action)
+{
+    const QString name = QString::fromStdString(vm.name);
+    const std::string id = vm.id; // vm may be gone after the question below
     if (action == Action::TurnOff || action == Action::Reset) {
         const bool off = action == Action::TurnOff;
         QMessageBox box(QMessageBox::Warning, off ? tr("Turn Off") : tr("Reset"),
@@ -460,21 +521,7 @@ void HyperVView::act(Action action)
     host->control(id, action);
 }
 
-void HyperVView::open()
-{
-    const Vm* vm = selected();
-    HyperVHost* host = selectedHost();
-    if (!vm || !host || host->status() != Status::Connected) return;
-    if (vm->state == State::Running || vm->state == State::Paused) return emit openRequested(console(host, *vm));
-    if (!active(vm->state) && !hyperv::allowed(Action::Start, vm->state)) return;
-    pendingOpen_ = {host, vm->id};
-    if (hyperv::allowed(Action::Start, vm->state)) {
-        host->control(vm->id, Action::Start);
-        emit message(tr("Starting %1…").arg(QString::fromStdString(vm->name)));
-    }
-}
-
-rdc::Connection HyperVView::console(const HyperVHost* host, const Vm& vm) const
+rdc::Connection HyperVView::connection(const HyperVHost* host, const Vm& vm) const
 {
     const SshServer& server = host->server();
     rdc::Connection c;

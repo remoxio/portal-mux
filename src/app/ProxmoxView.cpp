@@ -120,18 +120,8 @@ ProxmoxView::ProxmoxView(QSettings* settings, QString configDir, QWidget* parent
     };
     add_ = make("plus", tr("&Add Server…"), [this] { editServer(nullptr); });
     refresh_ = make("refresh-cw", tr("Re&fresh"), [this] { refreshAll(); });
-    console_ = make("monitor", tr("&Console"), [this] {
-        if (auto g = selectedGuest()) emit openRequested(QString::fromStdString(selectedClient()->server().id + "/" + g->key()));
-    });
-    console_->setToolTip(tr("A VM's screen: over SPICE when its display is SPICE, otherwise over VNC as the web console; a container's terminal"));
-    start_ = make("play", tr("&Start"), [this] { act(QStringLiteral("start")); });
-    shutdown_ = make("power", tr("Shut &Down"), [this] { act(QStringLiteral("shutdown")); });
-    shutdown_->setToolTip(tr("Asks the guest system to shut down"));
-    stop_ = make("power-off", tr("S&top"), [this] { act(QStringLiteral("stop")); });
-    reboot_ = make("rotate-cw", tr("&Reboot"), [this] { act(QStringLiteral("reboot")); });
-    reset_ = make("rotate-ccw", tr("R&eset"), [this] { act(QStringLiteral("reset")); });
-    suspend_ = make("pause", tr("&Pause"), [this] { act(QStringLiteral("suspend")); });
-    resume_ = make("play", tr("Res&ume"), [this] { act(QStringLiteral("resume")); });
+    actions_ = makeActions(this, [this] { return std::pair(selectedClient(), selectedGuest()); });
+    const Actions& a = actions_;
     edit_ = make("pencil", tr("&Edit Server…"), [this] {
         if (ProxmoxClient* c = selectedClient()) editServer(c);
     });
@@ -143,18 +133,18 @@ ProxmoxView::ProxmoxView(QSettings* settings, QString configDir, QWidget* parent
         s->setSeparator(true);
         return s;
     };
-    tree_->addActions({console_, separator(), start_, suspend_, resume_, separator(), shutdown_, reboot_, separator(), stop_, reset_,
+    tree_->addActions({a.console, separator(), a.start, a.suspend, a.resume, separator(), a.shutdown, a.reboot, separator(), a.stop, a.reset,
                        separator(), refresh_, edit_, remove_, add_});
     connect(tree_, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem* item) {
-        if (selectedGuest()) return console_->trigger();
+        if (selectedGuest()) return actions_.console->trigger();
         if (ProxmoxClient* c = selectedClient(); c && c->problem() != Problem::None) return fix(c);
         foldLater(tree_, tree_->indexFromItem(item));
     });
-    connect(tree_, &QTreeWidget::currentItemChanged, this, &ProxmoxView::updateActions);
+    connect(tree_, &QTreeWidget::currentItemChanged, this, qOverload<>(&ProxmoxView::updateActions));
 
     poll_.setInterval(5000);
     connect(&poll_, &QTimer::timeout, this, [this] {
-        if (!isVisible()) return;
+        if (!isVisible() && !following_) return;
         for (ProxmoxClient* c : clients_)
             if (c->hasSecret() && !c->rejected()) c->refresh();
     });
@@ -163,7 +153,92 @@ ProxmoxView::ProxmoxView(QSettings* settings, QString configDir, QWidget* parent
     rebuild();
 }
 
-QList<QAction*> ProxmoxView::titleActions() const { return {add_, console_, start_, shutdown_, stop_}; }
+QList<QAction*> ProxmoxView::titleActions() const { return {add_}; }
+
+ProxmoxView::Actions ProxmoxView::makeActions(QObject* owner, const Target& target)
+{
+    auto make = [this, owner, target](const char* icon, const QString& text, std::function<void(ProxmoxClient*, const Guest&)> run) {
+        auto* a = new QAction(icons::lucide(icon), text, owner);
+        connect(a, &QAction::triggered, this, [target, run] {
+            const auto [client, g] = target();
+            if (client && g) run(client, *g);
+        });
+        return a;
+    };
+    auto control = [this](const char* action) {
+        return [this, action](ProxmoxClient* client, const Guest& g) { act(client, g, QLatin1String(action)); };
+    };
+    Actions a;
+    a.console = make("monitor", tr("&Console"), [this](ProxmoxClient* client, const Guest& g) {
+        emit openRequested(QString::fromStdString(client->server().id + "/" + g.key()));
+    });
+    a.console->setToolTip(tr("Its tab: a VM's screen over SPICE when its display is SPICE, otherwise over VNC as the web console; "
+                             "a container's terminal; a power button while it is stopped"));
+    a.start = make("play", tr("&Start"), control("start"));
+    a.shutdown = make("power", tr("Shut &Down"), control("shutdown"));
+    a.shutdown->setToolTip(tr("Asks the guest system to shut down"));
+    a.stop = make("power-off", tr("S&top"), control("stop"));
+    a.reboot = make("rotate-cw", tr("&Reboot"), control("reboot"));
+    a.reset = make("rotate-ccw", tr("R&eset"), control("reset"));
+    a.suspend = make("pause", tr("&Pause"), control("suspend"));
+    a.resume = make("play", tr("Res&ume"), control("resume"));
+    return a;
+}
+
+std::pair<ProxmoxClient*, std::optional<Guest>> ProxmoxView::find(const QString& key) const
+{
+    const std::string serverId = key.section(QLatin1Char('/'), 0, 0).toStdString();
+    const QString guestKey = key.section(QLatin1Char('/'), 1);
+    const auto client = std::find_if(clients_.begin(), clients_.end(), [&](ProxmoxClient* c) { return c->server().id == serverId; });
+    if (client == clients_.end()) return {nullptr, std::nullopt};
+    for (const Guest& g : (*client)->resources().guests)
+        if (QString::fromStdString(g.key()) == guestKey) return {*client, g};
+    return {*client, std::nullopt};
+}
+
+VmConsole* ProxmoxView::console(const QString& key)
+{
+    ProxmoxClient* client = find(key).first;
+    if (!client) return nullptr;
+    auto status = [this, key]() -> std::optional<VmConsole::Status> {
+        const auto [client, g] = find(key);
+        if (!client) return std::nullopt; // its server was removed
+        if (!g) // deleted, or not listed yet
+            return client->problem() == Problem::None && !client->resources().guests.empty() ? std::nullopt
+                                                                                           : std::optional(VmConsole::Status{.known = false});
+        VmConsole::Status s;
+        s.name = QString::fromStdString(g->name);
+        s.state = QString::fromStdString(g->status);
+        if (!s.state.isEmpty()) s.state[0] = s.state[0].toUpper();
+        const bool stopped = g->status == "stopped";
+        s.startable = stopped && !g->isTemplate;
+        s.text = g->isTemplate ? tr("A template: it does not run.") : stopped ? tr("Stopped. The button starts it.") : s.state;
+        if (g->status == "running") s.display = QStringLiteral("running");
+        return s;
+    };
+    auto self = std::make_shared<QPointer<VmConsole>>();
+    auto start = [this, key, self] {
+        const auto [client, g] = find(key);
+        if (!client || !g) return;
+        client->control(*g, QStringLiteral("start"), [this, self, name = g->name](const QString& error) {
+            emit message(tr("%1: %2").arg(QString::fromStdString(name), error));
+            if (*self) (*self)->startFailed();
+        });
+    };
+    auto* console = new VmConsole(status, start, [this, key](VmConsole* c) { requestConsole(key, c); });
+    *self = console;
+    if (const auto g = find(key).second) console->setWindowTitle(QString::fromStdString(g->name));
+    connect(client, &ProxmoxClient::resourcesChanged, console, &VmConsole::follow);
+    connect(client, &QObject::destroyed, console, &VmConsole::closeRequested);
+    const Actions a = makeActions(console, [this, key] { return find(key); });
+    console->addActions({a.start, a.suspend, a.resume, a.shutdown, a.reboot, a.stop});
+    auto update = [this, a, key] { updateActions(a, find(key).second); };
+    connect(client, &ProxmoxClient::resourcesChanged, console, update);
+    update();
+    ++following_;
+    connect(console, &QObject::destroyed, this, [this] { --following_; });
+    return console;
+}
 
 bool ProxmoxView::event(QEvent* event)
 {
@@ -433,31 +508,32 @@ std::optional<Guest> ProxmoxView::selectedGuest() const
 
 void ProxmoxView::updateActions()
 {
-    const std::optional<Guest> g = selectedGuest();
-    const bool running = g && g->status == "running", stopped = g && g->status == "stopped" && !g->isTemplate;
-    const bool vm = g && g->type == "qemu";
-    console_->setEnabled(g && !g->isTemplate);
-    start_->setEnabled(stopped);
-    shutdown_->setEnabled(running);
-    reboot_->setEnabled(running);
-    stop_->setEnabled(g && !stopped && !g->isTemplate);
-    reset_->setEnabled(vm && running);
-    suspend_->setEnabled(running);
-    resume_->setEnabled(g && !stopped && !g->isTemplate); // paused shows as running
+    updateActions(actions_, selectedGuest());
     for (QAction* a : {edit_, remove_}) a->setEnabled(selectedClient());
     refresh_->setEnabled(!clients_.empty());
 }
 
-void ProxmoxView::act(const QString& action)
+void ProxmoxView::updateActions(const Actions& a, const std::optional<Guest>& g) const
 {
-    ProxmoxClient* client = selectedClient();
-    const std::optional<Guest> g = selectedGuest();
-    if (!client || !g) return;
+    const bool running = g && g->status == "running", stopped = g && g->status == "stopped" && !g->isTemplate;
+    const bool vm = g && g->type == "qemu";
+    a.console->setEnabled(g && !g->isTemplate);
+    a.start->setEnabled(stopped);
+    a.shutdown->setEnabled(running);
+    a.reboot->setEnabled(running);
+    a.stop->setEnabled(g && !stopped && !g->isTemplate);
+    a.reset->setEnabled(vm && running);
+    a.suspend->setEnabled(running);
+    a.resume->setEnabled(g && !stopped && !g->isTemplate); // paused shows as running
+}
+
+void ProxmoxView::act(ProxmoxClient* client, const Guest& guest, const QString& action)
+{
     if (action == QLatin1String("stop") || action == QLatin1String("reset")) {
         const bool stop = action == QLatin1String("stop");
         QMessageBox box(QMessageBox::Warning, stop ? tr("Stop") : tr("Reset"),
-                        stop ? tr("Stop \"%1\"? It is like pulling the power plug: unsaved work in it is lost.").arg(QString::fromStdString(g->name))
-                             : tr("Reset \"%1\"? It is like pressing its reset button: unsaved work in it is lost.").arg(QString::fromStdString(g->name)),
+                        stop ? tr("Stop \"%1\"? It is like pulling the power plug: unsaved work in it is lost.").arg(QString::fromStdString(guest.name))
+                             : tr("Reset \"%1\"? It is like pressing its reset button: unsaved work in it is lost.").arg(QString::fromStdString(guest.name)),
                         QMessageBox::Cancel, this);
         const QAbstractButton* yes = box.addButton(stop ? tr("&Stop") : tr("R&eset"), QMessageBox::DestructiveRole);
         box.setDefaultButton(QMessageBox::Cancel);
@@ -465,23 +541,18 @@ void ProxmoxView::act(const QString& action)
         box.exec();
         if (box.clickedButton() != yes) return;
     }
-    client->control(*g, action, [this, name = g->name](const QString& error) {
+    client->control(guest, action, [this, name = guest.name](const QString& error) {
         emit message(tr("%1: %2").arg(QString::fromStdString(name), error));
     });
 }
 
 void ProxmoxView::requestConsole(const QString& key, QWidget* replace)
 {
-    const std::string serverId = key.section(QLatin1Char('/'), 0, 0).toStdString();
-    const QString guestKey = key.section(QLatin1Char('/'), 1);
-    const auto client = std::find_if(clients_.begin(), clients_.end(), [&](ProxmoxClient* c) { return c->server().id == serverId; });
-    if (client == clients_.end()) return;
-    const auto& guests = (*client)->resources().guests;
-    const auto g = std::find_if(guests.begin(), guests.end(), [&](const Guest& x) { return QString::fromStdString(x.key()) == guestKey; });
-    if (g == guests.end() || g->isTemplate) return;
-    Console console{*client, *g, key, replace, replace != nullptr};
+    const auto [client, g] = find(key);
+    if (!client || !g || g->isTemplate) return;
+    Console console{client, *g, key, replace, replace != nullptr};
     if (g->type == "lxc") return openTerminal(console);
-    (*client)->checkSpice(*g, [this, console](bool spice) { spice ? openSpice(console) : openVnc(console); },
+    client->checkSpice(*g, [this, console](bool spice) { spice ? openSpice(console) : openVnc(console); },
                           [this, console](const QString& message) { consoleFailed(console, message); });
 }
 
