@@ -133,3 +133,19 @@ void ConnectionStore::remove(const std::string& id)
 {
     std::erase_if(connections_, [&](const Connection& c) { return c.id == id; });
 }
+
+bool ConnectionStore::ensureLocalTerminal()
+{
+    if (find(localTerminalId)) return false;
+    const auto made = std::find_if(connections_.begin(), connections_.end(), [](const Connection& c) { return c.protocol == rdc::Protocol::Local; });
+    if (made != connections_.end()) {
+        made->id = localTerminalId;
+        return true;
+    }
+    Connection c;
+    c.id = localTerminalId;
+    c.name = "localhost";
+    c.protocol = rdc::Protocol::Local;
+    connections_.insert(connections_.begin(), std::move(c));
+    return true;
+}

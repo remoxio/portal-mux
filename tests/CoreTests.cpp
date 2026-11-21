@@ -3,6 +3,7 @@
 #include "android/ScrcpyMessages.h"
 #include "app/Addresses.h"
 #include "app/Azure.h"
+#include "app/ConnectionStore.h"
 #include "app/DomainXml.h"
 #include "app/HyperV.h"
 #include "app/KrdcImport.h"
@@ -620,8 +621,27 @@ static void azureTests()
     assert(!azure::parseTokens(R"({"error":"invalid_grant","error_description":"AADSTS50173: Revoked."})", &error) && error == "AADSTS50173: Revoked.");
 }
 
+static void localTerminalTests()
+{
+    ConnectionStore empty(QStringLiteral("/nonexistent/connections.json"));
+    assert(empty.ensureLocalTerminal() && !empty.ensureLocalTerminal());
+    assert(empty.all().size() == 1 && empty.find(localTerminalId)->protocol == rdc::Protocol::Local && empty.all()[0].name == "localhost");
+
+    ConnectionStore mine(QStringLiteral("/nonexistent/connections.json")); // one made by hand: it becomes the built-in one
+    rdc::Connection rdp, local;
+    rdp.name = "rdp";
+    local.protocol = rdc::Protocol::Local;
+    local.name = "my shell";
+    local.group = "Homelab";
+    mine.upsert(rdp);
+    const std::string id = mine.upsert(local);
+    assert(mine.ensureLocalTerminal() && mine.all().size() == 2 && !mine.find(id));
+    assert(mine.find(localTerminalId)->name == "my shell" && mine.find(localTerminalId)->group == "Homelab");
+}
+
 int main()
 {
+    localTerminalTests();
     azureTests();
     hypervTests();
     forwardTests();

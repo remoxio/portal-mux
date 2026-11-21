@@ -10,6 +10,8 @@
 
 class QObject;
 
+inline constexpr char localTerminalId[] = "local-terminal"; // this computer's terminal: always there, never deleted
+
 // Saved connections in one JSON file; passwords are in secrets
 class ConnectionStore {
 public:
@@ -23,6 +25,7 @@ public:
     const rdc::Connection* find(const std::string& id) const;
     std::string upsert(rdc::Connection connection);
     void remove(const std::string& id);
+    bool ensureLocalTerminal(); // the first local terminal made by hand becomes it, else a new one; true: changed
 
     const QString& path() const { return path_; }
 

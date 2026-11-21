@@ -1,5 +1,6 @@
 #include "app/ConnectionDialog.h"
 
+#include "app/ConnectionStore.h"
 #include "app/Icons.h"
 #include "app/Secrets.h"
 #include "core/Properties.h"
@@ -72,8 +73,9 @@ ConnectionDialog::ConnectionDialog(const rdc::Connection& c, const QStringList& 
                                {Protocol::Android, "Android (scrcpy)"}, {Protocol::Moonlight, "Moonlight (Sunshine, Apollo)"},
                                {Protocol::Telnet, "Telnet"}, {Protocol::Serial, "Serial port"},
                                {Protocol::Local, "Local terminal (this computer)"}})
-        protocol_->addItem(QString::fromLatin1(label), int(p));
+        if (p != Protocol::Local || c.protocol == Protocol::Local) protocol_->addItem(QString::fromLatin1(label), int(p)); // one, built in
     protocol_->setCurrentIndex(protocol_->findData(int(c.protocol)));
+    protocol_->setEnabled(c.id != localTerminalId);
     host_ = text(c.host);
     QStringList ports; // serial devices present now
     for (const QString& pattern : {QStringLiteral("/dev/ttyUSB*"), QStringLiteral("/dev/ttyACM*"), QStringLiteral("/dev/serial/by-id/*")})

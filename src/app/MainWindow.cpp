@@ -799,6 +799,7 @@ MainWindow::MainWindow(QWidget* parent)
     if (!store_.load(&error))
         QMessageBox::warning(this, tr("Connections"),
                              tr("Could not read %1: %2\nA copy was saved as %1.broken.").arg(store_.path(), error));
+    if (store_.ensureLocalTerminal()) saveStore();
     rebuildTree();
 }
 
@@ -1326,7 +1327,7 @@ void MainWindow::updateActions()
 {
     const Connection* c = findConnection(selectedId());
     for (QAction* a : {editAction_, connectAction_}) a->setEnabled(c != nullptr);
-    deleteAction_->setEnabled(c && store_.find(c->id));
+    deleteAction_->setEnabled(c && store_.find(c->id) && c->id != localTerminalId);
     sftpAction_->setEnabled(c && c->protocol == Protocol::SSH);
 }
 
@@ -1406,7 +1407,7 @@ void MainWindow::importFromKrdc()
 void MainWindow::deleteSelected()
 {
     const Connection* c = store_.find(selectedId());
-    if (!c) return;
+    if (!c || c->id == localTerminalId) return;
     QMessageBox box(QMessageBox::Question, tr("Delete Connection"), tr("Delete \"%1\"?").arg(QString::fromStdString(c->name)),
                     QMessageBox::Yes | QMessageBox::No, this);
     box.setDefaultButton(QMessageBox::No);
