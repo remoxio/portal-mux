@@ -1,6 +1,7 @@
 #include <QAbstractSpinBox>
 #include <QApplication>
 #include <QComboBox>
+#include <QCursor>
 #include <QFocusFrame>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -35,7 +36,7 @@ public:
     int pixelMetric(PixelMetric metric, const QStyleOption* option, const QWidget* widget) const override
     {
         if (metric == PM_ToolBarIconSize) return 22; // Breeze's, as on KDE and Windows
-        if (metric == PM_TabBarTabOverlap && tabView(widget)) return 0;
+        if (metric == PM_TabBarTabOverlap && (tabView(widget) || pills(widget))) return 0;
         if (metric == PM_TabBarBaseOverlap && tabView(widget)) return tabHeight / 2; // the bar sits on the pane's edge
         if ((metric == PM_LayoutLeftMargin || metric == PM_LayoutTopMargin || metric == PM_LayoutRightMargin || metric == PM_LayoutBottomMargin) &&
             card(widget))
@@ -56,6 +57,8 @@ public:
     {
         if (const auto* tab = qstyleoption_cast<const QStyleOptionTab*>(option); type == CT_TabBarTab && tab && tabView(widget))
             return {option->fontMetrics.size(Qt::TextShowMnemonic, tab->text).width() + 24, tabHeight};
+        if (const auto* tab = qstyleoption_cast<const QStyleOptionTab*>(option); type == CT_TabBarTab && tab && pills(widget))
+            return {std::max(size.width() + tab->leftButtonSize.width() + tab->rightButtonSize.width() + 16, 100), pillTabHeight};
         QSize s = QProxyStyle::sizeFromContents(type, option, size, widget);
         if (type == CT_SpinBox) s.rwidth() += 12; // Qt's is a few points short of its text
         if (type == CT_LineEdit || type == CT_SpinBox) s.setHeight(std::max(s.height(), 24));
@@ -80,6 +83,7 @@ public:
             if (!field.isEmpty()) return drawFieldRing(field.adjusted(1, 1, -1, -1), p); // where Qt draws the bezel
         }
         const auto* tab = qstyleoption_cast<const QStyleOptionTab*>(option);
+        if (tab && pills(widget) && (element == CE_TabBarTabShape || element == CE_TabBarTabLabel)) return drawPill(element, tab, p, widget);
         if (!tab || !tabView(widget) || (element != CE_TabBarTabShape && element != CE_TabBarTabLabel))
             return QProxyStyle::drawControl(element, option, p, widget);
         if (element == CE_TabBarTabLabel) {
@@ -111,6 +115,62 @@ public:
         p->restore();
     }
 
+    // a session tab: the current one a raised pill, the others only dimmer text
+    void drawPill(ControlElement element, const QStyleOptionTab* tab, QPainter* p, const QWidget* widget) const
+    {
+        QColor ink = tab->palette.color(QPalette::WindowText);
+        const bool dark = ink.lightness() > 128, current = tab->state & State_Selected;
+        if (element == CE_TabBarTabLabel) {
+            QStyleOptionTab label = *tab;
+            if (!current) ink.setAlphaF(0.6);
+            label.palette.setColor(QPalette::WindowText, ink);
+            return QCommonStyle::drawControl(element, &label, p, widget); // AppKit's makes the current one white
+        }
+        const QRectF r = QRectF(tab->rect).adjusted(2, 2, -2, -2);
+        const qreal radius = r.height() / 2, hairline = 1 / p->device()->devicePixelRatioF();
+        p->save();
+        p->setRenderHint(QPainter::Antialiasing);
+        if (current) {
+            ink.setAlphaF(dark ? 0.3 : 0.12);
+            p->setPen(QPen(ink, hairline));
+            QColor fill = tab->palette.color(QPalette::WindowText);
+            fill.setAlphaF(0.19);
+            p->setBrush(dark ? fill : QColor(Qt::white));
+            p->drawRoundedRect(r.adjusted(hairline / 2, hairline / 2, -hairline / 2, -hairline / 2), radius, radius);
+        } else if (tab->state & State_MouseOver && tab->state & State_Enabled) {
+            ink.setAlphaF(0.06);
+            p->setPen(Qt::NoPen);
+            p->setBrush(ink);
+            p->drawRoundedRect(r, radius, radius);
+        }
+        p->restore();
+    }
+
+    // a session tab's ✕: only while the pointer is on its tab
+    static void drawPillClose(const QStyleOption* option, QPainter* p, const QWidget* button)
+    {
+        const auto* bar = static_cast<const QTabBar*>(button->parentWidget());
+        const int index = bar->tabAt(button->geometry().center());
+        if (!(option->state & State_MouseOver) && (!bar->underMouse() || bar->tabAt(bar->mapFromGlobal(QCursor::pos())) != index)) return;
+        QColor ink = option->palette.color(QPalette::WindowText);
+        const QRectF r = QRectF(option->rect).adjusted(0.5, 0.5, -0.5, -0.5);
+        p->save();
+        p->setRenderHint(QPainter::Antialiasing);
+        if (option->state & State_MouseOver) {
+            ink.setAlphaF(0.12);
+            p->setPen(Qt::NoPen);
+            p->setBrush(ink);
+            p->drawEllipse(r);
+        }
+        ink.setAlphaF(0.75);
+        p->setPen(QPen(ink, 1.25, Qt::SolidLine, Qt::RoundCap));
+        const qreal half = 3.5;
+        const QPointF c = r.center();
+        p->drawLine(c + QPointF(-half, -half), c + QPointF(half, half));
+        p->drawLine(c + QPointF(-half, half), c + QPointF(half, -half));
+        p->restore();
+    }
+
     // group boxes as cards: a small title over a rounded box
     void drawComplexControl(ComplexControl control, const QStyleOptionComplex* option, QPainter* p, const QWidget* widget) const override
     {
@@ -131,6 +191,10 @@ public:
 
     QRect subElementRect(SubElement element, const QStyleOption* option, const QWidget* widget) const override
     {
+        if (const auto* tab = qstyleoption_cast<const QStyleOptionTab*>(option); element == SE_TabBarTabText && tab && pills(widget) && tab->icon.isNull()) {
+            const int side = std::max(tab->leftButtonSize.width(), tab->rightButtonSize.width()) + 12; // centred, clear of the close button
+            return tab->rect.adjusted(side, 0, -side, 0);
+        }
         if (element == SE_GroupBoxLayoutItem && card(widget)) return option->rect; // Qt's leaves the title out, so it crowds what is above
         return QProxyStyle::subElementRect(element, option, widget);
     }
@@ -155,6 +219,7 @@ public:
 
     void drawPrimitive(PrimitiveElement element, const QStyleOption* option, QPainter* p, const QWidget* widget) const override
     {
+        if (element == PE_IndicatorTabClose && widget && pills(widget->parentWidget())) return drawPillClose(option, p, widget);
         if (element != PE_FrameTabWidget || !tabView(widget)) return QProxyStyle::drawPrimitive(element, option, p, widget);
         QColor ink = option->palette.color(QPalette::WindowText);
         const bool dark = ink.lightness() > 128;
@@ -218,7 +283,7 @@ private:
         p->restore();
     }
 
-    static constexpr int tabHeight = 24;
+    static constexpr int tabHeight = 24, pillTabHeight = 28;
     static constexpr qreal tabRadius = 7, fieldRadius = 6.5, ringWidth = 3.5;
 
     static bool card(const QWidget* widget)
@@ -234,10 +299,12 @@ private:
         return font;
     }
 
+    static bool pills(const QWidget* widget) { return widget && widget->property("pills").toBool(); } // SessionTabs.h
+
     // a QTabWidget's tabs on top: AppKit's tab view; document mode stays Qt's
     static bool tabView(const QWidget* widget)
     {
-        if (const auto* bar = qobject_cast<const QTabBar*>(widget)) return !bar->documentMode() && bar->shape() == QTabBar::RoundedNorth;
+        if (const auto* bar = qobject_cast<const QTabBar*>(widget)) return !bar->documentMode() && bar->shape() == QTabBar::RoundedNorth && !pills(bar);
         if (const auto* tabs = qobject_cast<const QTabWidget*>(widget)) return !tabs->documentMode() && tabs->tabPosition() == QTabWidget::North;
         return false;
     }

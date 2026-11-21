@@ -1,5 +1,8 @@
 #pragma once
 
+#include <QApplication>
+#include <QEvent>
+#include <QPainter>
 #include <QStackedWidget>
 #include <QTabBar>
 #include <QVBoxLayout>
@@ -7,8 +10,51 @@
 // Breeze's 30 px tabs are lower than the desktop's other tab bars: 34
 class TallTabBar : public QTabBar {
 protected:
+#ifndef Q_OS_MACOS
     QSize tabSizeHint(int index) const override { return QTabBar::tabSizeHint(index) + QSize(0, 4); }
+#endif
 };
+
+#ifdef Q_OS_MACOS
+// macOS 26's tab bar: the tabs as pills (Look_mac.mm) in a rounded track across the window
+class TabTrack : public QWidget {
+public:
+    explicit TabTrack(QTabBar* bar)
+    {
+        setContentsMargins(8, 6, 8, 6);
+        auto* layout = new QHBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+        layout->addWidget(bar);
+        layout->addStretch();
+        bar->setProperty("pills", true);
+        bar->setDrawBase(false);
+        bar->setAttribute(Qt::WA_Hover);
+        bar->setFont(QApplication::font());
+        bar->installEventFilter(this); // hidden with it
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (event->type() == QEvent::ShowToParent) show();
+        if (event->type() == QEvent::HideToParent) hide();
+        if (event->type() == QEvent::ApplicationFontChange) static_cast<QWidget*>(watched)->setFont(QApplication::font());
+        return false;
+    }
+    void paintEvent(QPaintEvent*) override
+    {
+        QColor ink = palette().color(QPalette::WindowText);
+        ink.setAlphaF(ink.lightness() > 128 ? 0.065 : 0.05);
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        p.setBrush(ink);
+        const QRectF r = contentsRect();
+        p.drawRoundedRect(r, r.height() / 2, r.height() / 2);
+    }
+};
+#endif
 
 // QTabWidget's API, with the session's toolbar between the tabs and the pages
 class SessionTabs : public QWidget {
@@ -20,11 +66,15 @@ public:
         layout_ = new QVBoxLayout(this);
         layout_->setContentsMargins(0, 0, 0, 0);
         layout_->setSpacing(0);
-        layout_->addWidget(bar_);
         layout_->addWidget(stack_, 1);
+#ifdef Q_OS_MACOS
+        layout_->insertWidget(0, new TabTrack(bar_)); // not in document mode: AppKit's is grey, in a small font
+#else
+        layout_->insertWidget(0, bar_);
         bar_->setDocumentMode(true);
-        bar_->setExpanding(false);
         bar_->setDrawBase(true);
+#endif
+        bar_->setExpanding(false);
         connect(bar_, &QTabBar::currentChanged, this, [this](int index) {
             if (index >= 0 && index < stack_->count()) stack_->setCurrentIndex(index);
             emit currentChanged(index);
