@@ -62,7 +62,6 @@ void ProxmoxClient::send(const QByteArray& method, const QString& path, const QB
     connect(reply, &QNetworkReply::finished, this, [=, this] {
         reply->deleteLater();
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        const QByteArray body = reply->readAll();
         if (!unknown->isEmpty()) {
             fail(Problem::Certificate, tr("Its certificate is not trusted."), onFail);
             if (!asked_) {
@@ -76,6 +75,7 @@ void ProxmoxClient::send(const QByteArray& method, const QString& path, const QB
             return send(method, path, form, done, onFail, true);
         }
         if (reply->error() != QNetworkReply::NoError && status == 0) return fail(Problem::Unreachable, reply->errorString(), onFail);
+        const QByteArray body = reply->readAll(); // not before: a timed-out reply is closed
         if (status < 200 || status >= 300) {
             const QString text = proxmox::errorText(body);
             const QString reason = reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString();

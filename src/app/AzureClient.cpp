@@ -174,12 +174,12 @@ void AzureClient::send(const QByteArray& method, const QString& url, Failed fail
     connect(reply, &QNetworkReply::finished, this, [=, this] {
         reply->deleteLater();
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        const QByteArray body = reply->readAll();
         if (status == 401 && !retried) { // its token was revoked or is too old
             access_.clear();
             return send(method, url, failed, done, true);
         }
         if (status == 0) return failed({Problem::Unreachable, reply->errorString()});
+        const QByteArray body = reply->readAll(); // not before: a timed-out reply is closed
         if (status < 200 || status >= 300) {
             const QString text = azure::errorText(body);
             return failed({status == 401 ? Problem::SignIn : Problem::Other,
