@@ -28,9 +28,9 @@ class QStatusBar;
 class QSettings;
 class QSplitter;
 class QStackedWidget;
-class QTabWidget;
 class QToolBar;
 class RemoteView;
+class SessionTabs;
 class TerminalView;
 class QListWidget;
 class QTreeWidget;
@@ -112,6 +112,8 @@ private:
     void closeTab(int index);
     RemoteView* currentView() const;
     void updateSessionActions();
+    QList<QAction*> sessionTools(QWidget* page) const; // its kind's toolbar, nullptr between groups
+    void fillSessionBar(QToolBar* bar, const QList<QAction*>& tools);
     void applyFullScreen(bool on);
     bool saveStore();
 
@@ -134,7 +136,7 @@ private:
     QLineEdit* filter_;
     QTreeWidget* active_;
     Folding *treeFolding_, *sessionsFolding_;
-    QTabWidget* tabs_;
+    SessionTabs* tabs_;
     QAction *editAction_, *deleteAction_, *connectAction_, *sftpAction_;
     QAction *fullScreenAction_, *screenshotAction_, *viewOnlyAction_, *clipboardAction_, *localCursorAction_,
         *grabKeysAction_, *scaleAction_, *reconnectAction_, *disconnectAction_;
@@ -144,6 +146,7 @@ private:
     QList<QAction*> viewToggles_; // View menu: Show KVM Manager, Show Proxmox
     QWidget* titleBar_ = nullptr; // macOS
     QToolBar* sessionBar_;
+    QList<QAction*> separators_; // shared by the session toolbars
     int sessionBarTextWidth_ = 0;
     QStatusBar* status_;
     QLabel *protocolCell_, *addressCell_, *sizeCell_, *scaleCell_, *fpsCell_, *modeCell_, *numCell_;

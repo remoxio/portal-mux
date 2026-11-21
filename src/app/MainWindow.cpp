@@ -21,6 +21,7 @@
 #endif
 #include "app/RemoteView.h"
 #include "app/PageRail.h"
+#include "app/SessionTabs.h"
 #include "app/SftpView.h"
 #include "app/SshServers.h"
 #ifdef Q_OS_MACOS
@@ -80,7 +81,6 @@
 #include <QStatusBar>
 #include <QStyleHints>
 #include <QTabBar>
-#include <QTabWidget>
 #include <QTcpSocket>
 #include <QUuid>
 #include <QToolBar>
@@ -403,7 +403,7 @@ MainWindow::MainWindow(QWidget* parent)
     usbAction_ = new QAction(icons::lucide("usb"), tr("&USB Devices…"), this);
     usbAction_->setToolTip(tr("Hand this computer's USB devices to the VM (SPICE)"));
     connect(usbAction_, &QAction::triggered, this, &MainWindow::showUsbDevices);
-    relaunchAction_ = new QAction(tr("Reconnect at &Window Size"), this);
+    relaunchAction_ = new QAction(icons::lucide("refresh-cw"), tr("Reconnect at &Window Size"), this);
     relaunchAction_->setToolTip(tr("Quits the app on the host and starts it again at this window's size (Moonlight; with Apollo's "
                                    "virtual display the host's screen gets that size)"));
     connect(relaunchAction_, &QAction::triggered, this, [this] {
@@ -456,18 +456,13 @@ MainWindow::MainWindow(QWidget* parent)
     // icons in capsules, in the title bar
     sessionBar_->setToolButtonStyle(Qt::ToolButtonIconOnly);
     sessionBar_->setProperty("capsules", true);
-    sessionBar_->addActions({fullScreenAction_, scaleAction_});
-    sessionBar_->addSeparator();
-    sessionBar_->addActions({screenshotAction_, clipboardAction_});
-    sessionBar_->addSeparator();
-    sessionBar_->addActions({grabKeysAction_, sendKeysMenu_->menuAction()});
-    sessionBar_->addSeparator();
-    sessionBar_->addAction(disconnectAction_);
 #else
     sessionBar_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    sessionBar_->addActions({fullScreenAction_, screenshotAction_, clipboardAction_, grabKeysAction_, sendKeysMenu_->menuAction(),
-                             scaleAction_, disconnectAction_});
 #endif
+    for (int i = 0; i < 4; ++i) {
+        separators_ << new QAction(this);
+        separators_.last()->setSeparator(true);
+    }
     sessionBar_->installEventFilter(this);
     sessionBar_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(sessionBar_, &QWidget::customContextMenuRequested, this, [this](const QPoint& at) {
@@ -502,11 +497,6 @@ MainWindow::MainWindow(QWidget* parent)
     fullScreenBar_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     fullScreenBar_->setMovable(false);
     fullScreenBar_->setAutoFillBackground(true);
-    fullScreenBar_->addActions({fullScreenAction_, screenshotAction_, viewOnlyAction_, clipboardAction_, grabKeysAction_,
-                                sendKeysMenu_->menuAction(), scaleAction_, disconnectAction_});
-    for (QToolBar* bar : {sessionBar_, fullScreenBar_}) // menu opens on click
-        if (auto* button = qobject_cast<QToolButton*>(bar->widgetForAction(sendKeysMenu_->menuAction())))
-            button->setPopupMode(QToolButton::InstantPopup);
     fullScreenBar_->hide();
     fullScreenHold_.setSingleShot(true);
     fullScreenHold_.setInterval(2000);
@@ -626,14 +616,13 @@ MainWindow::MainWindow(QWidget* parent)
     auto* workLayout = new QVBoxLayout(work);
     workLayout->setContentsMargins(0, 0, 0, 0);
     workLayout->setSpacing(0);
-    tabs_ = new QTabWidget;
+    tabs_ = new SessionTabs;
 #ifndef Q_OS_MACOS
-    workLayout->addWidget(sessionBar_);
+    tabs_->setToolBar(sessionBar_);
 #endif
     workLayout->addWidget(tabs_, 1);
     workLayout->addWidget(status_);
     tabs_->setTabsClosable(settings_->value(QStringLiteral("tabs/closeButtons"), true).toBool());
-    tabs_->setDocumentMode(true);
     tabs_->setMovable(true);
     tabs_->tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(tabs_->tabBar(), &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
@@ -768,11 +757,11 @@ MainWindow::MainWindow(QWidget* parent)
         }
         menu.exec(active_->viewport()->mapToGlobal(at));
     });
-    connect(tabs_, &QTabWidget::tabCloseRequested, this, [this](int index) {
+    connect(tabs_, &SessionTabs::tabCloseRequested, this, [this](int index) {
         if (confirmCloseTab(index)) closeTab(index);
     });
     connect(tabs_->tabBar(), &QTabBar::tabMoved, this, &MainWindow::updateActiveList);
-    connect(tabs_, &QTabWidget::currentChanged, this, [this] {
+    connect(tabs_, &SessionTabs::currentChanged, this, [this] {
         if (isFullScreen()) setWindowState(windowState() & ~Qt::WindowFullScreen);
         tabs_->setTabIcon(tabs_->currentIndex(), QIcon());
         updateSessionActions();
@@ -2172,9 +2161,7 @@ void MainWindow::detachTab(int index)
     auto* attach = bar->addAction(icons::lucide("undo-2"), tr("&Attach to the Main Window"));
     attach->setToolTip(tr("Back into a tab (closing this window does the same)"));
     connect(attach, &QAction::triggered, window, [this, window] { reattach(window); });
-    bar->addSeparator();
-    bar->addActions({fullScreenAction_, screenshotAction_, clipboardAction_, grabKeysAction_, sendKeysMenu_->menuAction(), usbAction_,
-                     scaleAction_, disconnectAction_});
+    fillSessionBar(bar, QList<QAction*>{attach, nullptr} + sessionTools(page));
     window->resize(size + QSize(0, bar->sizeHint().height()));
     window->move(geometry().topLeft() + QPoint(48, 48));
     window->show();
@@ -2201,8 +2188,49 @@ void MainWindow::reattach(QWidget* detached)
     updateActiveList();
 }
 
+QList<QAction*> MainWindow::sessionTools(QWidget* page) const
+{
+    if (!page) return {};
+    const QString protocol = page->property("protocol").toString();
+    auto is = [&](std::initializer_list<const char*> names) {
+        return std::any_of(names.begin(), names.end(), [&](const char* name) { return protocol == QLatin1String(name); });
+    };
+    QList<QAction*> tools{fullScreenAction_}; // nullptr: a separator
+    if (page->findChild<RemoteView*>()) {
+        tools << scaleAction_ << nullptr << screenshotAction_;
+        if (!is({"Moonlight", "Test"})) tools << clipboardAction_;
+        if (!is({"Android", "Test"})) tools << nullptr << grabKeysAction_;
+        if (!is({"Android", "Moonlight", "Test"})) tools << sendKeysMenu_->menuAction();
+        if (is({"SPICE"})) tools << nullptr << usbAction_;
+        if (is({"Moonlight"})) tools << nullptr << relaunchAction_;
+    } else if (qobject_cast<TerminalView*>(page)) {
+        tools << nullptr << reconnectAction_;
+    }
+    return tools << nullptr << disconnectAction_;
+}
+
+void MainWindow::fillSessionBar(QToolBar* bar, const QList<QAction*>& tools)
+{
+    QList<QAction*> actions;
+    int separator = 0;
+    for (QAction* a : tools) actions << (a ? a : separators_.at(separator++));
+    if (bar->actions() == actions) return;
+    bar->clear();
+    bar->addActions(actions);
+    if (auto* button = qobject_cast<QToolButton*>(bar->widgetForAction(sendKeysMenu_->menuAction())))
+        button->setPopupMode(QToolButton::InstantPopup); // the menu opens on click
+    if (bar == sessionBar_ && bar->property("capsules").isNull()) { // as wide as it can, with text
+        bar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        sessionBarTextWidth_ = bar->sizeHint().width();
+        if (bar->width() < sessionBarTextWidth_) bar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    }
+}
+
 void MainWindow::updateSessionActions()
 {
+    fillSessionBar(sessionBar_, sessionTools(tabs_->currentWidget()));
+    fillSessionBar(fullScreenBar_, sessionTools(tabs_->currentWidget()));
+    sessionBar_->setVisible(tabs_->count() > 0 && !isFullScreen() && toolBarAction_->isChecked());
     RemoteView* view = currentView();
     for (QAction* a : {screenshotAction_, viewOnlyAction_, clipboardAction_, localCursorAction_, grabKeysAction_, scaleAction_,
                        sendKeysMenu_->menuAction()})
@@ -2311,7 +2339,7 @@ void MainWindow::applyFullScreen(bool on)
 {
     menuBar()->setVisible(!on);
     for (auto [w, shown] : std::initializer_list<std::pair<QWidget*, QAction*>>{
-             {sessionBar_, toolBarAction_}, {status_, statusBarAction_},
+             {status_, statusBarAction_},
              {tabs_->tabBar(), tabBarAction_}})
         w->setVisible(!on && shown->isChecked());
     if (on && sidebarMode_ == SidebarMode::Overlay) setSidebar(SidebarMode::Collapsed, -1);
