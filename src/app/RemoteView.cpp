@@ -136,18 +136,18 @@ void RemoteView::sendKeys(const std::vector<KeyEvent>& keys)
 void RemoteView::updateOverlay(SessionState state)
 {
     if (state == SessionState::Connected) wasConnected_ = true;
-    const bool ended = state == SessionState::Disconnected, retrying = state == SessionState::Connecting && wasConnected_;
-    dimmed_ = ended || retrying;
+    const bool ended = state == SessionState::Disconnected, connecting = state == SessionState::Connecting;
+    dimmed_ = ended || (connecting && wasConnected_);
     update();
-    if (dimmed_ && !overlay_ && parentWidget()) {
+    if ((ended || connecting) && !overlay_ && parentWidget()) {
         overlay_ = new QPushButton(parentWidget()); // viewport child: stays in view
         connect(overlay_, &QPushButton::clicked, this, &RemoteView::reconnectRequested);
     }
     if (!overlay_) return;
     overlay_->setIcon(ended ? icons::lucide("refresh-cw") : QIcon());
-    overlay_->setText(ended ? tr("Session ended — &Reconnect") : tr("Reconnecting…"));
+    overlay_->setText(ended ? tr("Session ended — &Reconnect") : wasConnected_ ? tr("Reconnecting…") : tr("Connecting…"));
     overlay_->setEnabled(ended);
-    overlay_->setVisible(dimmed_);
+    overlay_->setVisible(ended || connecting); // a host that doesn't answer: not an empty tab for 15 s
     placeOverlay();
 }
 
@@ -156,6 +156,9 @@ void RemoteView::placeOverlay()
     if (!overlay_ || overlay_->isHidden()) return;
     overlay_->adjustSize();
     overlay_->move((parentWidget()->width() - overlay_->width()) / 2, (parentWidget()->height() - overlay_->height()) / 2);
+    const QObjectList& siblings = parentWidget()->children(); // right above the view: under the tab's prompts
+    for (qsizetype i = siblings.indexOf(this) + 1; i < siblings.size(); ++i)
+        if (siblings[i] != overlay_ && siblings[i]->isWidgetType()) return overlay_->stackUnder(static_cast<QWidget*>(siblings[i]));
     overlay_->raise();
 }
 
