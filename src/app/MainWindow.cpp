@@ -478,10 +478,6 @@ MainWindow::MainWindow(QWidget* parent)
 #else
     sessionBar_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 #endif
-    for (int i = 0; i < 4; ++i) {
-        separators_ << new QAction(this);
-        separators_.last()->setSeparator(true);
-    }
     sessionBar_->installEventFilter(this);
     sessionBar_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(sessionBar_, &QWidget::customContextMenuRequested, this, [this](const QPoint& at) {
@@ -2286,7 +2282,13 @@ void MainWindow::fillSessionBar(QToolBar* bar, const QList<QAction*>& tools)
 {
     QList<QAction*> actions;
     int separator = 0;
-    for (QAction* a : tools) actions << (a ? a : separators_.at(separator++));
+    for (QAction* a : tools) {
+        if (!a && separator == separators_.size()) { // as many as a toolbar needs: a VM's SPICE console has five
+            separators_ << new QAction(this);
+            separators_.last()->setSeparator(true);
+        }
+        actions << (a ? a : separators_.at(separator++));
+    }
     if (bar->actions() == actions) return;
     bar->clear();
     bar->addActions(actions);

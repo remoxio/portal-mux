@@ -137,8 +137,8 @@ ProxmoxView::ProxmoxView(QSettings* settings, QString configDir, QWidget* parent
     edit_ = make("pencil", tr("&Edit Server…"), [this] {
         if (ProxmoxClient* c = selectedClient()) editServer(c);
     });
-    web_ = make("globe", tr("Open &Web UI"), [this] { openWebUi(selectedClient()); });
-    web_->setToolTip(tr("The server's web interface, in your web browser"));
+    web_ = make("globe", tr("Open &Web UI"), [this] { openWebUi(selectedClient() ? selectedClient() : clients_.size() == 1 ? clients_[0] : nullptr); });
+    web_->setToolTip(tr("The selected server's web interface, in your web browser"));
     remove_ = make("trash", tr("Re&move Server"), [this] {
         if (ProxmoxClient* c = selectedClient()) removeServer(c);
     });
@@ -167,7 +167,7 @@ ProxmoxView::ProxmoxView(QSettings* settings, QString configDir, QWidget* parent
     rebuild();
 }
 
-QList<QAction*> ProxmoxView::titleActions() const { return {add_}; }
+QList<QAction*> ProxmoxView::titleActions() const { return {add_, refresh_, web_}; }
 
 ProxmoxView::Actions ProxmoxView::makeActions(QObject* owner, const Target& target)
 {
@@ -245,12 +245,7 @@ VmConsole* ProxmoxView::console(const QString& key)
     connect(client, &ProxmoxClient::resourcesChanged, console, &VmConsole::follow);
     connect(client, &QObject::destroyed, console, &VmConsole::closeRequested);
     const Actions a = makeActions(console, [this, key] { return find(key); });
-    auto* separator = new QAction(console);
-    separator->setSeparator(true);
-    auto* web = new QAction(icons::lucide("globe"), tr("Open &Web UI"), console);
-    web->setToolTip(web_->toolTip());
-    connect(web, &QAction::triggered, this, [this, key] { openWebUi(find(key).first); });
-    console->addActions({a.start, a.suspend, a.resume, a.shutdown, a.reboot, a.stop, separator, web});
+    console->addActions({a.start, a.suspend, a.resume, a.shutdown, a.reboot, a.stop});
     auto update = [this, a, key] { updateActions(a, find(key).second); };
     connect(client, &ProxmoxClient::resourcesChanged, console, update);
     update();
@@ -528,7 +523,8 @@ std::optional<Guest> ProxmoxView::selectedGuest() const
 void ProxmoxView::updateActions()
 {
     updateActions(actions_, selectedGuest());
-    for (QAction* a : {edit_, remove_, web_}) a->setEnabled(selectedClient());
+    for (QAction* a : {edit_, remove_}) a->setEnabled(selectedClient());
+    web_->setEnabled(selectedClient() || clients_.size() == 1);
     refresh_->setEnabled(!clients_.empty());
 }
 
