@@ -30,8 +30,8 @@ void paintGuestRow(QPainter* p, const QStyleOptionViewItem& opt, const GuestRow&
     p->setRenderHint(QPainter::Antialiasing);
     p->setPen(QPen(dim, 1));
     p->setBrush(Qt::NoBrush);
-    p->drawRect(QRectF(graph).adjusted(0.5, 0.5, -0.5, -0.5));
-    if (row.cpu.size() > 1) {
+    if (row.graph) p->drawRect(QRectF(graph).adjusted(0.5, 0.5, -0.5, -0.5));
+    if (row.graph && row.cpu.size() > 1) {
         const QRectF area = QRectF(graph).adjusted(1.5, 1.5, -1.5, -1.5);
         const double step = area.width() / (samples - 1); // the newest on the right
         QPainterPath line;
@@ -53,7 +53,8 @@ void paintGuestRow(QPainter* p, const QStyleOptionViewItem& opt, const GuestRow&
     }
     p->restore();
 
-    const QRect textRect(icon.right() + 9, r.top(), std::max(0, graph.left() - icon.right() - 17), r.height());
+    const int textRight = row.graph ? graph.left() - 8 : r.right();
+    const QRect textRect(icon.right() + 9, r.top(), std::max(0, textRight - icon.right() - 9), r.height());
     QFont bold = opt.font;
     bold.setBold(true);
     const QFontMetrics boldMetrics(bold);

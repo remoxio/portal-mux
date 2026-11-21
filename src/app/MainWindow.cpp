@@ -10,6 +10,7 @@
 #include "app/LockKeys.h"
 #include "app/Look.h"
 #include "app/MonitorWindow.h"
+#include "app/AzureView.h"
 #include "app/HyperVView.h"
 #include "app/PanelTree.h"
 #include "app/ProxmoxView.h"
@@ -622,6 +623,10 @@ MainWindow::MainWindow(QWidget* parent)
     connect(hyperv_, &HyperVView::openRequested, this, &MainWindow::openHyperVConsole);
     connect(hyperv_, &HyperVView::message, this, [this](const QString& text) { status_->showMessage(text, 8000); });
     addView("hyperv", icons::lucide("grid-2x2"), tr("Hyper-V Manager"), hyperv_, hyperv_->titleActions(), tr("Show &Hyper-V Manager"));
+    azure_ = new AzureView(settings_);
+    connect(azure_, &AzureView::openRequested, this, &MainWindow::openAzureConsole);
+    connect(azure_, &AzureView::message, this, [this](const QString& text) { status_->showMessage(text, 8000); });
+    addView("azure", icons::lucide("cloud"), tr("Azure"), azure_, azure_->titleActions(), tr("Show &Azure"));
     addView("active", icons::lucide("panels-top-left"), tr("Sessions"), active_, {});
     const QString savedView = settings_->value(QStringLiteral("window/sidebarView")).toString();
     for (int i = 0; i < views_->count(); ++i)
@@ -1883,6 +1888,29 @@ void MainWindow::openHyperVConsole(const QString& hostId, const std::string& vmI
     if (!console) return;
     console->setProperty("hypervKey", key);
     console->setProperty("protocol", QStringLiteral("RDP"));
+    addVmTab(console);
+}
+
+void MainWindow::openAzureConsole(const QString& key)
+{
+    for (int i = 0; i < tabs_->count(); ++i)
+        if (tabs_->widget(i)->property("azureKey").toString() == key) {
+            tabs_->setCurrentIndex(i);
+            tabs_->widget(i)->setFocus();
+            return;
+        }
+    VmConsole* console = azure_->console(key, [this](VmConsole* console, const Connection& c) {
+        const QString address = QString::fromStdString(c.option("address"));
+        console->setProperty("protocol", protocolLabel(c.protocol));
+        console->setProperty("address", address);
+        if (c.protocol != Protocol::SSH) return console->setDisplay(createDisplay(c));
+        TerminalView* terminal = createTerminal(c, address, {});
+        console->setDisplay(terminal);
+        terminal->start(std::make_unique<rdc::SshTerminalSession>(*terminal, c, knownHostsFile()));
+        addFilePanel(terminal, c);
+    });
+    if (!console) return;
+    console->setProperty("azureKey", key);
     addVmTab(console);
 }
 

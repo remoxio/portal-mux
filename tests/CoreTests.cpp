@@ -2,6 +2,7 @@
 #undef NDEBUG
 #include "android/ScrcpyMessages.h"
 #include "app/Addresses.h"
+#include "app/Azure.h"
 #include "app/DomainXml.h"
 #include "app/HyperV.h"
 #include "app/KrdcImport.h"
@@ -19,6 +20,8 @@
 #include <winpr/input.h>
 
 #include <QFile>
+#include <QUrlQuery>
+#include <QJsonDocument>
 #include <QRegularExpression>
 #include <QTemporaryDir>
 
@@ -546,8 +549,75 @@ static void hypervTests()
     assert(loop.rfind("powershell ", 0) == 0 && loop.size() < 8000); // cmd.exe's limit
 }
 
+static void azureTests()
+{
+    QString error;
+    const auto page = azure::parsePage(R"({"value":[{"id":"a"}],"nextLink":"https://next"})", &error);
+    assert(page && page->value.size() == 1 && page->next == "https://next");
+    assert(!azure::parsePage("<html>", &error) && !error.isEmpty());
+
+    const QJsonArray model = QJsonDocument::fromJson(R"([
+        {"id":"/subscriptions/S1/resourceGroups/RG1/providers/Microsoft.Compute/virtualMachines/web","name":"web","location":"westeurope",
+         "properties":{"hardwareProfile":{"vmSize":"Standard_B1s"},"storageProfile":{"osDisk":{"osType":"Linux"}},
+                       "osProfile":{"adminUsername":"azureuser"},
+                       "networkProfile":{"networkInterfaces":[{"id":"/x/nic-b"},{"id":"/x/NIC-A","properties":{"primary":true}}]}}},
+        {"id":"/subscriptions/S1/resourceGroups/rg2/providers/Microsoft.Compute/virtualMachines/App","name":"App",
+         "properties":{"storageProfile":{"osDisk":{"osType":"Windows"}},"networkProfile":{"networkInterfaces":[{"id":"/x/nic-c"}]}}}
+    ])").array();
+    std::vector<azure::Vm> vms = azure::vms(model);
+    assert(vms.size() == 2 && vms[0].name == "App" && vms[1].name == "web"); // by name, case ignored
+    const azure::Vm& web = vms[1];
+    assert(web.subscription == "S1" && web.resourceGroup == "RG1" && web.size == "Standard_B1s" && web.os == "Linux" && web.admin == "azureuser");
+    assert(web.nics.size() == 2 && web.nics[0] == "/x/NIC-A"); // the primary first
+
+    azure::applyPower(vms, QJsonDocument::fromJson(R"([
+        {"id":"/SUBSCRIPTIONS/s1/resourcegroups/rg1/providers/Microsoft.Compute/virtualMachines/WEB",
+         "properties":{"instanceView":{"statuses":[{"code":"ProvisioningState/succeeded"},{"code":"PowerState/running"}]}}}
+    ])").array());
+    assert(vms[1].power == "running" && vms[0].power.empty()); // Azure changes the IDs' case
+
+    azure::applyAddresses(vms, QJsonDocument::fromJson(R"([
+        {"id":"/x/nic-a","properties":{"ipConfigurations":[
+            {"properties":{"privateIPAddress":"10.0.0.5"}},
+            {"properties":{"primary":true,"privateIPAddress":"10.0.0.4","publicIPAddress":{"id":"/x/IP1"}}}]}},
+        {"id":"/x/nic-c","properties":{"ipConfigurations":[{"properties":{"privateIPAddress":"10.1.0.4"}}]}}
+    ])").array(), QJsonDocument::fromJson(R"([{"id":"/x/ip1","properties":{"ipAddress":"20.1.2.3"}}])").array());
+    assert(vms[1].privateIp == "10.0.0.4" && vms[1].publicIp == "20.1.2.3");
+    assert(vms[0].privateIp == "10.1.0.4" && vms[0].publicIp.empty());
+
+    assert(azure::errorText(R"({"error":{"code":"AuthorizationFailed","message":"No access."}})") == "No access.");
+    assert(azure::errorText(R"({"error":"invalid_grant","error_description":"AADSTS70008: Expired.\r\nTrace ID: 1"})") == "AADSTS70008: Expired.");
+
+    // as Python: base64.urlsafe_b64encode(hashlib.sha256(v).digest()).rstrip(b"=")
+    assert(azure::challenge("dBjftJeZ4CVP-mJ92K27uhbUJU1p1r_wW1gFWFOEjXk") == "ngF5GsXcbwljx6u133FFr3Xht9xooA_DuaX_3QwODtc");
+    assert(azure::newVerifier().size() == 43 && azure::newVerifier() != azure::newVerifier());
+
+    azure::Account account;
+    account.tenant = "contoso.onmicrosoft.com";
+    const QUrl url = azure::authorizeUrl(account, QStringLiteral("http://localhost:4711"), "ch", QStringLiteral("st"));
+    assert(url.path() == "/contoso.onmicrosoft.com/oauth2/v2.0/authorize");
+    const QUrlQuery query(url);
+    assert(query.queryItemValue(QStringLiteral("redirect_uri"), QUrl::FullyDecoded) == "http://localhost:4711");
+    assert(query.queryItemValue(QStringLiteral("client_id")) == azure::cliClientId && query.queryItemValue(QStringLiteral("state")) == "st");
+    assert(azure::refreshForm(account, QStringLiteral("a+b/c=")).contains("refresh_token=a%2Bb%2Fc%3D"));
+
+    const auto r = azure::parseRedirect("GET /?code=0.AX-y&state=st HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    assert(r && r->code == "0.AX-y" && r->state == "st" && r->error.isEmpty());
+    const auto denied = azure::parseRedirect("GET /?error=access_denied&error_description=The+user+said+no&state=st HTTP/1.1\r\n\r\n");
+    assert(denied && denied->code.isEmpty() && denied->error == "The user said no");
+    assert(!azure::parseRedirect("GET /favicon.ico HTTP/1.1\r\n\r\n"));
+
+    const QByteArray claims = QByteArray(R"({"preferred_username":"ann@contoso.com","tid":"T1"})")
+                                  .toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
+    const auto tokens = azure::parseTokens(R"({"access_token":"A","refresh_token":"R","expires_in":"3599","id_token":"h.)" + claims + R"(.s"})", &error);
+    assert(tokens && tokens->access == "A" && tokens->refresh == "R" && tokens->expiresIn == 3599 && tokens->user == "ann@contoso.com" &&
+           tokens->tenantId == "T1");
+    assert(!azure::parseTokens(R"({"error":"invalid_grant","error_description":"AADSTS50173: Revoked."})", &error) && error == "AADSTS50173: Revoked.");
+}
+
 int main()
 {
+    azureTests();
     hypervTests();
     forwardTests();
     telnetTests();

@@ -18,6 +18,7 @@ struct TerminalListener;
 class ActivityBar;
 class LibvirtVms;
 class Folding;
+class AzureView;
 class HyperVView;
 class ProxmoxView;
 class QAction;
@@ -97,6 +98,7 @@ private:
     void styleStatusCells();
     bool confirmCloseTab(int index);
     void openHyperVConsole(const QString& hostId, const std::string& vmId);
+    void openAzureConsole(const QString& key);
     void openProxmoxConsole(const rdc::Connection& connection, const QString& key, QWidget* replace, const QString& address,
                             QObject* tunnel);
     void openProxmoxTerminal(const QString& key, QWidget* replace, const QString& name, const QString& address,
@@ -129,6 +131,7 @@ private:
     ProxmoxView* proxmox_ = nullptr;
     VmView* kvm_ = nullptr; // with libvirt
     HyperVView* hyperv_ = nullptr;
+    AzureView* azure_ = nullptr;
     QSettings* settings_;
     bool blurPending_ = false;
     Gamepads* gamepads_ = nullptr;

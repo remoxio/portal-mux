@@ -10,6 +10,7 @@
 
 #include <QAction>
 #include <QDialog>
+#include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QEvent>
@@ -50,6 +51,17 @@ static QString guestState(const Guest& g)
     if (g.status == "suspended") return ProxmoxView::tr("Suspended");
     if (g.status == "prelaunch") return ProxmoxView::tr("Starting");
     return QString::fromStdString(g.status);
+}
+
+static void openWebUi(const ProxmoxClient* client)
+{
+    if (!client) return;
+    QUrl url;
+    url.setScheme(QStringLiteral("https"));
+    url.setHost(QString::fromStdString(client->server().host));
+    url.setPort(client->server().port);
+    url.setPath(QStringLiteral("/"));
+    QDesktopServices::openUrl(url);
 }
 
 static QString gib(long long bytes) { return QString::number(double(bytes) / (1 << 30), 'f', 1); }
@@ -125,6 +137,8 @@ ProxmoxView::ProxmoxView(QSettings* settings, QString configDir, QWidget* parent
     edit_ = make("pencil", tr("&Edit Server…"), [this] {
         if (ProxmoxClient* c = selectedClient()) editServer(c);
     });
+    web_ = make("globe", tr("Open &Web UI"), [this] { openWebUi(selectedClient()); });
+    web_->setToolTip(tr("The server's web interface, in your web browser"));
     remove_ = make("trash", tr("Re&move Server"), [this] {
         if (ProxmoxClient* c = selectedClient()) removeServer(c);
     });
@@ -134,7 +148,7 @@ ProxmoxView::ProxmoxView(QSettings* settings, QString configDir, QWidget* parent
         return s;
     };
     tree_->addActions({a.console, separator(), a.start, a.suspend, a.resume, separator(), a.shutdown, a.reboot, separator(), a.stop, a.reset,
-                       separator(), refresh_, edit_, remove_, add_});
+                       separator(), web_, refresh_, edit_, remove_, add_});
     connect(tree_, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem* item) {
         if (selectedGuest()) return actions_.console->trigger();
         if (ProxmoxClient* c = selectedClient(); c && c->problem() != Problem::None) return fix(c);
@@ -231,7 +245,12 @@ VmConsole* ProxmoxView::console(const QString& key)
     connect(client, &ProxmoxClient::resourcesChanged, console, &VmConsole::follow);
     connect(client, &QObject::destroyed, console, &VmConsole::closeRequested);
     const Actions a = makeActions(console, [this, key] { return find(key); });
-    console->addActions({a.start, a.suspend, a.resume, a.shutdown, a.reboot, a.stop});
+    auto* separator = new QAction(console);
+    separator->setSeparator(true);
+    auto* web = new QAction(icons::lucide("globe"), tr("Open &Web UI"), console);
+    web->setToolTip(web_->toolTip());
+    connect(web, &QAction::triggered, this, [this, key] { openWebUi(find(key).first); });
+    console->addActions({a.start, a.suspend, a.resume, a.shutdown, a.reboot, a.stop, separator, web});
     auto update = [this, a, key] { updateActions(a, find(key).second); };
     connect(client, &ProxmoxClient::resourcesChanged, console, update);
     update();
@@ -509,7 +528,7 @@ std::optional<Guest> ProxmoxView::selectedGuest() const
 void ProxmoxView::updateActions()
 {
     updateActions(actions_, selectedGuest());
-    for (QAction* a : {edit_, remove_}) a->setEnabled(selectedClient());
+    for (QAction* a : {edit_, remove_, web_}) a->setEnabled(selectedClient());
     refresh_->setEnabled(!clients_.empty());
 }
 

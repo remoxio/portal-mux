@@ -85,6 +85,6 @@ private:
     Folding* folding_;
     QTimer poll_;
     Actions actions_; // the selected row's
-    QAction *add_, *refresh_, *edit_, *remove_;
+    QAction *add_, *refresh_, *edit_, *remove_, *web_;
     int following_ = 0; // open tabs: poll while the view is hidden too
 };

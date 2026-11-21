@@ -17,6 +17,7 @@ struct GuestRow {
     QColor glyphColor;
     QString name, detail;
     std::vector<float> cpu; // percent, the newest last
+    bool graph = true;      // false: no CPU figures for it, no box
 };
 
 QSize guestRowSize(const QStyleOptionViewItem& option);

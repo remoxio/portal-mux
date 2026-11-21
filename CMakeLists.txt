@@ -89,6 +89,9 @@ qt_add_executable(portal-mux WIN32 MACOSX_BUNDLE
     src/app/About.cpp
     src/app/ActivityBar.cpp
     src/app/Addresses.cpp
+    src/app/Azure.cpp
+    src/app/AzureClient.cpp
+    src/app/AzureView.cpp
     src/app/Icons.cpp
     src/app/AudioPlayer.cpp
     src/app/ConnectionDialog.cpp
