@@ -25,14 +25,14 @@ public:
     explicit AzureView(QSettings* settings, QWidget* parent = nullptr);
 
     QList<QAction*> titleActions() const;
-    // key: "<account id>/<the VM's key>"; open: its console, RDP for Windows, SSH for Linux
-    VmConsole* console(const QString& key, std::function<void(VmConsole*, const rdc::Connection&)> open);
-    // its serial console's websocket and token; a failure is shown here
-    void serialConsole(const QString& key, std::function<void(const QString& name, const QString& address, const QUrl& url, const QString& token)> ready);
+    // key: "<account id>/<the VM's key>"; open: its console, the serial console, from its websocket and token
+    using Serial = std::function<void(const QString& name, const QString& address, const QUrl& url, const QString& token)>;
+    VmConsole* console(const QString& key, std::function<void(VmConsole*, const QString& name, const QString& address, const QUrl& url,
+                                                              const QString& token)> open);
 
 signals:
     void openRequested(const QString& key);
-    void serialRequested(const QString& key);
+    void connectRequested(const rdc::Connection& connection); // RDP or SSH to a VM, a session of its own
     void message(const QString& text);
 
 protected:
@@ -48,7 +48,7 @@ private:
     void rebuild();
     using Target = std::function<std::pair<AzureClient*, const azure::Vm*>()>;
     struct Actions {
-        QAction *open, *serial, *start, *restart, *deallocate, *powerOff, *portal;
+        QAction *open, *remote, *start, *restart, *deallocate, *powerOff, *portal;
     };
     Actions makeActions(QObject* owner, const Target& target); // for the selected row, or one VM's tab
     void updateActions();
@@ -57,6 +57,7 @@ private:
     const azure::Vm* selectedVm() const;
     std::pair<AzureClient*, const azure::Vm*> find(const QString& key) const;
     void act(AzureClient* client, const azure::Vm& vm, const QString& action);
+    void serialConsole(const QString& key, Serial ready); // a failure is shown here
 
     QSettings* settings_;
     std::vector<AzureClient*> clients_;

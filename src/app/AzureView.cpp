@@ -53,6 +53,18 @@ static QString accountName(const Account& a)
     return QString::fromStdString(!a.name.empty() ? a.name : !a.user.empty() ? a.user : "Azure");
 }
 
+// RDP for Windows, SSH for Linux
+static rdc::Connection connectionTo(const AzureClient* client, const Vm& vm)
+{
+    rdc::Connection c;
+    c.protocol = vm.os == "Windows" ? rdc::Protocol::RDP : rdc::Protocol::SSH;
+    c.name = vm.name;
+    c.host = address(vm);
+    c.username = vm.admin;
+    c.options["address"] = QStringLiteral("%1 · %2").arg(accountName(client->account()), QString::fromStdString(address(vm))).toStdString();
+    return c;
+}
+
 namespace {
 
 struct AccountState {
@@ -134,7 +146,7 @@ AzureView::AzureView(QSettings* settings, QWidget* parent) : QWidget(parent), se
         s->setSeparator(true);
         return s;
     };
-    tree_->addActions({a.open, a.serial, separator(), a.start, a.restart, a.deallocate, a.powerOff, separator(), a.portal, separator(), signIn_, refresh_,
+    tree_->addActions({a.open, a.remote, separator(), a.start, a.restart, a.deallocate, a.powerOff, separator(), a.portal, separator(), signIn_, refresh_,
                        edit_, remove_, add_});
     connect(tree_, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem* item) {
         if (selectedVm()) return actions_.open->trigger();
@@ -173,13 +185,11 @@ AzureView::Actions AzureView::makeActions(QObject* owner, const Target& target)
     a.open = make("monitor", tr("&Console"), [this](AzureClient* client, const Vm& vm) {
         emit openRequested(QString::fromStdString(client->account().id + "/" + vm.key()));
     });
-    a.open->setToolTip(tr("Its tab: Remote Desktop to a Windows VM, SSH to a Linux one, at its public address, or its private one "
-                          "(through your VPN); a power button while it is stopped"));
-    a.serial = make("terminal", tr("Se&rial Console"), [this](AzureClient* client, const Vm& vm) {
-        emit serialRequested(QString::fromStdString(client->account().id + "/" + vm.key()));
-    });
-    a.serial->setToolTip(tr("Its serial port in a terminal, as the Azure portal's: also while it boots, or when its network is broken; "
-                            "needs boot diagnostics and a password login in the VM"));
+    a.open->setToolTip(tr("Its tab: its serial console while it runs or starts, as the Azure portal's, also when its network is broken "
+                          "(needs boot diagnostics, and a password login in the VM); a power button while it is stopped"));
+    a.remote = make("grid-2x2", tr("Remote &Desktop"), [this](AzureClient* client, const Vm& vm) { emit connectRequested(connectionTo(client, vm)); });
+    a.remote->setToolTip(tr("Remote Desktop to a Windows VM, SSH to a Linux one, in a tab of its own: at its public address, or its "
+                            "private one (through a VPN); Azure lets it in only where the VM's network security group allows it"));
     a.start = make("play", tr("&Start"), control("start"));
     a.restart = make("rotate-cw", tr("&Restart"), control("restart"));
     a.deallocate = make("power", tr("S&top"), control("deallocate"));
@@ -205,7 +215,8 @@ std::pair<AzureClient*, const Vm*> AzureView::find(const QString& key) const
     return {*client, (*client)->vm(key.section(QLatin1Char('/'), 1).toStdString())};
 }
 
-VmConsole* AzureView::console(const QString& key, std::function<void(VmConsole*, const rdc::Connection&)> open)
+VmConsole* AzureView::console(const QString& key, std::function<void(VmConsole*, const QString& name, const QString& address, const QUrl& url,
+                                                                       const QString& token)> open)
 {
     AzureClient* client = find(key).first;
     if (!client) return nullptr;
@@ -221,12 +232,14 @@ VmConsole* AzureView::console(const QString& key, std::function<void(VmConsole*,
         s.name = QString::fromStdString(vm->name);
         s.state = powerText(*vm);
         s.startable = vm->power == "deallocated" || vm->power == "stopped";
-        const std::string ip = address(*vm);
-        s.text = vm->power == "deallocated"           ? tr("Deallocated: Azure doesn't charge for its compute. The button starts it.")
-                 : vm->power == "stopped"             ? tr("Stopped but allocated: Azure still charges for it. The button starts it.")
-                 : vm->power == "running" && ip.empty() ? tr("Running, with no IP address to connect to.")
-                                                        : s.state;
-        if (vm->power == "running" && !ip.empty()) s.display = QString::fromStdString((vm->os == "Windows" ? "rdp:" : "ssh:") + ip);
+        const bool on = vm->power == "running" || vm->power == "starting"; // the serial console shows it boot
+        s.text = vm->power == "deallocated" ? tr("Deallocated: Azure doesn't charge for its compute. The button starts it.")
+                 : vm->power == "stopped"   ? tr("Stopped but allocated: Azure still charges for it. The button starts it.")
+                 : on && !vm->bootDiagnostics
+                     ? tr("%1. Its serial console needs boot diagnostics: the Azure portal → the VM → Boot diagnostics → Settings. "
+                          "%2: on the toolbar.").arg(s.state, vm->os == "Windows" ? tr("Remote Desktop") : tr("SSH"))
+                     : s.state;
+        if (on && vm->bootDiagnostics) s.display = QStringLiteral("serial");
         return s;
     };
     auto self = std::make_shared<QPointer<VmConsole>>();
@@ -239,16 +252,9 @@ VmConsole* AzureView::console(const QString& key, std::function<void(VmConsole*,
         });
     };
     auto* console = new VmConsole(status, start, [this, key, open](VmConsole* c) {
-        const auto [client, vm] = find(key);
-        if (!client || !vm || address(*vm).empty()) return;
-        const bool windows = vm->os == "Windows";
-        rdc::Connection connection;
-        connection.protocol = windows ? rdc::Protocol::RDP : rdc::Protocol::SSH;
-        connection.name = vm->name;
-        connection.host = address(*vm);
-        connection.username = vm->admin;
-        connection.options["address"] = QStringLiteral("%1 · %2").arg(accountName(client->account()), QString::fromStdString(address(*vm))).toStdString();
-        open(c, connection);
+        serialConsole(key, [c = QPointer<VmConsole>(c), open](const QString& name, const QString& address, const QUrl& url, const QString& token) {
+            if (c) open(c, name, address, url, token);
+        });
     });
     *self = console;
     if (const Vm* vm = find(key).second) console->setWindowTitle(QString::fromStdString(vm->name));
@@ -257,7 +263,7 @@ VmConsole* AzureView::console(const QString& key, std::function<void(VmConsole*,
     const Actions a = makeActions(console, [this, key] { return find(key); });
     auto* separator = new QAction(console);
     separator->setSeparator(true);
-    console->addActions({a.start, a.restart, a.deallocate, a.powerOff, separator, a.serial, a.portal});
+    console->addActions({a.start, a.restart, a.deallocate, a.powerOff, separator, a.remote, a.portal});
     auto update = [this, a, key] { updateActions(a, find(key).second); };
     connect(client, &AzureClient::changed, console, update);
     update();
@@ -485,7 +491,10 @@ void AzureView::updateActions(const Actions& a, const Vm* vm) const
 {
     const bool running = vm && vm->power == "running", off = vm && (vm->power == "deallocated" || vm->power == "stopped");
     a.open->setEnabled(vm);
-    a.serial->setEnabled(running || (vm && vm->power == "starting"));
+    const bool windows = !vm || vm->os == "Windows";
+    a.remote->setText(windows ? tr("Remote &Desktop") : tr("&SSH"));
+    a.remote->setIcon(icons::lucide(windows ? "grid-2x2" : "square-terminal"));
+    a.remote->setEnabled(running && !address(*vm).empty());
     a.start->setEnabled(off);
     a.restart->setEnabled(running);
     a.deallocate->setEnabled(vm && vm->power != "deallocated" && vm->power != "deallocating");
@@ -493,16 +502,12 @@ void AzureView::updateActions(const Actions& a, const Vm* vm) const
     a.portal->setEnabled(vm);
 }
 
-void AzureView::serialConsole(const QString& key,
-                              std::function<void(const QString& name, const QString& address, const QUrl& url, const QString& token)> ready)
+void AzureView::serialConsole(const QString& key, Serial ready)
 {
     const auto [client, vm] = find(key);
     if (!client || !vm) return;
     const QString name = QString::fromStdString(vm->name);
     auto failed = [this, name](const QString& error) { QMessageBox::warning(this, tr("Serial Console"), tr("No serial console for %1: %2").arg(name, error)); };
-    if (!vm->bootDiagnostics)
-        return failed(tr("its boot diagnostics are off. Turn them on in the Azure portal: the VM → Boot diagnostics → Settings "
-                         "(a managed storage account will do)."));
     client->serialConsole(*vm, [ready, name, account = accountName(client->account())](const QUrl& url, const QString& token) {
         ready(name, tr("%1 · %2 · serial console").arg(account, name), url, token);
     }, failed);

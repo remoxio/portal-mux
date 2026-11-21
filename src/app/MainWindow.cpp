@@ -626,7 +626,7 @@ MainWindow::MainWindow(QWidget* parent)
     addView("hyperv", icons::lucide("grid-2x2"), tr("Hyper-V Manager"), hyperv_, hyperv_->titleActions(), tr("Show &Hyper-V Manager"));
     azure_ = new AzureView(settings_);
     connect(azure_, &AzureView::openRequested, this, &MainWindow::openAzureConsole);
-    connect(azure_, &AzureView::serialRequested, this, [this](const QString& key) { openAzureSerial(key); });
+    connect(azure_, &AzureView::connectRequested, this, [this](const Connection& c) { openSession(c); });
     connect(azure_, &AzureView::message, this, [this](const QString& text) { status_->showMessage(text, 8000); });
     addView("azure", icons::brand("azure-line"), tr("Azure"), azure_, azure_->titleActions(), tr("Show &Azure"));
     addView("active", icons::lucide("panels-top-left"), tr("Sessions"), active_, {});
@@ -1901,48 +1901,21 @@ void MainWindow::openAzureConsole(const QString& key)
             tabs_->widget(i)->setFocus();
             return;
         }
-    VmConsole* console = azure_->console(key, [this](VmConsole* console, const Connection& c) {
-        const QString address = QString::fromStdString(c.option("address"));
-        console->setProperty("protocol", protocolLabel(c.protocol));
-        console->setProperty("address", address);
-        if (c.protocol != Protocol::SSH) return console->setDisplay(createDisplay(c));
+    VmConsole* console = azure_->console(key, [this](VmConsole* console, const QString& name, const QString& address, const QUrl& url,
+                                                     const QString& token) {
+        Connection c;
+        c.protocol = Protocol::Serial;
+        c.name = name.toStdString();
+        c.host = name.toStdString();
         TerminalView* terminal = createTerminal(c, address, {});
+        console->setProperty("address", address);
         console->setDisplay(terminal);
-        terminal->start(std::make_unique<rdc::SshTerminalSession>(*terminal, c, knownHostsFile()));
-        addFilePanel(terminal, c);
+        terminal->start(std::make_unique<AzureSerial>(*terminal, url, token));
     });
     if (!console) return;
     console->setProperty("azureKey", key);
+    console->setProperty("protocol", protocolLabel(Protocol::Serial));
     addVmTab(console);
-}
-
-void MainWindow::openAzureSerial(const QString& key, QWidget* replace)
-{
-    for (int i = 0; i < tabs_->count() && !replace; ++i) // one per VM
-        if (tabs_->widget(i)->property("azureSerial").toString() == key) {
-            tabs_->setCurrentIndex(i);
-            tabs_->widget(i)->setFocus();
-            return;
-        }
-    azure_->serialConsole(key, [this, key, replacing = replace != nullptr, replace = QPointer<QWidget>(replace)](
-                                   const QString& name, const QString& address, const QUrl& url, const QString& token) {
-        if (replacing && !replace) return; // its tab was closed meanwhile
-        int at = -1;
-        if (replace) {
-            at = tabs_->indexOf(replace);
-            tabs_->removeTab(at);
-            replace->deleteLater();
-        }
-        Connection c;
-        c.protocol = Protocol::Serial;
-        c.name = (name + QStringLiteral(" (serial)")).toStdString();
-        c.host = name.toStdString();
-        TerminalView* terminal = addTerminalTab(c, address, at);
-        terminal->setProperty("azureSerial", key);
-        connect(terminal, &TerminalView::reconnectRequested, this, [this, key, terminal] { openAzureSerial(key, terminal); });
-        terminal->start(std::make_unique<AzureSerial>(*terminal, url, token));
-        terminal->setFocus();
-    });
 }
 
 void MainWindow::openProxmoxTerminal(const QString&, QWidget* replace, const QString& name, const QString& address,
