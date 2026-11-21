@@ -140,9 +140,18 @@ void SftpView::open(const QString& path)
                 setBusy(error);
                 return;
             }
+            // the cursor: on the folder just left, or where it was on a refresh
+            QString keep = QFileInfo(path_).path() == clean ? QFileInfo(path_).fileName() : QString();
+            if (clean == path_ && list_->currentItem()) keep = list_->currentItem()->text(0);
             path_ = clean;
             pathEdit_->setText(clean);
             list_->clear();
+            if (clean != QLatin1String("/")) {
+                auto* parent = new QTreeWidgetItem(list_, {QStringLiteral("..")});
+                parent->setIcon(0, icons::material("folder"));
+                parent->setData(0, DirRole, true);
+                list_->setCurrentItem(parent);
+            }
             const QLocale locale;
             for (const auto& e : entries) {
                 auto* item = new QTreeWidgetItem(list_);
@@ -151,6 +160,7 @@ void SftpView::open(const QString& path)
                 item->setText(1, e.directory ? QString() : locale.formattedDataSize(qint64(e.size)));
                 item->setText(2, QDateTime::fromSecsSinceEpoch(e.mtime).toString(Qt::ISODate));
                 item->setData(0, DirRole, e.directory);
+                if (item->text(0) == keep) list_->setCurrentItem(item);
             }
             setBusy(tr("%n item(s)", nullptr, int(entries.size())));
         });
