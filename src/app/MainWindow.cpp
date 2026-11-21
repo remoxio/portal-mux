@@ -585,7 +585,7 @@ MainWindow::MainWindow(QWidget* parent)
         page->setObjectName(QLatin1String(key));
         views_->addWidget(page);
         activityBar_->addView(icon, title);
-        auto* shown = new QAction(title, activityBar_); // the bar's context menu, as VS Code's
+        auto* shown = new QAction(icon, title, activityBar_); // the bar's context menu, as VS Code's
         shown->setCheckable(true);
         shown->setChecked(!optional || !hiddenViews.contains(QLatin1String(key)));
         shown->setEnabled(optional);
