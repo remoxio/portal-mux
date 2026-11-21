@@ -79,6 +79,7 @@
 #include <QSplitter>
 #include <QSignalBlocker>
 #include <QStackedWidget>
+#include <QStyledItemDelegate>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QStyleHints>
@@ -108,6 +109,23 @@ static constexpr int IdRole = Qt::UserRole;
 static constexpr int ReadOnlyRole = Qt::UserRole + 1;
 static constexpr int WindowRole = Qt::UserRole + 2; // Sessions: a detached window
 static constexpr int FoldRole = Qt::UserRole + 3;   // a group's id for its folding
+static constexpr int AlwaysRole = Qt::UserRole + 4; // Settings → Sidebar: a view that can't be hidden
+
+namespace {
+class AlwaysOnDelegate : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+protected:
+    void initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const override
+    {
+        QStyledItemDelegate::initStyleOption(option, index);
+        if (!index.data(AlwaysRole).toBool()) return;
+        option->state &= ~QStyle::State_Enabled; // greyed, as a disabled menu item: the check too
+        option->palette.setCurrentColorGroup(QPalette::Disabled);
+    }
+};
+} // namespace
 
 static std::vector<std::string> secretKeys(rdc::Protocol protocol)
 {
@@ -423,10 +441,9 @@ MainWindow::MainWindow(QWidget* parent)
     connect(relaunchAction_, &QAction::triggered, this, [this] {
         if (RemoteView* view = currentView()) view->relaunchAtWindowSize();
     });
-    QMenu* session = menuBar()->addMenu(tr("S&ession"));
-    session->addActions({fullScreenAction_, screenshotAction_, viewOnlyAction_, clipboardAction_, localCursorAction_,
-                         grabKeysAction_, sendKeysMenu_->menuAction(), usbAction_, scaleAction_, reconnectAction_, relaunchAction_, detachAction_,
-                         disconnectAction_});
+    sessionsMenu_ = menuBar()->addMenu(tr("S&essions"));
+    connect(sessionsMenu_, &QMenu::aboutToShow, this, &MainWindow::fillSessionsMenu);
+    toolsMenu_ = menuBar()->addMenu(tr("&Tools")); // the session's toolbar, and more: updateSessionActions()
     QMenu* view = menuBar()->addMenu(tr("&View"));
     auto addToggle = [&](QAction*& action, const QString& text, const char* key) {
         const QString setting = QStringLiteral("view/") + QLatin1String(key);
@@ -622,6 +639,10 @@ MainWindow::MainWindow(QWidget* parent)
     connect(azure_, &AzureView::message, this, [this](const QString& text) { status_->showMessage(text, 8000); });
     addView("azure", icons::brand("azure-line"), tr("Azure"), azure_, azure_->titleActions(), tr("Show &Azure"));
     addView("active", icons::lucide("panels-top-left"), tr("Sessions"), active_, {});
+    sidebarSeparator_ = new QAction(activityBar_);
+    sidebarSeparator_->setSeparator(true);
+    sidebarSettings_ = new QAction(icons::lucide("settings"), tr("&Settings…"), activityBar_);
+    connect(sidebarSettings_, &QAction::triggered, this, [this] { openSettings(QStringLiteral("sidebar")); });
     applyViewOrder();
     const QString savedView = settings_->value(QStringLiteral("window/sidebarView")).toString();
     for (int i = 0; i < views_->count(); ++i)
@@ -1170,8 +1191,12 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
         auto* item = new QListWidgetItem(v.icon, v.title, viewList);
         item->setData(Qt::UserRole, v.key);
         item->setCheckState(v.shown->isChecked() ? Qt::Checked : Qt::Unchecked);
-        if (!v.shown->isEnabled()) item->setFlags(item->flags() & ~Qt::ItemIsUserCheckable); // always there
+        if (!v.shown->isEnabled()) { // always there: drawn as the activity bar's menu shows it, and still moved
+            item->setFlags(item->flags() & ~Qt::ItemIsUserCheckable);
+            item->setData(AlwaysRole, true);
+        }
     }
+    viewList->setItemDelegate(new AlwaysOnDelegate(viewList));
     viewList->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // all rows shown: as tall as they are
     viewList->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents);
     viewList->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
@@ -1249,13 +1274,14 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
     (new QVBoxLayout(tabs))->addWidget(closeButtons);
     addPage("panels-top-left", tr("Layout"), {appearance, tabs});
     addPage("panel-left", tr("Sidebar"), {viewsBox, sidebar});
+    const int sidebarRow = pages->count() - 1;
     addPage("type", tr("Font"), {mainFont, sshFont});
     auto* sshServers = new SshServersPage(settings_);
     addPage("server", tr("SSH Servers"), {sshServers});
     const int sshRow = pages->count() - 1;
     addPage("lock", tr("Passwords"), {secrets::page()});
     connect(pages, &QListWidget::currentRowChanged, stack, &QStackedWidget::setCurrentIndex);
-    pages->setCurrentRow(page == QLatin1String("sshServers") ? sshRow : 0);
+    pages->setCurrentRow(page == QLatin1String("sshServers") ? sshRow : page == QLatin1String("sidebar") ? sidebarRow : 0);
 
     // OK, Cancel, Apply on every platform
     auto* ok = new QPushButton(tr("OK"));
@@ -2361,8 +2387,21 @@ void MainWindow::fillSessionBar(QToolBar* bar, const QList<QAction*>& tools)
 
 void MainWindow::updateSessionActions()
 {
-    fillSessionBar(sessionBar_, sessionTools(tabs_->currentWidget()));
-    fillSessionBar(fullScreenBar_, sessionTools(tabs_->currentWidget()));
+    QWidget* page = tabs_->currentWidget();
+    fillSessionBar(sessionBar_, sessionTools(page));
+    fillSessionBar(fullScreenBar_, sessionTools(page));
+    QList<QAction*> tools = sessionTools(page); // the toolbar's, then what has no button, Disconnect last
+    if (page) {
+        tools.resize(tools.size() - 2);
+        if (page->findChild<RemoteView*>()) tools << nullptr << viewOnlyAction_ << localCursorAction_;
+        tools << nullptr << detachAction_ << nullptr << disconnectAction_;
+    }
+    toolsMenu_->clear();
+    for (QAction* a : tools) {
+        if (a) toolsMenu_->addAction(a);
+        else toolsMenu_->addSeparator();
+    }
+    if (toolsMenu_->isEmpty()) toolsMenu_->addAction(tr("No session"))->setEnabled(false);
     sessionBar_->setVisible(tabs_->count() > 0 && !isFullScreen() && toolBarAction_->isChecked());
     RemoteView* view = currentView();
     for (QAction* a : {screenshotAction_, viewOnlyAction_, clipboardAction_, localCursorAction_, grabKeysAction_, scaleAction_,
@@ -2425,6 +2464,37 @@ void MainWindow::applyViewOrder()
     activityBar_->setOrder(order);
     for (const SidebarView& v : sidebarViews_) activityBar_->removeAction(v.shown);
     for (int i : order) activityBar_->addAction(sidebarViews_[size_t(i)].shown);
+    for (QAction* a : {sidebarSeparator_, sidebarSettings_}) {
+        activityBar_->removeAction(a);
+        activityBar_->addAction(a);
+    }
+}
+
+void MainWindow::fillSessionsMenu()
+{
+    sessionsMenu_->clear();
+    auto add = [this](QWidget* page, const QString& text, bool current, std::function<void()> show) {
+        QAction* a = sessionsMenu_->addAction(protocolIcon(page->property("protocol").toString()), text);
+        a->setCheckable(true);
+        a->setChecked(current);
+        connect(a, &QAction::triggered, this, show);
+    };
+    for (int i = 0; i < tabs_->count(); ++i)
+        add(tabs_->widget(i), tabs_->tabText(i), i == tabs_->currentIndex(), [this, page = QPointer<QWidget>(tabs_->widget(i))] {
+            if (!page) return;
+            tabs_->setCurrentIndex(tabs_->indexOf(page));
+            if (auto* view = page->findChild<RemoteView*>()) view->setFocus();
+            else page->setFocus();
+        });
+    for (QWidget* top : QApplication::topLevelWidgets())
+        if (auto* window = dynamic_cast<DetachedWindow*>(top); window && window->page())
+            add(window->page(), tr("%1 (detached)").arg(window->title), false, [window = QPointer<DetachedWindow>(window)] {
+                if (!window || !window->page()) return;
+                window->raise();
+                window->activateWindow();
+                window->page()->setFocus();
+            });
+    if (sessionsMenu_->isEmpty()) sessionsMenu_->addAction(tr("No sessions"))->setEnabled(false);
 }
 
 void MainWindow::showView(QWidget* page, bool on)

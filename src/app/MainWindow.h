@@ -159,6 +159,9 @@ private:
         QAction* shown; // the activity bar's menu; disabled: always shown
     };
     std::vector<SidebarView> sidebarViews_; // as made: the activity bar's and the panel's indexes
+    QAction *sidebarSeparator_, *sidebarSettings_; // the activity bar's menu, after the views
+    QMenu *sessionsMenu_, *toolsMenu_;
+    void fillSessionsMenu(); // every session: a tab or a detached window
     std::vector<int> viewOrder() const;     // as the user put them (sidebar/viewOrder)
     void applyViewOrder();
     QWidget* titleBar_ = nullptr; // macOS
