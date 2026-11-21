@@ -167,6 +167,13 @@ void SftpView::open(const QString& path)
     });
 }
 
+void SftpView::keyPressEvent(QKeyEvent* event)
+{
+    if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier && path_ != QLatin1String("/"))
+        open(QFileInfo(path_).path());
+    event->accept();
+}
+
 void SftpView::download()
 {
     QStringList names;

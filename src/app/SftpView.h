@@ -39,7 +39,7 @@ private:
     void upload();
     void upload(const QStringList& files);
     bool eventFilter(QObject* watched, QEvent* event) override; // files dropped on the list
-    void keyPressEvent(QKeyEvent* event) override { event->accept(); } // beside a terminal: not for its shell
+    void keyPressEvent(QKeyEvent* event) override; // beside a terminal: none for its shell
     void setBusy(const QString& message);
     // Runs fn on the UI thread later; dropped if the view is gone.
     template <class Fn>
