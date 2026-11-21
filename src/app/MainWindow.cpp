@@ -189,11 +189,11 @@ static QString protocolLabel(Protocol p)
 static QIcon protocolIcon(const QString& label)
 {
     static const std::pair<const char*, const char*> glyphs[] = {
-        {"RDP", "brand-windows"}, {"VNC", "device-desktop"}, {"SPICE", "device-desktop-cog"}, {"SSH", "terminal-2"},
-        {"SFTP", "files"}, {"Android", "brand-android"}, {"Moonlight", "device-gamepad-2"}, {"Terminal", "terminal"}, {"Test", "photo"},
+        {"RDP", "grid-2x2"}, {"VNC", "monitor"}, {"SPICE", "monitor-cog"}, {"SSH", "square-terminal"},
+        {"SFTP", "folders"}, {"Android", "smartphone"}, {"Moonlight", "gamepad-2"}, {"Terminal", "terminal"}, {"Test", "image"},
         {"Telnet", "network"}, {"Serial", "usb"}};
     for (auto [name, glyph] : glyphs)
-        if (label == QLatin1String(name)) return icons::tabler(glyph);
+        if (label == QLatin1String(name)) return icons::lucide(glyph);
     return {};
 }
 
@@ -316,37 +316,37 @@ MainWindow::MainWindow(QWidget* parent)
     resize(1280, 800);
     QDir().mkpath(configDir_);
 
-    auto* newAction = new QAction(QIcon::fromTheme(QStringLiteral("list-add")), tr("&New Connection…"), this);
+    auto* newAction = new QAction(icons::lucide("plus"), tr("&New Connection…"), this);
     newAction->setShortcut(QKeySequence::New);
-    editAction_ = new QAction(QIcon::fromTheme(QStringLiteral("document-edit")), tr("&Edit…"), this);
+    editAction_ = new QAction(icons::lucide("pencil"), tr("&Edit…"), this);
     editAction_->setShortcut(Qt::Key_F2);
-    deleteAction_ = new QAction(QIcon::fromTheme(QStringLiteral("edit-delete")), tr("&Delete"), this);
+    deleteAction_ = new QAction(icons::lucide("trash"), tr("&Delete"), this);
     deleteAction_->setShortcut(QKeySequence::Delete);
-    connectAction_ = new QAction(QIcon::fromTheme(QStringLiteral("network-connect")), tr("&Connect"), this);
-    sftpAction_ = new QAction(QIcon::fromTheme(QStringLiteral("folder-remote")), tr("Open &SFTP Browser"), this);
+    connectAction_ = new QAction(icons::lucide("plug"), tr("&Connect"), this);
+    sftpAction_ = new QAction(icons::lucide("folders"), tr("Open &SFTP Browser"), this);
     for (QAction* a : {editAction_, deleteAction_, connectAction_}) a->setShortcutContext(Qt::WidgetShortcut);
 
     fullScreenAction_ = new QAction(this);
     fullScreenAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
-    screenshotAction_ = new QAction(QIcon::fromTheme(QStringLiteral("camera-photo")), tr("Copy Screenshot to Clip&board"), this);
+    screenshotAction_ = new QAction(icons::lucide("camera"), tr("Copy Screenshot to Clip&board"), this);
     screenshotAction_->setIconText(tr("Screenshot"));
-    viewOnlyAction_ = new QAction(QIcon::fromTheme(QStringLiteral("document-preview")), tr("&View Only"), this);
-    clipboardAction_ = new QAction(QIcon::fromTheme(QStringLiteral("edit-paste")), tr("C&lipboard Sharing"), this);
-    localCursorAction_ = new QAction(QIcon::fromTheme(QStringLiteral("input-mouse")), tr("Show Local &Cursor"), this);
-    grabKeysAction_ = new QAction(QIcon::fromTheme(QStringLiteral("input-keyboard")), tr("&Grab All Possible Keys"), this);
+    viewOnlyAction_ = new QAction(icons::lucide("eye"), tr("&View Only"), this);
+    clipboardAction_ = new QAction(icons::lucide("clipboard"), tr("C&lipboard Sharing"), this);
+    localCursorAction_ = new QAction(icons::lucide("mouse-pointer-2"), tr("Show Local &Cursor"), this);
+    grabKeysAction_ = new QAction(icons::lucide("keyboard"), tr("&Grab All Possible Keys"), this);
     grabKeysAction_->setIconText(tr("Grab Keys"));
     grabKeysAction_->setToolTip(tr("Send every key to the remote side, Alt+Tab and this window's shortcuts too"));
-    scaleAction_ = new QAction(QIcon::fromTheme(QStringLiteral("zoom-fit-best")), tr("&Scale Remote Screen to Fit Window Size"), this);
+    scaleAction_ = new QAction(icons::lucide("scaling"), tr("&Scale Remote Screen to Fit Window Size"), this);
     scaleAction_->setIconText(tr("Scale"));
-    disconnectAction_ = new QAction(QIcon::fromTheme(QStringLiteral("network-disconnect")), tr("&Disconnect"), this);
-    reconnectAction_ = new QAction(QIcon::fromTheme(QStringLiteral("view-refresh")), tr("&Reconnect"), this);
+    disconnectAction_ = new QAction(icons::lucide("unplug"), tr("&Disconnect"), this);
+    reconnectAction_ = new QAction(icons::lucide("refresh-cw"), tr("&Reconnect"), this);
     connect(reconnectAction_, &QAction::triggered, this, [this] {
         if (RemoteView* view = currentView()) emit view->reconnectRequested();
         else if (auto* terminal = qobject_cast<TerminalView*>(currentPage())) emit terminal->reconnectRequested();
     });
     // scancodes for RDP etc., keysyms for VNC
     sendKeysMenu_ = new QMenu(tr("Send &Keys"), this);
-    sendKeysMenu_->setIcon(QIcon::fromTheme(QStringLiteral("input-keyboard-virtual")));
+    sendKeysMenu_->setIcon(icons::lucide("command"));
     sendKeysMenu_->menuAction()->setIconText(tr("Send Keys"));
     auto key = [](uint32_t xtScancode, uint32_t keysym) {
         rdc::KeyEvent k;
@@ -387,20 +387,20 @@ MainWindow::MainWindow(QWidget* parent)
         if (DetachedWindow* window = activeDetached()) delete window->page(); // its window closes with it
         else closeTab(tabs_->currentIndex());
     });
-    detachAction_ = new QAction(QIcon::fromTheme(QStringLiteral("window-new")), tr("&Detach Tab"), this);
+    detachAction_ = new QAction(icons::lucide("external-link"), tr("&Detach Tab"), this);
     detachAction_->setToolTip(tr("This session in its own window; closing the window puts it back"));
     connect(detachAction_, &QAction::triggered, this, [this] { detachTab(tabs_->currentIndex()); });
     connect(qApp, &QGuiApplication::focusWindowChanged, this, [this] { updateSessionActions(); }); // actions follow the active window
 
     QMenu* file = menuBar()->addMenu(tr("&File"));
     file->addAction(newAction);
-    file->addAction(QIcon::fromTheme(QStringLiteral("network-connect")), tr("&Quick Connection…"), this, &MainWindow::quickConnect);
+    file->addAction(icons::lucide("zap"), tr("&Quick Connection…"), this, &MainWindow::quickConnect);
     file->addActions({editAction_, deleteAction_, connectAction_, sftpAction_});
     file->addSeparator();
     file->addAction(tr("&Import from KRDC…"), this, &MainWindow::importFromKrdc);
     file->addSeparator();
-    file->addAction(tr("&Quit"), QKeySequence::Quit, this, &QWidget::close)->setMenuRole(QAction::QuitRole);
-    usbAction_ = new QAction(QIcon::fromTheme(QStringLiteral("drive-removable-media-usb")), tr("&USB Devices…"), this);
+    file->addAction(icons::lucide("log-out"), tr("&Quit"), QKeySequence::Quit, this, &QWidget::close)->setMenuRole(QAction::QuitRole);
+    usbAction_ = new QAction(icons::lucide("usb"), tr("&USB Devices…"), this);
     usbAction_->setToolTip(tr("Hand this computer's USB devices to the VM (SPICE)"));
     connect(usbAction_, &QAction::triggered, this, &MainWindow::showUsbDevices);
     relaunchAction_ = new QAction(tr("Reconnect at &Window Size"), this);
@@ -438,11 +438,11 @@ MainWindow::MainWindow(QWidget* parent)
     view->addSeparator();
     view->addAction(tr("Open Test &Pattern"), this, &MainWindow::openTestPattern);
     QMenu* settings = menuBar()->addMenu(tr("&Configuration"));
-    settings->addAction(QIcon::fromTheme(QStringLiteral("configure")), tr("&Settings…"), QKeySequence::Preferences, this,
+    settings->addAction(icons::lucide("settings"), tr("&Settings…"), QKeySequence::Preferences, this,
                         [this] { openSettings(); })
         ->setMenuRole(QAction::PreferencesRole);
     // placeholder; in the app menu on macOS
-    settings->addAction(QIcon::fromTheme(QStringLiteral("configure-shortcuts")), tr("S&hortcuts…"), this, [this] {
+    settings->addAction(icons::lucide("keyboard"), tr("S&hortcuts…"), this, [this] {
         QMessageBox::information(this, tr("Shortcuts"), tr("Configurable shortcuts are coming."));
     })->setMenuRole(QAction::ApplicationSpecificRole);
     QMenu* help = menuBar()->addMenu(tr("&Help"));
@@ -532,7 +532,7 @@ MainWindow::MainWindow(QWidget* parent)
     tree_ = new QTreeWidget;
     tree_->setHeaderHidden(true);
     tree_->setContextMenuPolicy(Qt::ActionsContextMenu);
-    auto* reloadSshConfig = new QAction(QIcon::fromTheme(QStringLiteral("view-refresh")), tr("&Reload ~/.ssh/config"), this);
+    auto* reloadSshConfig = new QAction(icons::lucide("refresh-cw"), tr("&Reload ~/.ssh/config"), this);
     connect(reloadSshConfig, &QAction::triggered, this, [this] { rebuildTree(selectedId()); });
     auto* separator = new QAction(this);
     separator->setSeparator(true);
@@ -593,7 +593,7 @@ MainWindow::MainWindow(QWidget* parent)
         setSidebar(sidebarMode_ == SidebarMode::Docked ? SidebarMode::Collapsed : SidebarMode::Docked, view);
     });
     // a button can't take the toolbar action's icon
-    auto* sidebarNew = new QAction(icons::tabler("plus"), newAction->text(), this);
+    auto* sidebarNew = new QAction(icons::lucide("plus"), newAction->text(), this);
     connect(sidebarNew, &QAction::triggered, newAction, &QAction::trigger);
     addView("connections", icons::lucide("network"), tr("Connections"), connectionsPage, {sidebarNew});
 #ifdef PORTAL_MUX_LIBVIRT
@@ -614,7 +614,7 @@ MainWindow::MainWindow(QWidget* parent)
     hyperv_ = new HyperVView(settings_, configDir_);
     connect(hyperv_, &HyperVView::openRequested, this, &MainWindow::openHyperVConsole);
     connect(hyperv_, &HyperVView::message, this, [this](const QString& text) { status_->showMessage(text, 8000); });
-    addView("hyperv", icons::tabler("brand-windows"), tr("Hyper-V Manager"), hyperv_, hyperv_->titleActions(), tr("Show &Hyper-V Manager"));
+    addView("hyperv", icons::lucide("grid-2x2"), tr("Hyper-V Manager"), hyperv_, hyperv_->titleActions(), tr("Show &Hyper-V Manager"));
     addView("active", icons::lucide("panels-top-left"), tr("Sessions"), active_, {});
     const QString savedView = settings_->value(QStringLiteral("window/sidebarView")).toString();
     for (int i = 0; i < views_->count(); ++i)
@@ -641,7 +641,7 @@ MainWindow::MainWindow(QWidget* parent)
         if (index < 0) return;
         QMenu menu;
         menu.addAction(detachAction_->icon(), tr("&Detach"), this, [this, index] { detachTab(index); });
-        menu.addAction(QIcon::fromTheme(QStringLiteral("tab-close")), tr("&Close"), this, [this, index] {
+        menu.addAction(icons::lucide("x"), tr("&Close"), this, [this, index] {
             if (confirmCloseTab(index)) closeTab(index);
         });
         menu.exec(tabs_->tabBar()->mapToGlobal(pos));
@@ -759,7 +759,7 @@ MainWindow::MainWindow(QWidget* parent)
                 window->raise();
                 window->activateWindow();
             });
-            menu.addAction(icons::tabler("arrow-back-up"), tr("&Attach to the Main Window"), this, [this, window] { reattach(window); });
+            menu.addAction(icons::lucide("undo-2"), tr("&Attach to the Main Window"), this, [this, window] { reattach(window); });
             menu.addAction(disconnectAction_->icon(), disconnectAction_->text(), window, [window] { delete window->page(); });
         } else if (item && item->data(0, IdRole).isValid()) {
             menu.addActions({reconnectAction_, disconnectAction_}); // the item is current: its tab is shown
@@ -1639,7 +1639,7 @@ TerminalView* MainWindow::addTerminalTab(const Connection& c, const QString& add
     });
     connect(terminal, &TerminalView::bell, this, [this, terminal] {
         if (tabs_->currentWidget() != terminal) {
-            tabs_->setTabIcon(tabs_->indexOf(terminal), QIcon::fromTheme(QStringLiteral("notifications")));
+            tabs_->setTabIcon(tabs_->indexOf(terminal), icons::lucide("bell"));
             updateActiveList();
         }
         QApplication::alert(this); // only acts while the window is inactive
@@ -2169,7 +2169,7 @@ void MainWindow::detachTab(int index)
     auto* bar = window->addToolBar(tr("Session"));
     bar->setMovable(false);
     bar->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    auto* attach = bar->addAction(icons::tabler("arrow-back-up"), tr("&Attach to the Main Window"));
+    auto* attach = bar->addAction(icons::lucide("undo-2"), tr("&Attach to the Main Window"));
     attach->setToolTip(tr("Back into a tab (closing this window does the same)"));
     connect(attach, &QAction::triggered, window, [this, window] { reattach(window); });
     bar->addSeparator();
@@ -2320,7 +2320,7 @@ void MainWindow::applyFullScreen(bool on)
     applySidebarLayout();
     fullScreenAction_->setText(on ? tr("Leave &Full Screen Mode") : tr("Switch to &Full Screen Mode"));
     fullScreenAction_->setIconText(on ? tr("Leave Full Screen") : tr("Full Screen"));
-    fullScreenAction_->setIcon(QIcon::fromTheme(on ? QStringLiteral("view-restore") : QStringLiteral("view-fullscreen")));
+    fullScreenAction_->setIcon(icons::lucide(on ? "minimize" : "maximize"));
     if (on) {
         fullScreenPoll_.start();
     } else {

@@ -86,14 +86,9 @@ QIcon brand(const char* name)
     return tinted(QStringLiteral(":/icons/brands/%1.svg").arg(QLatin1String(name)), {});
 }
 
-QIcon lucide(const char* name)
+QIcon lucide(const char* name, QColor color)
 {
-    return tinted(QStringLiteral(":/icons/lucide/%1.svg").arg(QLatin1String(name)), {});
-}
-
-QIcon tabler(const char* name, QColor color)
-{
-    return tinted(QStringLiteral(":/icons/tabler/%1.svg").arg(QLatin1String(name)), color);
+    return tinted(QStringLiteral(":/icons/lucide/%1.svg").arg(QLatin1String(name)), color);
 }
 
 } // namespace icons

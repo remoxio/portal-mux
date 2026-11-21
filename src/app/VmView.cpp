@@ -64,12 +64,12 @@ QColor stateColor(State s, const QPalette& palette)
 const char* stateGlyph(State s)
 {
     switch (s) {
-    case State::Running: return "player-play";
+    case State::Running: return "play";
     case State::Paused:
-    case State::Suspended: return "player-pause";
+    case State::Suspended: return "pause";
     case State::ShuttingDown: return "power";
-    case State::Saved: return "device-floppy";
-    case State::Crashed: return "alert-triangle";
+    case State::Saved: return "save";
+    case State::Crashed: return "triangle-alert";
     default: return nullptr;
     }
 }
@@ -126,33 +126,33 @@ VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings
     layout->addWidget(tree_, 1);
 
     auto make = [this](const char* icon, const QString& text, std::function<void()> run) {
-        auto* a = new QAction(icons::tabler(icon), text, this);
+        auto* a = new QAction(icons::lucide(icon), text, this);
         connect(a, &QAction::triggered, this, run);
         return a;
     };
-    open_ = make("device-desktop", tr("&Open"), [this] {
+    open_ = make("monitor", tr("&Open"), [this] {
         if (const Vm* vm = selected()) emit openRequested(selectedHost(), vm->uuid);
     });
     open_->setToolTip(tr("Its console: the display, or a power button while it is off"));
-    start_ = make("player-play", tr("&Start"), [this] { // Resume while paused, as virt-manager's Run
+    start_ = make("play", tr("&Start"), [this] { // Resume while paused, as virt-manager's Run
         const Vm* vm = selected();
         act(vm && LibvirtVms::allowed(Action::Resume, vm->state) ? Action::Resume : Action::Start);
     });
-    pause_ = make("player-pause", tr("&Pause"), [this] { act(Action::Pause); });
+    pause_ = make("pause", tr("&Pause"), [this] { act(Action::Pause); });
     shutdown_ = make("power", tr("Shut &Down"), [this] { act(Action::Shutdown); });
     shutdown_->setToolTip(tr("Asks the guest system to shut down"));
-    reboot_ = make("refresh", tr("&Reboot"), [this] { act(Action::Reboot); });
-    save_ = make("device-floppy", tr("Sa&ve"), [this] { act(Action::Save); });
+    reboot_ = make("rotate-cw", tr("&Reboot"), [this] { act(Action::Reboot); });
+    save_ = make("save", tr("Sa&ve"), [this] { act(Action::Save); });
     save_->setToolTip(tr("Saves its memory to disk and stops it; Start continues where it was"));
-    forceOff_ = make("plug-off", tr("Force &Off"), [this] { act(Action::ForceOff); });
-    reset_ = make("rotate-2", tr("R&eset"), [this] { act(Action::Reset); });
+    forceOff_ = make("power-off", tr("Force &Off"), [this] { act(Action::ForceOff); });
+    reset_ = make("rotate-ccw", tr("R&eset"), [this] { act(Action::Reset); });
     serial_ = make("terminal", tr("Serial &Console"), [this] {
         if (const Vm* vm = selected()) emit serialRequested(selectedHost(), vm->uuid);
     });
     serial_->setToolTip(tr("Its serial console in a terminal (a console device in the VM, a getty in the guest)"));
-    vmSettings_ = make("device-desktop-cog", tr("Se&ttings…"), [this] { editSettings(); });
+    vmSettings_ = make("settings", tr("Se&ttings…"), [this] { editSettings(); });
     vmSettings_->setToolTip(tr("Processors, memory and its CD/DVD"));
-    snapshots_ = make("history", tr("S&napshots…"), [this] { editSnapshots(); });
+    snapshots_ = make("rotate-ccw-clock", tr("S&napshots…"), [this] { editSnapshots(); });
     snapshots_->setToolTip(tr("Take one, go back to one, delete them"));
     addHost_ = make("plus", tr("&Add Host…"), [this] { editHost(nullptr); });
     addHost_->setToolTip(tr("A libvirt host over SSH"));
@@ -302,7 +302,7 @@ void VmView::rebuild()
     tree_->clear();
     for (LibvirtVms* host : hosts_) {
         auto* parent = new QTreeWidgetItem(tree_, {host->name()});
-        parent->setIcon(0, icons::tabler("server"));
+        parent->setIcon(0, icons::lucide("server"));
         parent->setData(0, PanelDelegate::HeaderRole, hostState(host));
         parent->setData(0, PanelDelegate::HeaderColorRole, host->connected() || host->connecting() ? palette().color(QPalette::Disabled, QPalette::Text)
                                                                                                 : QColor(0xda, 0x44, 0x53));

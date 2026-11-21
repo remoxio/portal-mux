@@ -20,7 +20,7 @@ VmConsole::VmConsole(LibvirtVms* vms, std::string uuid, MakeDisplay makeDisplay,
 {
     power_ = new QWidget;
     button_ = new QToolButton;
-    button_->setIcon(icons::tabler("power"));
+    button_->setIcon(icons::lucide("power"));
     button_->setIconSize(QSize(56, 56));
     button_->setFixedSize(112, 112);
     button_->setToolTip(tr("Start"));

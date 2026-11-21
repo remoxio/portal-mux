@@ -122,7 +122,7 @@ qt_add_executable(portal-mux WIN32 MACOSX_BUNDLE
     src/terminal/TerminalView.cpp
 )
 file(GLOB app_icons RELATIVE "${PROJECT_SOURCE_DIR}" CONFIGURE_DEPENDS
-     "${PROJECT_SOURCE_DIR}/third_party/icons/material-icon-theme/*.svg" "${PROJECT_SOURCE_DIR}/third_party/icons/tabler/*.svg"
+     "${PROJECT_SOURCE_DIR}/third_party/icons/material-icon-theme/*.svg"
      "${PROJECT_SOURCE_DIR}/third_party/icons/lucide/*.svg" "${PROJECT_SOURCE_DIR}/third_party/icons/brands/*.svg")
 qt_add_resources(portal-mux icons PREFIX "/" BASE third_party FILES ${app_icons})
 set(window_icons)

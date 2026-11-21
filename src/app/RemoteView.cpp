@@ -1,4 +1,5 @@
 #include "app/RemoteView.h"
+#include "app/Icons.h"
 
 #include "app/KeyboardGrab.h"
 #include "app/Keymap.h"
@@ -143,7 +144,7 @@ void RemoteView::updateOverlay(SessionState state)
         connect(overlay_, &QPushButton::clicked, this, &RemoteView::reconnectRequested);
     }
     if (!overlay_) return;
-    overlay_->setIcon(ended ? QIcon::fromTheme(QStringLiteral("view-refresh")) : QIcon());
+    overlay_->setIcon(ended ? icons::lucide("refresh-cw") : QIcon());
     overlay_->setText(ended ? tr("Session ended — &Reconnect") : tr("Reconnecting…"));
     overlay_->setEnabled(ended);
     overlay_->setVisible(dimmed_);

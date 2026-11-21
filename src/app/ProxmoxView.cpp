@@ -114,24 +114,24 @@ ProxmoxView::ProxmoxView(QSettings* settings, QString configDir, QWidget* parent
     layout->addWidget(tree_, 1);
 
     auto make = [this](const char* icon, const QString& text, std::function<void()> run) {
-        auto* a = new QAction(icons::tabler(icon), text, this);
+        auto* a = new QAction(icons::lucide(icon), text, this);
         connect(a, &QAction::triggered, this, run);
         return a;
     };
     add_ = make("plus", tr("&Add Server…"), [this] { editServer(nullptr); });
-    refresh_ = make("refresh", tr("Re&fresh"), [this] { refreshAll(); });
-    console_ = make("device-desktop", tr("&Console"), [this] {
+    refresh_ = make("refresh-cw", tr("Re&fresh"), [this] { refreshAll(); });
+    console_ = make("monitor", tr("&Console"), [this] {
         if (auto g = selectedGuest()) emit openRequested(QString::fromStdString(selectedClient()->server().id + "/" + g->key()));
     });
     console_->setToolTip(tr("A VM's screen: over SPICE when its display is SPICE, otherwise over VNC as the web console; a container's terminal"));
-    start_ = make("player-play", tr("&Start"), [this] { act(QStringLiteral("start")); });
+    start_ = make("play", tr("&Start"), [this] { act(QStringLiteral("start")); });
     shutdown_ = make("power", tr("Shut &Down"), [this] { act(QStringLiteral("shutdown")); });
     shutdown_->setToolTip(tr("Asks the guest system to shut down"));
-    stop_ = make("plug-off", tr("S&top"), [this] { act(QStringLiteral("stop")); });
-    reboot_ = make("refresh", tr("&Reboot"), [this] { act(QStringLiteral("reboot")); });
-    reset_ = make("rotate-2", tr("R&eset"), [this] { act(QStringLiteral("reset")); });
-    suspend_ = make("player-pause", tr("&Pause"), [this] { act(QStringLiteral("suspend")); });
-    resume_ = make("player-play", tr("Res&ume"), [this] { act(QStringLiteral("resume")); });
+    stop_ = make("power-off", tr("S&top"), [this] { act(QStringLiteral("stop")); });
+    reboot_ = make("rotate-cw", tr("&Reboot"), [this] { act(QStringLiteral("reboot")); });
+    reset_ = make("rotate-ccw", tr("R&eset"), [this] { act(QStringLiteral("reset")); });
+    suspend_ = make("pause", tr("&Pause"), [this] { act(QStringLiteral("suspend")); });
+    resume_ = make("play", tr("Res&ume"), [this] { act(QStringLiteral("resume")); });
     edit_ = make("pencil", tr("&Edit Server…"), [this] {
         if (ProxmoxClient* c = selectedClient()) editServer(c);
     });
@@ -388,8 +388,8 @@ void ProxmoxView::rebuild()
                 auto* guest = new QTreeWidgetItem(node, {QStringLiteral("%1 %2").arg(g.vmid).arg(QString::fromStdString(g.name))});
                 guest->setData(0, KeyRole, id + QLatin1Char('/') + QString::fromStdString(g.key()));
                 const bool running = g.status == "running", paused = g.status == "paused" || g.status == "suspended";
-                GuestRow row{g.type == "lxc" ? "box" : "device-desktop", running || paused,
-                             running ? "player-play" : paused ? "player-pause" : g.status == "prelaunch" ? "power" : nullptr,
+                GuestRow row{g.type == "lxc" ? "box" : "monitor", running || paused,
+                             running ? "play" : paused ? "pause" : g.status == "prelaunch" ? "power" : nullptr,
                              running ? green : orange, QString::fromStdString(g.name), QStringLiteral("%1 · %2").arg(g.vmid).arg(guestState(g)),
                              history(g.key())};
                 guest->setData(0, RowRole, QVariant::fromValue(row));

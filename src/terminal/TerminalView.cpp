@@ -1,4 +1,5 @@
 #include "terminal/TerminalView.h"
+#include "app/Icons.h"
 
 #include "app/Look.h"
 
@@ -520,14 +521,14 @@ void TerminalView::contextMenuEvent(QContextMenuEvent* event)
     if (event->reason() == QContextMenuEvent::Mouse && reportsMouse(event->modifiers())) return;
     QMenu menu(this);
     const QString selection = selectedText(), clipboard = QApplication::clipboard()->text();
-    menu.addAction(QIcon::fromTheme(QStringLiteral("edit-copy")), tr("&Copy"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C), this,
+    menu.addAction(icons::lucide("copy"), tr("&Copy"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C), this,
                    [selection] { QApplication::clipboard()->setText(selection); })
         ->setEnabled(!selection.isEmpty());
-    menu.addAction(QIcon::fromTheme(QStringLiteral("edit-paste")), tr("&Paste"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V), this,
+    menu.addAction(icons::lucide("clipboard-paste"), tr("&Paste"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V), this,
                    [this] { pasteClipboard(); })
         ->setEnabled(!clipboard.isEmpty() || clipboardImage());
     menu.addSeparator();
-    menu.addAction(QIcon::fromTheme(QStringLiteral("edit-find")), tr("&Find…"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F), this,
+    menu.addAction(icons::lucide("search"), tr("&Find…"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F), this,
                    &TerminalView::openFind);
     menu.exec(event->globalPos());
 }
@@ -551,15 +552,15 @@ void TerminalView::openFind()
         layout->addWidget(findStatus_);
         auto addButton = [this, layout](const char* icon, const QString& tip, std::function<void()> act) {
             auto* b = new QToolButton;
-            b->setIcon(QIcon::fromTheme(QLatin1String(icon)));
+            b->setIcon(icons::lucide(icon));
             b->setToolTip(tip);
             b->setAutoRaise(true);
             connect(b, &QToolButton::clicked, this, act);
             layout->addWidget(b);
         };
-        addButton("go-up", tr("Older match (Enter)"), [this] { find(true, false); });
-        addButton("go-down", tr("Newer match (Shift+Enter)"), [this] { find(false, false); });
-        addButton("window-close", tr("Close (Esc)"), [this] {
+        addButton("arrow-up", tr("Older match (Enter)"), [this] { find(true, false); });
+        addButton("arrow-down", tr("Newer match (Shift+Enter)"), [this] { find(false, false); });
+        addButton("x", tr("Close (Esc)"), [this] {
             findBar_->hide();
             setFocus();
         });

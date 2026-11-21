@@ -11,7 +11,7 @@ class QSize;
 
 // A VM, container or node row: icon with its state, bold name, detail line, CPU graph
 struct GuestRow {
-    const char* icon = "device-desktop"; // Tabler
+    const char* icon = "monitor"; // Lucide
     bool active = false;                 // the icon in the text colour, else dimmed
     const char* glyph = nullptr;
     QColor glyphColor;

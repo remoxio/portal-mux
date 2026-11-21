@@ -21,8 +21,8 @@ void paintGuestRow(QPainter* p, const QStyleOptionViewItem& opt, const GuestRow&
     const QRect r = opt.rect.adjusted(6, 4, -6, -4);
 
     const QRect icon(r.left(), r.center().y() - 16, 32, 32);
-    icons::tabler(row.icon, row.active ? text : dim).paint(p, icon);
-    if (row.glyph) icons::tabler(row.glyph, row.glyphColor).paint(p, QRect(icon.left() + 10, icon.top() + 7, 12, 12));
+    icons::lucide(row.icon, row.active ? text : dim).paint(p, icon);
+    if (row.glyph) icons::lucide(row.glyph, row.glyphColor).paint(p, QRect(icon.left() + 10, icon.top() + 7, 12, 12));
 
     const int graphWidth = std::min(84, r.right() / 3); // not by the row's width: the same at every depth
     const QRect graph(r.right() - graphWidth + 1, r.top() + 2, graphWidth, r.height() - 4);

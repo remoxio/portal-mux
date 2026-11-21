@@ -9,23 +9,16 @@ Coloured folder icons for the connection groups, unmodified, from the VS Code ex
 `LICENSE.txt`: MIT. The icons draw on Material Design Icons and Material Symbols
 (Apache 2.0).
 
-## tabler/: Tabler Icons 3.52.0 (MIT)
+## lucide/: Lucide 1.62.0 (ISC; MIT for its Feather-derived icons)
 
-Monochrome line icons for actions, protocols and VM states, unmodified, from
-https://github.com/tabler/tabler-icons/tree/v3.52.0/icons/outline. `LICENSE`: MIT. They draw with
-`currentColor`, which Portal Mux replaces with the theme's text colour (or a state colour) when it renders them.
-
-## lucide/: Lucide 1.62.0 (ISC; MIT for the chevrons and the lock)
-
-`network.svg`, `monitor-cog.svg` and `panels-top-left.svg` (the Connections, KVM Manager and Sessions views), `server.svg`
-(Settings → SSH Servers), `lock.svg` (Settings → Passwords) and
-`chevron-down.svg`, `chevron-up.svg` (folding the Proxmox view's panels), unmodified, from
-https://github.com/lucide-icons/lucide/tree/1.62.0/icons. `LICENSE`: ISC, and MIT for its Feather-derived icons,
-the chevrons and the lock among them. Drawn with `currentColor` like the Tabler icons.
+Every action, protocol, view and VM-state icon, unmodified, from
+https://github.com/lucide-icons/lucide/tree/1.62.0/icons. `LICENSE`: ISC, and MIT for the icons derived from Feather.
+They draw with `currentColor`, which Portal Mux replaces with the theme's text colour (or a state colour) when it renders
+them.
 
 ## breeze/, breeze-dark/: Breeze 6.32.0 (LGPL 3.0 or later), macOS only
 
-The theme icons the app asks for (`QIcon::fromTheme`), at 16, 22 and 32 px, from KDE's breeze-icons 6.32.0 `icons/`
+The theme icons Qt's own widgets ask for (a line edit's clear button, message boxes' icons), at 16, 22 and 32 px, from KDE's breeze-icons 6.32.0 `icons/`
 (https://download.kde.org/stable/frameworks/6.32/), so macOS shows the icons Linux and Windows do. `breeze-dark` is made
 as breeze-icons' own `generate-symbolic-dark` does: the stylesheet's Text colour `#fcfcfc`, Background `#2a2e32`.
 Each folder has a short `index.theme`; `breeze/COPYING-ICONS` is the licence.

@@ -342,7 +342,7 @@ QString LibvirtVms::apply(const std::string& uuid, const VmSettings& was, const 
     if (now.iso != was.iso) {
         // each from its own definition: the running one may boot in another order until its next start
         std::vector<unsigned> targets{VIR_DOMAIN_AFFECT_CONFIG};
-        if (virDomainIsActive(dom) == 1) targets.push_back(VIR_DOMAIN_AFFECT_LIVE | VIR_DOMAIN_DEVICE_MODIFY_FORCE);
+        if (virDomainIsActive(dom) == 1) targets.push_back(unsigned(VIR_DOMAIN_AFFECT_LIVE) | VIR_DOMAIN_DEVICE_MODIFY_FORCE);
         for (const unsigned flags : targets) {
             char* xml = virDomainGetXMLDesc(dom, flags & VIR_DOMAIN_AFFECT_LIVE ? 0 : VIR_DOMAIN_XML_INACTIVE);
             if (!xml) return failed();

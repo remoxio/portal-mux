@@ -1,4 +1,5 @@
 #include "app/SftpView.h"
+#include "app/Icons.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -18,10 +19,10 @@ static constexpr int DirRole = Qt::UserRole;
 SftpView::SftpView(rdc::SshConnection::Params params, QWidget* parent) : QWidget(parent), client_(*this, std::move(params))
 {
     pathEdit_ = new QLineEdit;
-    auto* up = new QPushButton(QIcon::fromTheme(QStringLiteral("go-up")), tr("&Up"));
-    auto* refresh = new QPushButton(QIcon::fromTheme(QStringLiteral("view-refresh")), tr("&Refresh"));
-    auto* uploadButton = new QPushButton(QIcon::fromTheme(QStringLiteral("document-send")), tr("U&pload…"));
-    auto* downloadButton = new QPushButton(QIcon::fromTheme(QStringLiteral("document-save")), tr("&Download…"));
+    auto* up = new QPushButton(icons::lucide("arrow-up"), tr("&Up"));
+    auto* refresh = new QPushButton(icons::lucide("refresh-cw"), tr("&Refresh"));
+    auto* uploadButton = new QPushButton(icons::lucide("upload"), tr("U&pload…"));
+    auto* downloadButton = new QPushButton(icons::lucide("download"), tr("&Download…"));
     list_ = new QTreeWidget;
     list_->setHeaderLabels({tr("Name"), tr("Size"), tr("Modified")});
     list_->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -96,7 +97,7 @@ void SftpView::open(const QString& path)
             for (const auto& e : entries) {
                 auto* item = new QTreeWidgetItem(list_);
                 item->setText(0, QString::fromStdString(e.name));
-                item->setIcon(0, QIcon::fromTheme(e.directory ? QStringLiteral("folder") : QStringLiteral("text-x-generic")));
+                item->setIcon(0, e.directory ? icons::material("folder") : icons::lucide("file"));
                 item->setText(1, e.directory ? QString() : locale.formattedDataSize(qint64(e.size)));
                 item->setText(2, QDateTime::fromSecsSinceEpoch(e.mtime).toString(Qt::ISODate));
                 item->setData(0, DirRole, e.directory);

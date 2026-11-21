@@ -68,14 +68,14 @@ const char* stateGlyph(State s)
 {
     switch (s) {
     case State::Running:
-    case State::Resuming: return "player-play";
+    case State::Resuming: return "play";
     case State::Paused:
-    case State::Pausing: return "player-pause";
+    case State::Pausing: return "pause";
     case State::Starting:
     case State::Stopping:
     case State::Resetting: return "power";
     case State::Saved:
-    case State::Saving: return "device-floppy";
+    case State::Saving: return "save";
     default: return nullptr;
     }
 }
@@ -142,24 +142,24 @@ HyperVView::HyperVView(QSettings* settings, QString configDir, QWidget* parent)
     layout->addWidget(tree_, 1);
 
     auto make = [this](const char* icon, const QString& text, std::function<void()> run) {
-        auto* a = new QAction(icons::tabler(icon), text, this);
+        auto* a = new QAction(icons::lucide(icon), text, this);
         connect(a, &QAction::triggered, this, run);
         return a;
     };
-    open_ = make("device-desktop", tr("&Open"), [this] { open(); });
+    open_ = make("monitor", tr("&Open"), [this] { open(); });
     open_->setToolTip(tr("Its console; starts it first if it is off"));
-    start_ = make("player-play", tr("&Start"), [this] {
+    start_ = make("play", tr("&Start"), [this] {
         const Vm* vm = selected();
         act(vm && hyperv::allowed(Action::Resume, vm->state) ? Action::Resume : Action::Start);
     });
-    pause_ = make("player-pause", tr("&Pause"), [this] { act(Action::Pause); });
+    pause_ = make("pause", tr("&Pause"), [this] { act(Action::Pause); });
     shutdown_ = make("power", tr("Shut &Down"), [this] { act(Action::Shutdown); });
     shutdown_->setToolTip(tr("Asks the guest system to shut down (needs Hyper-V's integration services in it)"));
-    reboot_ = make("refresh", tr("&Restart"), [this] { act(Action::Reboot); });
-    save_ = make("device-floppy", tr("Sa&ve"), [this] { act(Action::Save); });
+    reboot_ = make("rotate-cw", tr("&Restart"), [this] { act(Action::Reboot); });
+    save_ = make("save", tr("Sa&ve"), [this] { act(Action::Save); });
     save_->setToolTip(tr("Saves its memory to disk and stops it; Start continues where it was"));
-    turnOff_ = make("plug-off", tr("&Turn Off"), [this] { act(Action::TurnOff); });
-    reset_ = make("rotate-2", tr("R&eset"), [this] { act(Action::Reset); });
+    turnOff_ = make("power-off", tr("&Turn Off"), [this] { act(Action::TurnOff); });
+    reset_ = make("rotate-ccw", tr("R&eset"), [this] { act(Action::Reset); });
     addHost_ = make("plus", tr("&Add Host…"), [this] { addHost(); });
     addHost_->setToolTip(tr("A Hyper-V host from Settings → SSH Servers"));
     removeHost_ = make("trash", tr("Re&move Host"), [this] { removeHost(selectedHost()); });
@@ -387,7 +387,7 @@ void HyperVView::rebuild()
         }
         const bool bad = host->status() != Status::Connecting && host->status() != Status::Connected;
         auto* parent = new QTreeWidgetItem(tree_, {host->server().name});
-        parent->setIcon(0, icons::tabler("server"));
+        parent->setIcon(0, icons::lucide("server"));
         parent->setData(0, PanelDelegate::HeaderRole, state);
         parent->setData(0, PanelDelegate::HeaderColorRole, bad ? QColor(0xda, 0x44, 0x53) : palette().color(QPalette::Disabled, QPalette::Text));
         parent->setData(0, HostRole, id);

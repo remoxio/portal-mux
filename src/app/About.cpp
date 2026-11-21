@@ -27,8 +27,7 @@ const Part shipped[] = {
     {"nanors", QT_TRANSLATE_NOOP("About", "Moonlight's error correction"), "MIT", "https://github.com/sleepybishop/nanors"},
     {"scrcpy", QT_TRANSLATE_NOOP("About", "Android screens: its server runs on the device"), "Apache 2.0", "https://github.com/Genymobile/scrcpy"},
     {"Material Icon Theme", QT_TRANSLATE_NOOP("About", "Folder icons"), "MIT", "https://github.com/material-extensions/vscode-material-icon-theme"},
-    {"Tabler Icons", QT_TRANSLATE_NOOP("About", "Icons"), "MIT", "https://tabler.io/icons"},
-    {"Lucide", QT_TRANSLATE_NOOP("About", "Sidebar icons"), "ISC, MIT", "https://lucide.dev"},
+    {"Lucide", QT_TRANSLATE_NOOP("About", "Icons"), "ISC, MIT", "https://lucide.dev"},
 };
 
 const Part libraries[] = {

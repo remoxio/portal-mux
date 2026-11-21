@@ -56,7 +56,7 @@ void offerNewSshServer(QComboBox* box, SshServersRefill refill)
 {
     if (!editor) return;
     if (box->count() > 0) box->insertSeparator(box->count());
-    box->addItem(icons::tabler("plus"), SshServersPage::tr("New SSH Server…"));
+    box->addItem(icons::lucide("plus"), SshServersPage::tr("New SSH Server…"));
     box->setItemData(box->count() - 1, true, NewServerRole);
     if (box->property("offersNewSshServer").toBool()) return; // connected when first offered
     box->setProperty("offersNewSshServer", true);
@@ -128,7 +128,7 @@ private:
 class ServerRow : public QStyledItemDelegate {
 public:
     struct Button {
-        const char* icon; // Tabler
+        const char* icon; // Lucide
         const char* tip;  // QT_TRANSLATE_NOOP("SshServersPage", …)
         std::function<void(int row)> run;
     };
@@ -213,7 +213,7 @@ public:
         p->drawText(QRectF(textLeft, top + nameHeight, width, lineHeight), Qt::AlignLeft | Qt::AlignVCenter,
                     QFontMetrics(smallFont).elidedText(index.data(Qt::UserRole).toString(), Qt::ElideRight, int(width)));
         for (size_t i = 0; i < buttons_.size(); ++i) {
-            QPixmap glyph = icons::tabler(buttons_[i].icon).pixmap(QSize(editSize, editSize), p->device()->devicePixelRatioF());
+            QPixmap glyph = icons::lucide(buttons_[i].icon).pixmap(QSize(editSize, editSize), p->device()->devicePixelRatioF());
             QPainter tint(&glyph);
             tint.setCompositionMode(QPainter::CompositionMode_SourceIn);
             tint.fillRect(glyph.rect(), dim);
