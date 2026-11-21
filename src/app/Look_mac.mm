@@ -14,11 +14,13 @@
 #include <QStyleOption>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QToolBar>
 #include <QTranslator>
 
 #import <AppKit/AppKit.h>
 
 #include <algorithm>
+#include <utility>
 
 namespace {
 
@@ -35,6 +37,11 @@ public:
 
     int pixelMetric(PixelMetric metric, const QStyleOption* option, const QWidget* widget) const override
     {
+        if (capsules(widget)) {
+            if (metric == PM_ToolBarIconSize) return 18;
+            if (metric == PM_ToolBarSeparatorExtent) return 8;
+            if (metric == PM_ToolBarItemSpacing || metric == PM_ToolBarItemMargin || metric == PM_ToolBarFrameWidth) return 0;
+        }
         if (metric == PM_ToolBarIconSize) return 22; // Breeze's, as on KDE and Windows
         if (metric == PM_TabBarTabOverlap && (tabView(widget) || pills(widget))) return 0;
         if ((metric == PM_TabCloseIndicatorWidth || metric == PM_TabCloseIndicatorHeight) && widget && pills(widget->parentWidget())) return 16;
@@ -60,6 +67,9 @@ public:
             return {option->fontMetrics.size(Qt::TextShowMnemonic, tab->text).width() + 24, tabHeight};
         if (const auto* tab = qstyleoption_cast<const QStyleOptionTab*>(option); type == CT_TabBarTab && tab && pills(widget))
             return {std::max(size.width() + tab->leftButtonSize.width() + tab->rightButtonSize.width() + 16, 100), pillTabHeight};
+        if (const auto* tool = qstyleoption_cast<const QStyleOptionToolButton*>(option);
+            type == CT_ToolButton && tool && widget && capsules(widget->parentWidget()))
+            return {tool->iconSize.width() + (tool->features & QStyleOptionToolButton::HasMenu ? 26 : 16), 30};
         QSize s = QProxyStyle::sizeFromContents(type, option, size, widget);
         if (type == CT_SpinBox) s.rwidth() += 12; // Qt's is a few points short of its text
         if (type == CT_LineEdit || type == CT_SpinBox) s.setHeight(std::max(s.height(), 24));
@@ -68,6 +78,7 @@ public:
 
     void drawControl(ControlElement element, const QStyleOption* option, QPainter* p, const QWidget* widget) const override
     {
+        if (element == CE_ToolBar && capsules(widget)) return drawCapsules(static_cast<const QToolBar*>(widget), p);
         if (const auto* frame = qobject_cast<const QFocusFrame*>(widget); element == CE_FocusFrame && frame) {
             // Qt's ring has smaller corners than the text field
             const int h = proxy()->pixelMetric(PM_FocusFrameHMargin, option, widget), v = proxy()->pixelMetric(PM_FocusFrameVMargin, option, widget);
@@ -172,9 +183,69 @@ public:
         p->restore();
     }
 
+    // a capsule behind each run of buttons between separators
+    static void drawCapsules(const QToolBar* bar, QPainter* p)
+    {
+        QColor ink = bar->palette().color(QPalette::WindowText);
+        const bool dark = ink.lightness() > 128;
+        const qreal hairline = 1 / p->device()->devicePixelRatioF();
+        p->save();
+        p->setRenderHint(QPainter::Antialiasing);
+        auto capsule = [&](const QRect& run) {
+            if (run.isNull()) return;
+            const QRectF r = QRectF(run).adjusted(hairline / 2, hairline / 2, -hairline / 2, -hairline / 2);
+            QColor fill = ink;
+            fill.setAlphaF(0.06);
+            p->setBrush(dark ? fill : QColor(Qt::white));
+            QColor edge = ink;
+            edge.setAlphaF(dark ? 0.19 : 0.12);
+            p->setPen(QPen(edge, hairline));
+            p->drawRoundedRect(r, r.height() / 2, r.height() / 2);
+        };
+        QRect run;
+        for (QAction* action : bar->actions()) {
+            if (action->isSeparator()) capsule(std::exchange(run, QRect()));
+            else if (QWidget* button = bar->widgetForAction(action); button && button->isVisible()) run |= button->geometry();
+        }
+        capsule(run);
+        p->restore();
+    }
+
     // group boxes as cards: a small title over a rounded box
     void drawComplexControl(ComplexControl control, const QStyleOptionComplex* option, QPainter* p, const QWidget* widget) const override
     {
+        // a button in a capsule: a round highlight, not AppKit's bezel
+        if (const auto* tool = qstyleoption_cast<const QStyleOptionToolButton*>(option);
+            control == CC_ToolButton && tool && widget && capsules(widget->parentWidget())) {
+            QStyleOptionToolButton plain = *tool;
+            const bool lit = tool->state & (State_On | State_Sunken), hover = tool->state & State_MouseOver && tool->state & State_Enabled;
+            if (lit || hover) {
+                QColor ink = tool->palette.color(QPalette::WindowText);
+                ink.setAlphaF(lit ? 0.14 : 0.07);
+                p->save();
+                p->setRenderHint(QPainter::Antialiasing);
+                p->setPen(Qt::NoPen);
+                p->setBrush(ink);
+                const QRectF r = QRectF(tool->rect).adjusted(2, 2, -2, -2);
+                p->drawRoundedRect(r, r.height() / 2, r.height() / 2);
+                p->restore();
+            }
+            plain.state &= ~(State_On | State_Sunken | State_MouseOver | State_Raised);
+            if (tool->features & QStyleOptionToolButton::HasMenu && !(tool->features & QStyleOptionToolButton::MenuButtonPopup)) {
+                // a chevron beside the icon, not Qt's arrow in the corner
+                plain.features &= ~QStyleOptionToolButton::HasMenu;
+                plain.rect.setRight(plain.rect.right() - 10);
+                QColor ink = tool->palette.color(tool->state & State_Enabled ? QPalette::Active : QPalette::Disabled, QPalette::WindowText);
+                ink.setAlphaF(ink.alphaF() * 0.75);
+                const QPointF c(tool->rect.right() - 9, QRectF(tool->rect).center().y());
+                p->save();
+                p->setRenderHint(QPainter::Antialiasing);
+                p->setPen(QPen(ink, 1.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+                p->drawPolyline(QList<QPointF>{c + QPointF(-3, -1.5), c + QPointF(0, 1.5), c + QPointF(3, -1.5)});
+                p->restore();
+            }
+            return QProxyStyle::drawComplexControl(control, &plain, p, widget);
+        }
         const auto* box = qstyleoption_cast<const QStyleOptionGroupBox*>(option);
         if (control != CC_GroupBox || !box || !card(widget)) return QProxyStyle::drawComplexControl(control, option, p, widget);
         QColor ink = box->palette.color(QPalette::WindowText);
@@ -228,6 +299,7 @@ public:
     void drawPrimitive(PrimitiveElement element, const QStyleOption* option, QPainter* p, const QWidget* widget) const override
     {
         if (element == PE_IndicatorTabClose && widget && pills(widget->parentWidget())) return drawPillClose(option, p, widget);
+        if (element == PE_IndicatorToolBarSeparator && capsules(widget)) return; // the gap between capsules
         if (element != PE_FrameTabWidget || !tabView(widget)) return QProxyStyle::drawPrimitive(element, option, p, widget);
         QColor ink = option->palette.color(QPalette::WindowText);
         const bool dark = ink.lightness() > 128;
@@ -308,6 +380,7 @@ private:
     }
 
     static bool pills(const QWidget* widget) { return widget && widget->property("pills").toBool(); } // SessionTabs.h
+    static bool capsules(const QWidget* widget) { return widget && widget->property("capsules").toBool(); } // MainWindow.cpp
 
     // a QTabWidget's tabs on top: AppKit's tab view; document mode stays Qt's
     static bool tabView(const QWidget* widget)

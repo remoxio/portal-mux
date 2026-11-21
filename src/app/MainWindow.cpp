@@ -307,6 +307,16 @@ static DetachedWindow* detachedOf(const QTreeWidgetItem* item) // only if it sti
     return nullptr;
 }
 
+// macOS: icons in capsules (Look_mac.mm), the names in tooltips
+static void capsules(QToolBar* bar, const QMargins& margins)
+{
+#ifdef Q_OS_MACOS
+    bar->setProperty("capsules", true);
+    bar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    bar->setContentsMargins(margins);
+#endif
+}
+
 static QColor lineColor() // 20% text on the window colour
 {
     const QPalette palette = QApplication::palette();
@@ -468,6 +478,7 @@ MainWindow::MainWindow(QWidget* parent)
     sessionBar_->setMovable(false);
     sessionBar_->setFloatable(false);
     sessionBar_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    capsules(sessionBar_, {8, 0, 8, 6}); // under the tabs' track
     sessionBar_->installEventFilter(this);
     sessionBar_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(sessionBar_, &QWidget::customContextMenuRequested, this, [this](const QPoint& at) {
@@ -500,6 +511,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     fullScreenBar_ = new QToolBar(this); // floats over the session
     fullScreenBar_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    capsules(fullScreenBar_, {8, 6, 8, 6});
     fullScreenBar_->setMovable(false);
     fullScreenBar_->setAutoFillBackground(true);
     fullScreenBar_->hide();
@@ -1319,7 +1331,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
         auto* w = static_cast<QWidget*>(watched);
         QPainter(w).fillRect(w->width() - 1, 0, 1, w->height(), lineColor());
     }
-    if (watched == sessionBar_ && event->type() == QEvent::Resize) {
+    if (watched == sessionBar_ && event->type() == QEvent::Resize && !sessionBar_->property("capsules").toBool()) {
         if (sessionBar_->toolButtonStyle() == Qt::ToolButtonTextBesideIcon) sessionBarTextWidth_ = sessionBar_->sizeHint().width();
         const auto style = sessionBar_->width() >= sessionBarTextWidth_ ? Qt::ToolButtonTextBesideIcon : Qt::ToolButtonIconOnly;
         if (style != sessionBar_->toolButtonStyle()) sessionBar_->setToolButtonStyle(style);
@@ -2267,6 +2279,7 @@ void MainWindow::detachTab(int index)
     auto* bar = window->addToolBar(tr("Session"));
     bar->setMovable(false);
     bar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    capsules(bar, {8, 6, 8, 6});
     auto* attach = bar->addAction(icons::lucide("undo-2"), tr("&Attach to the Main Window"));
     attach->setToolTip(tr("Back into a tab (closing this window does the same)"));
     connect(attach, &QAction::triggered, window, [this, window] { reattach(window); });
@@ -2337,7 +2350,7 @@ void MainWindow::fillSessionBar(QToolBar* bar, const QList<QAction*>& tools)
     bar->addActions(actions);
     if (auto* button = qobject_cast<QToolButton*>(bar->widgetForAction(sendKeysMenu_->menuAction())))
         button->setPopupMode(QToolButton::InstantPopup); // the menu opens on click
-    if (bar == sessionBar_) { // as wide as it can, with text
+    if (bar == sessionBar_ && !bar->property("capsules").toBool()) { // as wide as it can, with text
         bar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         sessionBarTextWidth_ = bar->sizeHint().width();
         if (bar->width() < sessionBarTextWidth_) bar->setToolButtonStyle(Qt::ToolButtonIconOnly);
