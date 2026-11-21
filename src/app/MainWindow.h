@@ -153,6 +153,14 @@ private:
     QAction *toolBarAction_, *sidebarAction_, *statusBarAction_, *tabBarAction_;
     QAction *usbAction_, *detachAction_, *relaunchAction_, *filesAction_;
     QList<QAction*> viewToggles_; // View menu: Show KVM Manager, Show Proxmox
+    struct SidebarView {
+        QString key, title;
+        QIcon icon;
+        QAction* shown; // the activity bar's menu; disabled: always shown
+    };
+    std::vector<SidebarView> sidebarViews_; // as made: the activity bar's and the panel's indexes
+    std::vector<int> viewOrder() const;     // as the user put them (sidebar/viewOrder)
+    void applyViewOrder();
     QWidget* titleBar_ = nullptr; // macOS
     QToolBar* sessionBar_;
     QList<QAction*> separators_; // shared by the session toolbars

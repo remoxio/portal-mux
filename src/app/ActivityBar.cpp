@@ -66,6 +66,16 @@ void ActivityBar::addView(const QIcon& icon, const QString& name)
     buttons_.push_back(button);
 }
 
+void ActivityBar::setOrder(const std::vector<int>& indexes)
+{
+    for (size_t at = 0; at < indexes.size(); ++at) {
+        QToolButton* button = buttons_[size_t(indexes[at])];
+        layout_->removeWidget(button);
+        layout_->insertWidget(int(at), button);
+        if (at > 0) setTabOrder(buttons_[size_t(indexes[at - 1])], button);
+    }
+}
+
 void ActivityBar::setViewHidden(int index, bool hidden) { buttons_[size_t(index)]->setVisible(!hidden); }
 
 void ActivityBar::setCurrent(int index)

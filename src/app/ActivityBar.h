@@ -16,6 +16,7 @@ public:
 
     void addView(const QIcon& icon, const QString& name);
     void setViewHidden(int index, bool hidden);
+    void setOrder(const std::vector<int>& indexes); // where the buttons sit; indexes and signals stay as added
     void setCurrent(int index); // -1: none lit (the panel is collapsed)
 
 signals:

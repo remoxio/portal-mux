@@ -574,6 +574,7 @@ MainWindow::MainWindow(QWidget* parent)
         shown->setEnabled(optional);
         activityBar_->addAction(shown);
         activityBar_->setViewHidden(views_->indexOf(page), !shown->isChecked());
+        sidebarViews_.push_back({QLatin1String(key), title, icon, shown});
         connect(shown, &QAction::toggled, this, [this, page](bool on) { showView(page, on); });
         if (!optional) return;
         auto* inMenu = new QAction(menuText, this);
@@ -621,6 +622,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(azure_, &AzureView::message, this, [this](const QString& text) { status_->showMessage(text, 8000); });
     addView("azure", icons::brand("azure-line"), tr("Azure"), azure_, azure_->titleActions(), tr("Show &Azure"));
     addView("active", icons::lucide("panels-top-left"), tr("Sessions"), active_, {});
+    applyViewOrder();
     const QString savedView = settings_->value(QStringLiteral("window/sidebarView")).toString();
     for (int i = 0; i < views_->count(); ++i)
         if (views_->widget(i)->objectName() == savedView && !hiddenViews.contains(savedView)) views_->setCurrentIndex(i);
@@ -1016,7 +1018,7 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
     auto current = [this, groups] {
         QMap<QString, QVariant> values;
         for (const QString& key : settings_->allKeys())
-            if (groups.contains(key.section(QLatin1Char('/'), 0, 0))) values[key] = settings_->value(key);
+            if (groups.contains(key.section(QLatin1Char('/'), 0, 0)) || key == QLatin1String("window/hiddenViews")) values[key] = settings_->value(key);
         return values;
     };
     QMap<QString, QVariant> applied = current();
@@ -1041,7 +1043,7 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
     appearance->hide(); // Qt can't choose before 6.8
 #endif
 
-    auto* sidebar = new QGroupBox(tr("Sidebar"));
+    auto* sidebar = new QGroupBox(tr("Transparency"));
     auto* box = new QVBoxLayout(sidebar);
     box->addWidget(new QLabel(tr("How much it covers the desktop behind it:")));
     auto* grid = new QGridLayout;
@@ -1159,6 +1161,58 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
                                          if (auto* terminal = terminalOf(tabs_->widget(i))) configureTerminal(terminal);
                                  });
 
+    auto* viewsBox = new QGroupBox(tr("Views"));
+    auto* viewList = new QListWidget;
+    viewList->setDragDropMode(QAbstractItemView::InternalMove);
+    viewList->setDefaultDropAction(Qt::MoveAction);
+    for (int i : viewOrder()) {
+        const SidebarView& v = sidebarViews_[size_t(i)];
+        auto* item = new QListWidgetItem(v.icon, v.title, viewList);
+        item->setData(Qt::UserRole, v.key);
+        item->setCheckState(v.shown->isChecked() ? Qt::Checked : Qt::Unchecked);
+        if (!v.shown->isEnabled()) item->setFlags(item->flags() & ~Qt::ItemIsUserCheckable); // always there
+    }
+    viewList->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // all rows shown: as tall as they are
+    viewList->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents);
+    viewList->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    auto saveOrder = [this, viewList] {
+        QStringList keys;
+        for (int row = 0; row < viewList->count(); ++row) keys << viewList->item(row)->data(Qt::UserRole).toString();
+        settings_->setValue(QStringLiteral("sidebar/viewOrder"), keys);
+        applyViewOrder();
+    };
+    connect(viewList->model(), &QAbstractItemModel::rowsMoved, &dialog, saveOrder);
+    connect(viewList, &QListWidget::itemChanged, &dialog, [this](QListWidgetItem* item) {
+        for (const SidebarView& v : sidebarViews_)
+            if (v.key == item->data(Qt::UserRole).toString() && v.shown->isEnabled()) v.shown->setChecked(item->checkState() == Qt::Checked);
+    });
+    auto* moveButtons = new QVBoxLayout;
+    std::vector<QToolButton*> movers;
+    for (const auto& [icon, tip, by] : {std::tuple{"arrow-up", tr("Move up"), -1}, std::tuple{"arrow-down", tr("Move down"), 1}}) {
+        auto* button = new QToolButton;
+        button->setIcon(icons::lucide(icon));
+        button->setToolTip(tip);
+        connect(button, &QToolButton::clicked, &dialog, [viewList, saveOrder, by] {
+            const int row = viewList->currentRow(), to = row + by;
+            if (row < 0 || to < 0 || to >= viewList->count()) return;
+            viewList->insertItem(to, viewList->takeItem(row));
+            viewList->setCurrentRow(to);
+            saveOrder();
+        });
+        moveButtons->addWidget(button);
+        movers.push_back(button);
+    }
+    moveButtons->addStretch();
+    auto* viewRow = new QHBoxLayout;
+    viewRow->addWidget(viewList, 1);
+    viewRow->addLayout(moveButtons);
+    auto* viewsLayout = new QVBoxLayout(viewsBox);
+    auto* viewsHint = new QLabel(tr("Drag them, or move the selected one, to put them in order; untick to hide one. "
+                                    "Connections and Sessions are always there."));
+    viewsHint->setWordWrap(true);
+    viewsLayout->addWidget(viewsHint);
+    viewsLayout->addLayout(viewRow);
+
     auto* pages = new QListWidget;
     auto* stack = new QStackedWidget;
     auto addPage = [pages, stack](const char* icon, const QString& name, std::initializer_list<QWidget*> sections) {
@@ -1193,7 +1247,8 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
         tabs_->setTabsClosable(on);
     });
     (new QVBoxLayout(tabs))->addWidget(closeButtons);
-    addPage("panels-top-left", tr("Layout"), {appearance, sidebar, tabs});
+    addPage("panels-top-left", tr("Layout"), {appearance, tabs});
+    addPage("panel-left", tr("Sidebar"), {viewsBox, sidebar});
     addPage("type", tr("Font"), {mainFont, sshFont});
     auto* sshServers = new SshServersPage(settings_);
     addPage("server", tr("SSH Servers"), {sshServers});
@@ -1224,6 +1279,9 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
         if (auto* button = qobject_cast<QPushButton*>(control)) connect(button, &QPushButton::clicked, &dialog, changed);
     }
     connect(sshServers, &SshServersPage::changed, &dialog, changed);
+    connect(viewList->model(), &QAbstractItemModel::rowsMoved, &dialog, changed);
+    connect(viewList, &QListWidget::itemChanged, &dialog, changed);
+    for (QToolButton* button : movers) connect(button, &QToolButton::clicked, &dialog, changed);
     auto commit = [&] {
         sshServers->apply();
         hyperv_->reloadServers();
@@ -1250,6 +1308,10 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
     for (auto it = applied.cbegin(); it != applied.cend(); ++it) settings_->setValue(it.key(), it.value());
     applyColorScheme(settings_);
     applySidebar();
+    applyViewOrder();
+    const QStringList hidden = applied.value(QStringLiteral("window/hiddenViews")).toStringList();
+    for (const SidebarView& v : sidebarViews_)
+        if (v.shown->isEnabled()) v.shown->setChecked(!hidden.contains(v.key));
     tabs_->setTabsClosable(settings_->value(QStringLiteral("tabs/closeButtons"), true).toBool());
     QFont font = look::systemFont(QFontDatabase::GeneralFont);
     if (const QString saved = settings_->value(QStringLiteral("font/main")).toString(); !saved.isEmpty()) font.fromString(saved);
@@ -2344,6 +2406,25 @@ void MainWindow::closeEvent(QCloseEvent* event)
     settings_->setValue(QStringLiteral("window/sidebarView"), views_->currentWidget()->objectName());
     settings_->setValue(QStringLiteral("window/sidebarCollapsed"), sidebarMode_ != SidebarMode::Docked);
     QMainWindow::closeEvent(event);
+}
+
+std::vector<int> MainWindow::viewOrder() const
+{
+    std::vector<int> order;
+    for (const QString& key : settings_->value(QStringLiteral("sidebar/viewOrder")).toStringList())
+        for (int i = 0; i < int(sidebarViews_.size()); ++i)
+            if (sidebarViews_[size_t(i)].key == key && std::find(order.begin(), order.end(), i) == order.end()) order.push_back(i);
+    for (int i = 0; i < int(sidebarViews_.size()); ++i) // new ones, and all when none was moved
+        if (std::find(order.begin(), order.end(), i) == order.end()) order.push_back(i);
+    return order;
+}
+
+void MainWindow::applyViewOrder()
+{
+    const std::vector<int> order = viewOrder();
+    activityBar_->setOrder(order);
+    for (const SidebarView& v : sidebarViews_) activityBar_->removeAction(v.shown);
+    for (int i : order) activityBar_->addAction(sidebarViews_[size_t(i)].shown);
 }
 
 void MainWindow::showView(QWidget* page, bool on)
