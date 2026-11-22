@@ -69,7 +69,7 @@ public:
             return {std::max(size.width() + tab->leftButtonSize.width() + tab->rightButtonSize.width() + 16, 100), pillTabHeight};
         if (const auto* tool = qstyleoption_cast<const QStyleOptionToolButton*>(option);
             type == CT_ToolButton && tool && widget && capsules(widget->parentWidget())) {
-            const int width = tool->iconSize.width() + (tool->features & QStyleOptionToolButton::HasMenu ? 26 : 16);
+            const int width = capsuleContent(tool) + (tool->features & QStyleOptionToolButton::HasMenu ? 10 : 0);
             if (tool->toolButtonStyle != Qt::ToolButtonTextUnderIcon) return {width, capsuleHeight};
             const QFontMetrics label(labelFont(widget));
             return {std::max(width, label.horizontalAdvance(tool->text) + 10), capsuleHeight + 3 + label.height()};
@@ -225,9 +225,9 @@ public:
             QRect area = tool->rect; // in the capsule; a label goes under it
             area.setHeight(capsuleHeight);
             QStyleOptionToolButton plain = *tool;
-            plain.toolButtonStyle = Qt::ToolButtonIconOnly;
+            if (plain.toolButtonStyle != Qt::ToolButtonTextOnly) plain.toolButtonStyle = Qt::ToolButtonIconOnly;
             const bool menu = tool->features & QStyleOptionToolButton::HasMenu && !(tool->features & QStyleOptionToolButton::MenuButtonPopup);
-            plain.rect = QRect(0, 0, std::min(area.width(), tool->iconSize.width() + (menu ? 26 : 16)), capsuleHeight);
+            plain.rect = QRect(0, 0, std::min(area.width(), capsuleContent(tool) + (menu ? 10 : 0)), capsuleHeight);
             plain.rect.moveCenter(area.center());
             const bool lit = tool->state & (State_On | State_Sunken), hover = tool->state & State_MouseOver && tool->state & State_Enabled;
             if (lit || hover) {
@@ -264,6 +264,9 @@ public:
                 p->drawPolyline(QList<QPointF>{c + QPointF(-3, -1.5), c + QPointF(0, 1.5), c + QPointF(3, -1.5)});
                 p->restore();
             }
+            if (tool->toolButtonStyle == Qt::ToolButtonTextOnly)
+                return proxy()->drawItemText(p, plain.rect, Qt::AlignCenter | Qt::TextHideMnemonic, tool->palette, tool->state & State_Enabled, tool->text,
+                                             QPalette::WindowText);
             return QProxyStyle::drawComplexControl(control, &plain, p, widget);
         }
         const auto* box = qstyleoption_cast<const QStyleOptionGroupBox*>(option);
@@ -401,6 +404,11 @@ private:
 
     static bool pills(const QWidget* widget) { return widget && widget->property("pills").toBool(); } // SessionTabs.h
     static bool capsules(const QWidget* widget) { return widget && widget->property("capsules").toBool(); } // MainWindow.cpp
+
+    static int capsuleContent(const QStyleOptionToolButton* tool) // a button's part of its capsule
+    {
+        return tool->toolButtonStyle == Qt::ToolButtonTextOnly ? tool->fontMetrics.horizontalAdvance(tool->text) + 20 : tool->iconSize.width() + 16;
+    }
 
     static QFont labelFont(const QWidget* widget) // a toolbar's labels: 11 pt at the system's 13
     {

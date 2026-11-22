@@ -122,7 +122,7 @@ private:
     QList<QAction*> sessionTools(QWidget* page) const; // its kind's toolbar, nullptr between groups
     void fillSessionBar(QToolBar* bar, const QList<QAction*>& tools);
     void applyFullScreen(bool on);
-    void applyToolBarText(); // macOS: the capsules' labels, as chosen in the toolbar's menu
+    void applyToolBarStyle(); // macOS: as chosen in the toolbar's menu
     bool saveStore();
 
     QString configDir_;
@@ -152,7 +152,7 @@ private:
         *grabKeysAction_, *scaleAction_, *reconnectAction_, *disconnectAction_;
     QMenu* sendKeysMenu_;
     QAction *toolBarAction_, *sidebarAction_, *statusBarAction_, *tabBarAction_;
-    QActionGroup* toolBarStyle_ = nullptr; // macOS: Icon Only, Icon and Text
+    QActionGroup* toolBarStyle_ = nullptr; // macOS: Icon Only, Icon and Text, Text Only
     QAction *usbAction_, *detachAction_, *relaunchAction_, *filesAction_;
     QList<QAction*> viewToggles_; // View menu: Show KVM Manager, Show Proxmox
     struct SidebarView {

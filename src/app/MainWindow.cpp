@@ -307,13 +307,20 @@ static DetachedWindow* detachedOf(const QTreeWidgetItem* item) // only if it sti
     return nullptr;
 }
 
-// macOS: icons in capsules (Look_mac.mm), the names in tooltips
-static void capsules(QToolBar* bar, const QMargins& margins)
+// macOS: buttons in capsules (Look_mac.mm); its menu only Icon Only, Icon and Text, Text Only, as AppKit's
+static void capsules(QToolBar* bar, const QMargins& margins, QActionGroup* styles)
 {
 #ifdef Q_OS_MACOS
     bar->setProperty("capsules", true);
     bar->setToolButtonStyle(Qt::ToolButtonIconOnly);
     bar->setContentsMargins(margins);
+    bar->setContextMenuPolicy(Qt::CustomContextMenu);
+    QObject::disconnect(bar, &QWidget::customContextMenuRequested, nullptr, nullptr); // instead of the window's menu
+    QObject::connect(bar, &QWidget::customContextMenuRequested, bar, [bar, styles](const QPoint& at) {
+        QMenu menu;
+        menu.addActions(styles->actions());
+        menu.exec(bar->mapToGlobal(at));
+    });
 #endif
 }
 
@@ -459,14 +466,14 @@ MainWindow::MainWindow(QWidget* parent)
     };
     addToggle(toolBarAction_, tr("Show &Toolbar"), "toolBar");
 #ifdef Q_OS_MACOS
-    toolBarStyle_ = new QActionGroup(this); // in the toolbar's menu, as AppKit's
-    for (const auto& [text, labelled] : {std::pair{tr("Icon Only"), false}, std::pair{tr("Icon and Text"), true}}) {
+    toolBarStyle_ = new QActionGroup(this);
+    for (const auto& [text, key] : {std::pair{tr("Icon Only"), "icon"}, std::pair{tr("Icon and Text"), "iconAndText"}, std::pair{tr("Text Only"), "text"}}) {
         QAction* a = toolBarStyle_->addAction(text);
         a->setCheckable(true);
-        a->setChecked(settings_->value(QStringLiteral("view/toolBarText"), false).toBool() == labelled);
-        connect(a, &QAction::triggered, this, [this, labelled] {
-            settings_->setValue(QStringLiteral("view/toolBarText"), labelled);
-            applyToolBarText();
+        a->setChecked(settings_->value(QStringLiteral("view/toolBarStyle"), QStringLiteral("icon")).toString() == QLatin1String(key));
+        connect(a, &QAction::triggered, this, [this, key] {
+            settings_->setValue(QStringLiteral("view/toolBarStyle"), QLatin1String(key));
+            applyToolBarStyle();
         });
     }
 #endif
@@ -491,13 +498,13 @@ MainWindow::MainWindow(QWidget* parent)
     sessionBar_->setMovable(false);
     sessionBar_->setFloatable(false);
     sessionBar_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    capsules(sessionBar_, {8, 0, 8, 6}); // under the tabs' track
     sessionBar_->installEventFilter(this);
     sessionBar_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(sessionBar_, &QWidget::customContextMenuRequested, this, [this](const QPoint& at) {
         std::unique_ptr<QMenu> menu(createPopupMenu());
         menu->exec(sessionBar_->mapToGlobal(at));
     });
+    capsules(sessionBar_, {8, 0, 8, 6}, toolBarStyle_); // under the tabs' track
     status_ = new QStatusBar;
     auto cell = [this](const QString& widest) {
         auto* label = new QLabel;
@@ -524,7 +531,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     fullScreenBar_ = new QToolBar(this); // floats over the session
     fullScreenBar_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    capsules(fullScreenBar_, {8, 6, 8, 6});
+    capsules(fullScreenBar_, {8, 6, 8, 6}, toolBarStyle_);
     fullScreenBar_->setMovable(false);
     fullScreenBar_->setAutoFillBackground(true);
     fullScreenBar_->hide();
@@ -686,7 +693,7 @@ MainWindow::MainWindow(QWidget* parent)
     bodyLayout->addWidget(activityBar_);
     bodyLayout->addWidget(splitter, 1);
     setCentralWidget(body_);
-    applyToolBarText();
+    applyToolBarStyle();
     body_->installEventFilter(this);
     activityBar_->installEventFilter(this);
     if (restoreGeometry(settings_->value(QStringLiteral("window/geometry")).toByteArray()))
@@ -2294,8 +2301,8 @@ void MainWindow::detachTab(int index)
     auto* bar = window->addToolBar(tr("Session"));
     bar->setMovable(false);
     bar->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    capsules(bar, {8, 6, 8, 6});
-    applyToolBarText();
+    capsules(bar, {8, 6, 8, 6}, toolBarStyle_);
+    applyToolBarStyle();
     auto* attach = bar->addAction(icons::lucide("undo-2"), tr("&Attach to the Main Window"));
     attach->setToolTip(tr("Back into a tab (closing this window does the same)"));
     connect(attach, &QAction::triggered, window, [this, window] { reattach(window); });
@@ -2536,19 +2543,18 @@ QMenu* MainWindow::createPopupMenu()
 {
     auto* menu = new QMenu(this);
     menu->addActions(QList<QAction*>{toolBarAction_, sidebarAction_} + viewToggles_ + QList<QAction*>{statusBarAction_, tabBarAction_});
-    if (toolBarStyle_) {
-        menu->addSeparator();
-        menu->addActions(toolBarStyle_->actions());
-    }
     return menu;
 }
 
-void MainWindow::applyToolBarText()
+void MainWindow::applyToolBarStyle()
 {
-    const bool labelled = settings_->value(QStringLiteral("view/toolBarText"), false).toBool();
+    const QString key = settings_->value(QStringLiteral("view/toolBarStyle")).toString();
+    const auto style = key == QLatin1String("iconAndText") ? Qt::ToolButtonTextUnderIcon
+                       : key == QLatin1String("text")      ? Qt::ToolButtonTextOnly
+                                                           : Qt::ToolButtonIconOnly;
     for (QWidget* top : QApplication::topLevelWidgets())
         for (QToolBar* bar : top->findChildren<QToolBar*>())
-            if (bar->property("capsules").toBool()) bar->setToolButtonStyle(labelled ? Qt::ToolButtonTextUnderIcon : Qt::ToolButtonIconOnly);
+            if (bar->property("capsules").toBool()) bar->setToolButtonStyle(style);
 }
 
 void MainWindow::applyFullScreen(bool on)
