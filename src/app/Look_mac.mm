@@ -68,8 +68,12 @@ public:
         if (const auto* tab = qstyleoption_cast<const QStyleOptionTab*>(option); type == CT_TabBarTab && tab && pills(widget))
             return {std::max(size.width() + tab->leftButtonSize.width() + tab->rightButtonSize.width() + 16, 100), pillTabHeight};
         if (const auto* tool = qstyleoption_cast<const QStyleOptionToolButton*>(option);
-            type == CT_ToolButton && tool && widget && capsules(widget->parentWidget()))
-            return {tool->iconSize.width() + (tool->features & QStyleOptionToolButton::HasMenu ? 26 : 16), 30};
+            type == CT_ToolButton && tool && widget && capsules(widget->parentWidget())) {
+            const int width = tool->iconSize.width() + (tool->features & QStyleOptionToolButton::HasMenu ? 26 : 16);
+            if (tool->toolButtonStyle != Qt::ToolButtonTextUnderIcon) return {width, capsuleHeight};
+            const QFontMetrics label(labelFont(widget));
+            return {std::max(width, label.horizontalAdvance(tool->text) + 10), capsuleHeight + 3 + label.height()};
+        }
         QSize s = QProxyStyle::sizeFromContents(type, option, size, widget);
         if (type == CT_SpinBox) s.rwidth() += 12; // Qt's is a few points short of its text
         if (type == CT_LineEdit || type == CT_SpinBox) s.setHeight(std::max(s.height(), 24));
@@ -205,7 +209,8 @@ public:
         QRect run;
         for (QAction* action : bar->actions()) {
             if (action->isSeparator()) capsule(std::exchange(run, QRect()));
-            else if (QWidget* button = bar->widgetForAction(action); button && button->isVisible()) run |= button->geometry();
+            else if (QWidget* button = bar->widgetForAction(action); button && button->isVisible())
+                run |= button->geometry().adjusted(0, 0, 0, std::min(0, capsuleHeight - button->height())); // not its label
         }
         capsule(run);
         p->restore();
@@ -217,7 +222,13 @@ public:
         // a button in a capsule: a round highlight, not AppKit's bezel
         if (const auto* tool = qstyleoption_cast<const QStyleOptionToolButton*>(option);
             control == CC_ToolButton && tool && widget && capsules(widget->parentWidget())) {
+            QRect area = tool->rect; // in the capsule; a label goes under it
+            area.setHeight(capsuleHeight);
             QStyleOptionToolButton plain = *tool;
+            plain.toolButtonStyle = Qt::ToolButtonIconOnly;
+            const bool menu = tool->features & QStyleOptionToolButton::HasMenu && !(tool->features & QStyleOptionToolButton::MenuButtonPopup);
+            plain.rect = QRect(0, 0, std::min(area.width(), tool->iconSize.width() + (menu ? 26 : 16)), capsuleHeight);
+            plain.rect.moveCenter(area.center());
             const bool lit = tool->state & (State_On | State_Sunken), hover = tool->state & State_MouseOver && tool->state & State_Enabled;
             if (lit || hover) {
                 QColor ink = tool->palette.color(QPalette::WindowText);
@@ -226,18 +237,27 @@ public:
                 p->setRenderHint(QPainter::Antialiasing);
                 p->setPen(Qt::NoPen);
                 p->setBrush(ink);
-                const QRectF r = QRectF(tool->rect).adjusted(2, 2, -2, -2);
+                const QRectF r = QRectF(area).adjusted(2, 2, -2, -2);
                 p->drawRoundedRect(r, r.height() / 2, r.height() / 2);
                 p->restore();
             }
             plain.state &= ~(State_On | State_Sunken | State_MouseOver | State_Raised);
-            if (tool->features & QStyleOptionToolButton::HasMenu && !(tool->features & QStyleOptionToolButton::MenuButtonPopup)) {
+            if (tool->toolButtonStyle == Qt::ToolButtonTextUnderIcon) {
+                const QFont font = labelFont(widget);
+                const QRect label(tool->rect.left(), area.bottom() + 4, tool->rect.width(), tool->rect.bottom() - area.bottom() - 3);
+                p->save();
+                p->setFont(font);
+                proxy()->drawItemText(p, label, Qt::AlignHCenter | Qt::AlignTop | Qt::TextHideMnemonic, tool->palette, tool->state & State_Enabled,
+                                      QFontMetrics(font).elidedText(tool->text, Qt::ElideRight, label.width()), QPalette::WindowText);
+                p->restore();
+            }
+            if (menu) {
                 // a chevron beside the icon, not Qt's arrow in the corner
+                const QPointF c(plain.rect.right() - 9, QRectF(area).center().y());
                 plain.features &= ~QStyleOptionToolButton::HasMenu;
                 plain.rect.setRight(plain.rect.right() - 10);
                 QColor ink = tool->palette.color(tool->state & State_Enabled ? QPalette::Active : QPalette::Disabled, QPalette::WindowText);
                 ink.setAlphaF(ink.alphaF() * 0.75);
-                const QPointF c(tool->rect.right() - 9, QRectF(tool->rect).center().y());
                 p->save();
                 p->setRenderHint(QPainter::Antialiasing);
                 p->setPen(QPen(ink, 1.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
@@ -363,7 +383,7 @@ private:
         p->restore();
     }
 
-    static constexpr int tabHeight = 24, pillTabHeight = 28;
+    static constexpr int tabHeight = 24, pillTabHeight = 28, capsuleHeight = 30;
     static constexpr qreal tabRadius = 7, fieldRadius = 6.5, ringWidth = 3.5;
 
     static bool card(const QWidget* widget)
@@ -381,6 +401,13 @@ private:
 
     static bool pills(const QWidget* widget) { return widget && widget->property("pills").toBool(); } // SessionTabs.h
     static bool capsules(const QWidget* widget) { return widget && widget->property("capsules").toBool(); } // MainWindow.cpp
+
+    static QFont labelFont(const QWidget* widget) // a toolbar's labels: 11 pt at the system's 13
+    {
+        QFont font = widget->font();
+        font.setPointSizeF(font.pointSizeF() * 11 / 13);
+        return font;
+    }
 
     // a QTabWidget's tabs on top: AppKit's tab view; document mode stays Qt's
     static bool tabView(const QWidget* widget)

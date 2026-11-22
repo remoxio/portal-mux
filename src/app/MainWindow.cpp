@@ -458,6 +458,18 @@ MainWindow::MainWindow(QWidget* parent)
         });
     };
     addToggle(toolBarAction_, tr("Show &Toolbar"), "toolBar");
+#ifdef Q_OS_MACOS
+    toolBarStyle_ = new QActionGroup(this); // in the toolbar's menu, as AppKit's
+    for (const auto& [text, labelled] : {std::pair{tr("Icon Only"), false}, std::pair{tr("Icon and Text"), true}}) {
+        QAction* a = toolBarStyle_->addAction(text);
+        a->setCheckable(true);
+        a->setChecked(settings_->value(QStringLiteral("view/toolBarText"), false).toBool() == labelled);
+        connect(a, &QAction::triggered, this, [this, labelled] {
+            settings_->setValue(QStringLiteral("view/toolBarText"), labelled);
+            applyToolBarText();
+        });
+    }
+#endif
     addToggle(sidebarAction_, tr("Show &Sidebar"), "sidebar");
     addToggle(statusBarAction_, tr("Show Stat&us Bar"), "statusBar");
     addToggle(tabBarAction_, tr("Show Ta&b Bar"), "tabBar");
@@ -674,6 +686,7 @@ MainWindow::MainWindow(QWidget* parent)
     bodyLayout->addWidget(activityBar_);
     bodyLayout->addWidget(splitter, 1);
     setCentralWidget(body_);
+    applyToolBarText();
     body_->installEventFilter(this);
     activityBar_->installEventFilter(this);
     if (restoreGeometry(settings_->value(QStringLiteral("window/geometry")).toByteArray()))
@@ -2282,6 +2295,7 @@ void MainWindow::detachTab(int index)
     bar->setMovable(false);
     bar->setToolButtonStyle(Qt::ToolButtonIconOnly);
     capsules(bar, {8, 6, 8, 6});
+    applyToolBarText();
     auto* attach = bar->addAction(icons::lucide("undo-2"), tr("&Attach to the Main Window"));
     attach->setToolTip(tr("Back into a tab (closing this window does the same)"));
     connect(attach, &QAction::triggered, window, [this, window] { reattach(window); });
@@ -2522,7 +2536,19 @@ QMenu* MainWindow::createPopupMenu()
 {
     auto* menu = new QMenu(this);
     menu->addActions(QList<QAction*>{toolBarAction_, sidebarAction_} + viewToggles_ + QList<QAction*>{statusBarAction_, tabBarAction_});
+    if (toolBarStyle_) {
+        menu->addSeparator();
+        menu->addActions(toolBarStyle_->actions());
+    }
     return menu;
+}
+
+void MainWindow::applyToolBarText()
+{
+    const bool labelled = settings_->value(QStringLiteral("view/toolBarText"), false).toBool();
+    for (QWidget* top : QApplication::topLevelWidgets())
+        for (QToolBar* bar : top->findChildren<QToolBar*>())
+            if (bar->property("capsules").toBool()) bar->setToolButtonStyle(labelled ? Qt::ToolButtonTextUnderIcon : Qt::ToolButtonIconOnly);
 }
 
 void MainWindow::applyFullScreen(bool on)
