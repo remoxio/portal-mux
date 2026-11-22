@@ -7,6 +7,7 @@
 #include <QGroupBox>
 #include <QIcon>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
 #include <QProxyStyle>
@@ -463,6 +464,12 @@ void dialogTitleBar(QWidget* dialog)
     [window standardWindowButton:NSWindowMiniaturizeButton].hidden = YES; // Qt only disables them
     [window standardWindowButton:NSWindowZoomButton].hidden = YES;
     window.titlebarAppearsTransparent = YES; // no line under it
+}
+
+void systemMenus(QMenu* windows, QMenu* help)
+{
+    NSApp.windowsMenu = windows->toNSMenu();
+    NSApp.helpMenu = help->toNSMenu();
 }
 
 } // namespace look

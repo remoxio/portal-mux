@@ -47,6 +47,7 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -490,8 +491,25 @@ MainWindow::MainWindow(QWidget* parent)
     settings->addAction(icons::lucide("keyboard"), tr("S&hortcuts…"), this, [this] {
         QMessageBox::information(this, tr("Shortcuts"), tr("Configurable shortcuts are coming."));
     })->setMenuRole(QAction::ApplicationSpecificRole);
-    QMenu* help = menuBar()->addMenu(tr("&Help"));
+#ifdef Q_OS_MACOS
+    QMenu* windows = menuBar()->addMenu(tr("&Window")); // AppKit adds tiling, full screen and the windows
+    windows->addAction(tr("&Minimize"), QKeySequence(Qt::CTRL | Qt::Key_M), this, [] {
+        if (QWidget* w = QApplication::activeWindow()) w->showMinimized();
+    });
+    windows->addAction(tr("&Zoom"), this, [] {
+        if (QWidget* w = QApplication::activeWindow()) w->isMaximized() ? w->showNormal() : w->showMaximized();
+    });
+#endif
+    QMenu* help = menuBar()->addMenu(tr("&Help")); // macOS adds its menu search
+    help->addAction(icons::lucide("globe"), tr("Portal Mux &Website"), this,
+                    [] { QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/remoxio/portal-mux"))); });
+#ifndef Q_OS_MACOS // there it is in the app menu
+    help->addSeparator();
+#endif
     help->addAction(tr("&About Portal Mux"), this, [this] { showAbout(this); })->setMenuRole(QAction::AboutRole);
+#ifdef Q_OS_MACOS
+    look::systemMenus(windows, help);
+#endif
 
     // in the work area's layout, not a QMainWindow toolbar
     sessionBar_ = new QToolBar(tr("Session"));

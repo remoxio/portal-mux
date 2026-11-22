@@ -3,6 +3,7 @@
 #include <QFont>
 #include <QFontDatabase>
 
+class QMenu;
 class QPainter;
 class QPalette;
 class QRectF;
@@ -20,6 +21,8 @@ void paintSelection(QPainter* p, const QRectF& rect, const QPalette& palette, qr
 #ifdef Q_OS_MACOS
 // a dialog's title bar: the close button only, no line under it (Look_mac.mm)
 void dialogTitleBar(QWidget* dialog);
+// AppKit's Window and Help menus: tiling and the windows, the menu search
+void systemMenus(QMenu* windows, QMenu* help);
 #endif
 
 } // namespace look
