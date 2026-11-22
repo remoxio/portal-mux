@@ -444,6 +444,7 @@ MainWindow::MainWindow(QWidget* parent)
     });
     sessionsMenu_ = menuBar()->addMenu(tr("S&essions"));
     connect(sessionsMenu_, &QMenu::aboutToShow, this, &MainWindow::fillSessionsMenu);
+    sessionsMenu_->addAction(tr("No sessions"))->setEnabled(false); // macOS leaves an empty menu out of the menu bar
     toolsMenu_ = menuBar()->addMenu(tr("&Tools")); // the session's toolbar, and more: updateSessionActions()
     QMenu* view = menuBar()->addMenu(tr("&View"));
     auto addToggle = [&](QAction*& action, const QString& text, const char* key) {
@@ -2092,6 +2093,7 @@ void MainWindow::updateActiveList()
         for (int j = 0; j < active_->topLevelItem(i)->childCount(); ++j)
             if (const QVariant id = active_->topLevelItem(i)->child(j)->data(0, IdRole); id.isValid() && id.toInt() == tabs_->currentIndex())
                 active_->setCurrentItem(active_->topLevelItem(i)->child(j)); // after adding: items outside the tree can't be current
+    fillSessionsMenu(); // also for macOS's menu search, which doesn't open it
 }
 
 void MainWindow::updateStatusInfo()
