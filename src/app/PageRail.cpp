@@ -13,10 +13,13 @@ namespace {
 
 #if defined(Q_OS_MACOS)
 constexpr int rowHeight = 28, padding = 6, panelRadius = 10;
+constexpr qreal hoverDark = 0.08, hoverLight = 0.06;
 #elif defined(Q_OS_WIN)
 constexpr int rowHeight = 34, padding = 0, panelRadius = 0;
+constexpr qreal hoverDark = 0.06, hoverLight = 0.05;
 #else
 constexpr int rowHeight = 34, padding = 6, panelRadius = 8;
+constexpr qreal hoverDark = 0.06, hoverLight = 0.05;
 #endif
 
 QColor ink(const QPalette& palette, qreal alpha)
@@ -56,7 +59,7 @@ public:
         initStyleOption(&o, index);
         const QRectF r = o.rect;
         const bool selected = o.state & QStyle::State_Selected;
-        const QColor subtle = ink(o.palette, dark(o.palette) ? 0.06 : 0.05);
+        const QColor subtle = ink(o.palette, dark(o.palette) ? hoverDark : hoverLight);
         QColor text = o.palette.color(QPalette::WindowText);
         p->save();
         p->setRenderHint(QPainter::Antialiasing);
@@ -69,6 +72,15 @@ public:
         if (selected) {
             p->setBrush(o.palette.color(QPalette::Active, QPalette::Accent));
             p->drawRoundedRect(QRectF(r.left(), r.center().y() - 8, 3, 16), 1.5, 1.5);
+        }
+#elif defined(Q_OS_MACOS)
+        if (selected) { // as System Settings': the accent, white text
+            p->setBrush(o.palette.color(QPalette::Active, QPalette::Accent));
+            p->drawRoundedRect(r, 6, 6);
+            text = o.palette.color(QPalette::Active, QPalette::HighlightedText);
+        } else if (o.state & QStyle::State_MouseOver) {
+            p->setBrush(subtle);
+            p->drawRoundedRect(r, 6, 6);
         }
 #else
         if (selected) {

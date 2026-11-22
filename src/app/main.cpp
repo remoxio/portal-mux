@@ -40,6 +40,9 @@ protected:
                 (dialog->windowFlags() | Qt::CustomizeWindowHint) & ~(Qt::WindowMinMaxButtonsHint | Qt::WindowContextHelpButtonHint);
             dialog->overrideWindowFlags(flags);
             if (QWindow* window = dialog->windowHandle()) window->setFlags(flags);
+#ifdef Q_OS_MACOS
+            QTimer::singleShot(0, dialog, [dialog] { look::dialogTitleBar(dialog); }); // once Qt has set the buttons
+#endif
             fit(dialog);
         } else if (event->type() == QEvent::LayoutRequest && dialog->isVisible()) {
             QTimer::singleShot(0, dialog, [dialog] { fit(dialog); });

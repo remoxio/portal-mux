@@ -457,4 +457,12 @@ void applyMac()
     QObject::connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, qApp, follow);
 }
 
+void dialogTitleBar(QWidget* dialog)
+{
+    NSWindow* window = reinterpret_cast<NSView*>(dialog->winId()).window;
+    [window standardWindowButton:NSWindowMiniaturizeButton].hidden = YES; // Qt only disables them
+    [window standardWindowButton:NSWindowZoomButton].hidden = YES;
+    window.titlebarAppearsTransparent = YES; // no line under it
+}
+
 } // namespace look

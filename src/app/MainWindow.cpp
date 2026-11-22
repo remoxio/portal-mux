@@ -1318,6 +1318,9 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
     body->addWidget(pageRail(pages));
     body->addWidget(stack, 1);
     auto* layout = new QVBoxLayout(&dialog);
+#ifdef Q_OS_MACOS
+    layout->setContentsMargins(16, 16, 16, 16);
+#endif
     layout->addLayout(body, 1);
     layout->addLayout(buttons);
     dialog.resize(720, 640);
