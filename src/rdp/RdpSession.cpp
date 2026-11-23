@@ -384,16 +384,23 @@ struct RdpSession::Callbacks {
         response.common.msgFlags = CB_RESPONSE_OK;
         if (UINT rc = c->ClientFormatListResponse(c, &response); rc != CHANNEL_RC_OK) return rc;
 
-        bool text = false;
+        bool text = false, dib = false, dibV5 = false;
         {
             std::lock_guard lock(s->clipMutex_);
             s->serverFileGroupId_ = 0;
             for (UINT32 i = 0; i < list->numFormats; ++i) {
                 const CLIPRDR_FORMAT& f = list->formats[i];
                 if (f.formatName && strcmp(f.formatName, "FileGroupDescriptorW") == 0) s->serverFileGroupId_ = f.formatId;
-                if (f.formatId == CF_UNICODETEXT) text = true;
+                text = text || f.formatId == CF_UNICODETEXT;
+                dib = dib || f.formatId == CF_DIB;
+                dibV5 = dibV5 || f.formatId == CF_DIBV5;
             }
-            s->pendingFormat_ = s->serverFileGroupId_ ? s->serverFileGroupId_ : text ? CF_UNICODETEXT : 0;
+            // text first: Office copies cells and text with a picture of them too
+            s->pendingFormat_ = s->serverFileGroupId_ ? s->serverFileGroupId_
+                                : text                ? CF_UNICODETEXT
+                                : dib                 ? CF_DIB
+                                : dibV5               ? CF_DIBV5
+                                                      : 0;
         }
         if (UINT rc = cliprdr_file_context_notify_new_server_format_list(s->fileContext_); rc != CHANNEL_RC_OK) return rc;
         if (!s->pendingFormat_) return CHANNEL_RC_OK;
@@ -433,6 +440,24 @@ struct RdpSession::Callbacks {
             if (!uris.empty()) s->listener_.onClipboardUris(std::move(uris));
             return CHANNEL_RC_OK;
         }
+        if (s->pendingFormat_ == CF_DIB || s->pendingFormat_ == CF_DIBV5) {
+            std::string bmp;
+            ClipboardLock(s->clipboard_);
+            UINT32 size = 0;
+            void* file = nullptr;
+            if (ClipboardSetData(s->clipboard_, s->pendingFormat_, r->requestedFormatData, r->common.dataLen))
+                file = ClipboardGetData(s->clipboard_, s->bmpId_, &size); // WinPR adds the file header
+            if (file) bmp.assign(static_cast<const char*>(file), size);
+            free(file);
+            ClipboardEmpty(s->clipboard_);
+            ClipboardUnlock(s->clipboard_);
+            s->localClipboard_.clear(); // the same local copy again is offered again
+            s->localUris_.clear();
+            s->localImage_.clear();
+            lock.unlock();
+            if (!bmp.empty()) s->listener_.onClipboardImage(std::move(bmp));
+            return CHANNEL_RC_OK;
+        }
         size_t len = 0;
         char* utf8 = ConvertWCharNToUtf8Alloc(reinterpret_cast<const WCHAR*>(r->requestedFormatData),
                                               r->common.dataLen / sizeof(WCHAR), &len);
@@ -441,6 +466,7 @@ struct RdpSession::Callbacks {
         free(utf8);
         s->localClipboard_ = text; // the UI's echo then sees no change
         s->localUris_.clear();
+        s->localImage_.clear();
         lock.unlock();
         s->listener_.onClipboardText(std::move(text));
         return CHANNEL_RC_OK;
@@ -474,6 +500,10 @@ struct RdpSession::Callbacks {
                 size_t wlen = 0;
                 data = reinterpret_cast<BYTE*>(ConvertUtf8ToWCharAlloc(replaceAll(s->localClipboard_, "\n", "\r\n").c_str(), &wlen));
                 size = UINT32((wlen + 1) * sizeof(WCHAR));
+            } else if (request->requestedFormatId == CF_DIB && s->localImage_.size() > 14) {
+                size = UINT32(s->localImage_.size() - 14);
+                data = static_cast<BYTE*>(malloc(size));
+                if (data) memcpy(data, s->localImage_.data() + 14, size);
             }
         }
         if (getenv("PORTAL_MUX_DEBUG"))
@@ -520,6 +550,7 @@ void RdpSession::connect()
     if (clipboard_) {
         fileGroupId_ = ClipboardRegisterFormat(clipboard_, "FileGroupDescriptorW");
         uriListId_ = ClipboardRegisterFormat(clipboard_, "text/uri-list");
+        bmpId_ = ClipboardRegisterFormat(clipboard_, "image/bmp");
     }
     if (fileContext_) (void)cliprdr_file_context_set_locally_available(fileContext_, TRUE);
     if (!context_ || !wakeEvent_ || !clipboard_ || !fileContext_) {
@@ -588,7 +619,20 @@ void RdpSession::sendClipboardText(const std::string& text)
 {
     {
         std::lock_guard lock(clipMutex_);
-        if (text == localClipboard_ && localUris_.empty()) return;
+        if (text == localClipboard_ && localUris_.empty() && localImage_.empty()) return;
+        localClipboard_ = text;
+        localUris_.clear();
+        localImage_.clear();
+    }
+    post([this] { announceClipboard(); });
+}
+
+void RdpSession::sendClipboardImage(const std::string& bmp, const std::string& text)
+{
+    {
+        std::lock_guard lock(clipMutex_);
+        if (bmp == localImage_ && text == localClipboard_ && localUris_.empty()) return;
+        localImage_ = bmp;
         localClipboard_ = text;
         localUris_.clear();
     }
@@ -602,6 +646,7 @@ void RdpSession::sendClipboardUris(const std::string& uriList)
         if (uriList == localUris_) return;
         localUris_ = uriList;
         localClipboard_.clear();
+        localImage_.clear();
     }
     post([this] { announceClipboard(); });
 }
@@ -654,11 +699,16 @@ void RdpSession::announceClipboard()
     std::lock_guard lock(clipMutex_);
     if (!cliprdr_) return; // MonitorReady announces once the channel is up
     static char fileGroupName[] = "FileGroupDescriptorW";
-    CLIPRDR_FORMAT format = localUris_.empty() ? CLIPRDR_FORMAT{CF_UNICODETEXT, nullptr} : CLIPRDR_FORMAT{fileGroupId_, fileGroupName};
+    std::vector<CLIPRDR_FORMAT> formats;
+    if (!localUris_.empty()) formats.push_back({fileGroupId_, fileGroupName});
+    else {
+        if (!localClipboard_.empty()) formats.push_back({CF_UNICODETEXT, nullptr});
+        if (!localImage_.empty()) formats.push_back({CF_DIB, nullptr}); // Windows makes the bitmap and DIBV5 of it
+    }
     CLIPRDR_FORMAT_LIST list{};
     list.common.msgType = CB_FORMAT_LIST;
-    list.numFormats = localUris_.empty() && localClipboard_.empty() ? 0 : 1;
-    list.formats = &format;
+    list.numFormats = UINT32(formats.size());
+    list.formats = formats.data();
     if (cliprdr_file_context_notify_new_client_format_list(fileContext_) != CHANNEL_RC_OK) return;
     (void)cliprdr_->ClientFormatList(cliprdr_, &list);
 }

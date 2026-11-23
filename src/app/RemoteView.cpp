@@ -5,6 +5,7 @@
 #include "app/Keymap.h"
 #include "app/LockKeys.h"
 
+#include <QBuffer>
 #include <QClipboard>
 #include <QDropEvent>
 #include <QFileInfo>
@@ -21,6 +22,8 @@
 
 #include <cstring>
 #include <utility>
+
+static const QString remoteMark = QStringLiteral("application/x-portal-mux-remote"); // ours: not offered back
 
 using rdc::KeyEvent;
 using rdc::PointerEvent;
@@ -199,7 +202,7 @@ void RemoteView::localClipboardChanged()
 {
     if (!session_ || !options_.clipboard) return;
     const QMimeData* mime = QGuiApplication::clipboard()->mimeData();
-    if (!mime) return;
+    if (!mime || mime->hasFormat(remoteMark)) return;
     if (mime->hasUrls() && mime->urls() == lastRemoteUrls_) return;
     QStringList files;
     for (const QUrl& url : mime->urls())
@@ -209,6 +212,17 @@ void RemoteView::localClipboardChanged()
         return;
     }
     const QString text = mime->text();
+    if (mime->hasImage() && session_->takesClipboardImages()) {
+        const QImage image = qvariant_cast<QImage>(mime->imageData());
+        QImage flat(image.size(), QImage::Format_RGB32); // Windows makes few-colour bitmaps black and white
+        flat.fill(Qt::white);
+        QPainter(&flat).drawImage(0, 0, image);
+        QByteArray bmp;
+        QBuffer buffer(&bmp);
+        buffer.open(QIODevice::WriteOnly);
+        if (!image.isNull() && flat.save(&buffer, "BMP"))
+            return session_->sendClipboardImage(bmp.toStdString(), text.toStdString());
+    }
     if (!text.isEmpty() && text != lastRemoteClipboard_) session_->sendClipboardText(text.toStdString());
 }
 
@@ -315,6 +329,19 @@ void RemoteView::onClipboardText(std::string text)
         if (!options_.clipboard) return;
         lastRemoteClipboard_ = text;
         QGuiApplication::clipboard()->setText(text);
+    }, Qt::QueuedConnection);
+}
+
+void RemoteView::onClipboardImage(std::string bmp)
+{
+    QMetaObject::invokeMethod(this, [this, bmp = QByteArray::fromStdString(bmp)] {
+        if (!options_.clipboard) return;
+        const QImage image = QImage::fromData(bmp, "BMP");
+        if (image.isNull()) return;
+        auto* mime = new QMimeData;
+        mime->setImageData(image);
+        mime->setData(remoteMark, {});
+        QGuiApplication::clipboard()->setMimeData(mime);
     }, Qt::QueuedConnection);
 }
 

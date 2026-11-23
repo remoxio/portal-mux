@@ -31,6 +31,7 @@ struct DisplayListener : SessionListener {
     virtual void onFrameUpdated(const Rect& dirty) = 0;
     virtual void onClipboardText(std::string text) = 0;
     virtual void onClipboardUris(std::string uriList) = 0; // text/uri-list of local paths
+    virtual void onClipboardImage(std::string /*bmp file*/) {}
     // BGRA, width*height*4 bytes; empty = hide
     virtual void onCursor(std::vector<uint8_t> bgra, int width, int height, int hotX, int hotY) = 0;
     // interleaved s16 PCM
@@ -54,6 +55,9 @@ public:
     virtual void sendPointer(const PointerEvent& event) = 0;
     virtual void sendClipboardText(const std::string& text) = 0;
     virtual void sendClipboardUris(const std::string&) {}
+    // a BMP file, offered with the text beside it
+    virtual bool takesClipboardImages() const { return false; }
+    virtual void sendClipboardImage(const std::string& /*bmp*/, const std::string& text) { if (!text.empty()) sendClipboardText(text); }
     virtual void pullClipboard() {} // hosts that can't announce a change: asked when the user leaves the view
     // local files to the remote side (SPICE: via its agent); `done`: an error or empty, UI thread
     virtual void relaunchAtSize(int, int) {} // Moonlight: quits the app on the host and starts it again at this size

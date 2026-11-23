@@ -54,6 +54,8 @@ public:
     void sendPointer(const PointerEvent& e) override { inner_->sendPointer(e); }
     void sendClipboardText(const std::string& t) override { inner_->sendClipboardText(t); }
     void sendClipboardUris(const std::string& u) override { inner_->sendClipboardUris(u); }
+    bool takesClipboardImages() const override { return inner_->takesClipboardImages(); }
+    void sendClipboardImage(const std::string& b, const std::string& t) override { inner_->sendClipboardImage(b, t); }
     void syncLocks(uint8_t locks) override { inner_->syncLocks(locks); }
     bool canRedirectUsb() const override { return inner_->canRedirectUsb(); }
     std::vector<UsbDevice> usbDevices() override { return inner_->usbDevices(); }

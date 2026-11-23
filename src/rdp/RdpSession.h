@@ -31,6 +31,8 @@ public:
     void sendPointer(const PointerEvent& event) override;
     void sendClipboardText(const std::string& text) override;
     void sendClipboardUris(const std::string& uriList) override;
+    bool takesClipboardImages() const override { return true; }
+    void sendClipboardImage(const std::string& bmp, const std::string& text) override;
     void resizeDesktop(int width, int height) override;
     void setPixelRatio(double ratio) override;
     Framebuffer& framebuffer() override { return framebuffer_; }
@@ -75,9 +77,10 @@ private:
     CliprdrClientContext* cliprdr_ = nullptr;
     std::string localClipboard_;
     std::string localUris_;      // takes precedence over text
+    std::string localImage_;     // a BMP file, offered beside the text
     CliprdrFileContext* fileContext_ = nullptr;
     wClipboard* clipboard_ = nullptr;
-    uint32_t fileGroupId_ = 0, uriListId_ = 0;
+    uint32_t fileGroupId_ = 0, uriListId_ = 0, bmpId_ = 0;
     uint32_t serverFileGroupId_ = 0;            // 0 if not offered
     uint32_t pendingFormat_ = 0;
 };
