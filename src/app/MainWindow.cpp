@@ -1748,10 +1748,8 @@ TerminalView* MainWindow::createTerminal(const Connection& c, const QString& add
     terminal->setProperty("scrollback", c.number("scrollback"));
     configureTerminal(terminal);
     connect(terminal, &TerminalView::titleChanged, this, [this, terminal, host = QString::fromStdString(c.host)](const QString& title) {
-        terminal->setProperty("title", title);
         tabs_->setTabToolTip(tabs_->indexOf(terminal), title.isEmpty() ? host : title);
         updateActiveList();
-        updateWindowTitle();
     });
     connect(terminal, &TerminalView::bell, this, [this, terminal] {
         if (tabs_->currentWidget() != terminal) {
@@ -2268,8 +2266,7 @@ void MainWindow::updateNumLockCell()
 
 void MainWindow::updateWindowTitle()
 {
-    const QWidget* page = tabs_->currentWidget();
-    const QString title = page ? page->property("title").toString() : QString();
+    const QString title = tabs_->tabText(tabs_->currentIndex()).remove(QLatin1Char('&')); // the session's name, not its terminal's title
     setWindowTitle(title.isEmpty() ? QStringLiteral("Portal Mux") : tr("%1 — Portal Mux").arg(title));
 }
 
