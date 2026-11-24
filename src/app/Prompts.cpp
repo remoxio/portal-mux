@@ -64,6 +64,30 @@ bool trust(QWidget* parent, const QString& title, const QString& details, bool* 
     return true;
 }
 
+bool confirm(QWidget* parent, const QString& title, const QString& text, const QString& action)
+{
+    QDialog dialog(parent); // not QMessageBox: see trust()
+    dialog.setWindowTitle(title);
+    auto* icon = new QLabel;
+    icon->setPixmap(dialog.style()->standardIcon(QStyle::SP_MessageBoxQuestion).pixmap(48, 48));
+    auto* label = new QLabel(text);
+    label->setWordWrap(true);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel);
+    QPushButton* yes = buttons->addButton(action, QDialogButtonBox::AcceptRole);
+    yes->setAutoDefault(false);
+    yes->setFocusPolicy(Qt::NoFocus);
+    buttons->button(QDialogButtonBox::Cancel)->setDefault(true);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    auto* grid = new QGridLayout(&dialog);
+    grid->addWidget(icon, 0, 0, Qt::AlignTop);
+    grid->addWidget(label, 0, 1);
+    grid->addWidget(buttons, 1, 0, 1, 2);
+    grid->setColumnStretch(1, 1);
+    dialog.setMinimumWidth(400);
+    return dialog.exec() == QDialog::Accepted;
+}
+
 bool credentials(QWidget* parent, const QString& prompt, rdc::Credentials& creds)
 {
     QDialog dialog(parent);

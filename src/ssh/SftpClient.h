@@ -22,6 +22,7 @@ public:
         uint64_t size = 0;
         int64_t mtime = 0;
         bool directory = false;
+        unsigned permissions = 0; // 07777
     };
     using Done = std::function<void(std::string error)>;
 
@@ -36,11 +37,18 @@ public:
     void list(std::string path, std::function<void(std::vector<Entry>, std::string error)> done);
     void download(std::string remote, std::string local, Done done);
     void upload(std::string local, std::string remote, Done done);
+    void rename(std::string from, std::string to, Done done);
+    void remove(std::string path, Done done); // a folder with everything in it
+    void makeFolder(std::string path, Done done);
+    void makeFile(std::string path, Done done);
+    void setPermissions(std::string path, unsigned mode, Done done);
 
 private:
     void post(std::function<void()> task);
     void run(std::stop_token stop, Done opened);
     std::string error(const std::string& what) const;
+    void call(std::function<int()> op, std::string failure, Done done); // op returns 0 on success
+    int removeTree(const std::string& path);
 
     SessionListener& listener_;
     SshConnection::Params params_;

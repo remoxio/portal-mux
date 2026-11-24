@@ -86,6 +86,8 @@ namespace prompts {
 // Dialogs, blocking the app: for prompts that belong to no tab; `always`: an "Always trust" box
 bool trust(QWidget* parent, const QString& title, const QString& details, bool* always = nullptr);
 bool credentials(QWidget* parent, const QString& prompt, rdc::Credentials& creds);
+// before something hard to undo: Cancel is the default, the action never focused
+bool confirm(QWidget* parent, const QString& title, const QString& text, const QString& action);
 
 // A tab's: a panel over `tab` that blocks only it; `reply` once, never if the tab goes first
 void trustIn(QWidget* tab, const QString& title, const QString& details, bool* always, std::function<void(bool)> reply);

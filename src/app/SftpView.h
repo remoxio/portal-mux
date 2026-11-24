@@ -3,13 +3,21 @@
 #include "app/Prompts.h"
 #include "ssh/SftpClient.h"
 
+#include <QHash>
 #include <QKeyEvent>
+#include <QSet>
 #include <QWidget>
 
+#include <memory>
+
+class QAction;
+class QFileSystemWatcher;
 class QLabel;
+class QTemporaryDir;
 class QLineEdit;
 class QToolButton;
 class QTreeWidget;
+class QTreeWidgetItem;
 
 class SftpView : public QWidget, public rdc::SessionListener {
     Q_OBJECT
@@ -34,7 +42,18 @@ signals:
     void closeRequested(); // the user cancelled a login or trust prompt
 
 private:
-    void open(const QString& path);
+    void open(const QString& path, const QString& select = {}, const QString& message = {}); // message: instead of the count
+    QString remote(const QString& name) const;
+    QList<QTreeWidgetItem*> chosen() const; // the selection without ".."
+    rdc::SftpClient::Done finished(int operations, const QString& select = {}); // lists the folder again after the last
+    void activate(QTreeWidgetItem* item);
+    void openFile(const QString& name); // in its app; saving it sends it back
+    void saveBack(const QString& local);
+    void rename();
+    void remove();
+    void create(bool folder);
+    void editPermissions();
+    void updateActions();
     void download();
     void upload();
     void upload(const QStringList& files);
@@ -52,6 +71,13 @@ private:
     QTreeWidget* list_;
     QLabel* status_;
     QToolButton* follow_ = nullptr;
+    QAction *open_, *download_, *rename_, *delete_, *permissions_, *copyPath_, *newFolder_, *newFile_, *upload_, *refresh_, *hidden_;
+    QSet<QString> names_; // the folder's, hidden ones too
+    QString renaming_;
+    std::unique_ptr<QTemporaryDir> edits_;
+    QFileSystemWatcher* watcher_ = nullptr;
+    QHash<QString, QString> edited_; // local copy -> remote file
+    QSet<QString> saving_;
     bool started_ = false;
     bool precise_ = false; // OSC 7 seen: titles are ignored
 };

@@ -44,7 +44,13 @@ void SftpClient::post(std::function<void()> task)
 
 std::string SftpClient::error(const std::string& what) const
 {
-    return what + ": " + (sftp_ ? "SFTP error " + std::to_string(sftp_get_error(sftp_)) + ", " : "") + ssh_->lastError();
+    const int code = sftp_ ? sftp_get_error(sftp_) : 0;
+    switch (code) {
+    case SSH_FX_NO_SUCH_FILE: return what + ": no such file";
+    case SSH_FX_PERMISSION_DENIED: return what + ": permission denied";
+    case SSH_FX_FILE_ALREADY_EXISTS: return what + ": it already exists";
+    }
+    return what + ": " + (sftp_ ? "SFTP error " + std::to_string(code) + ", " : "") + ssh_->lastError();
 }
 
 void SftpClient::run(std::stop_token stop, Done opened)
@@ -88,7 +94,7 @@ void SftpClient::list(std::string path, std::function<void(std::vector<Entry>, s
         std::vector<Entry> entries;
         while (sftp_attributes a = sftp_readdir(sftp_, dir)) {
             if (strcmp(a->name, ".") != 0 && strcmp(a->name, "..") != 0)
-                entries.push_back({a->name, a->size, int64_t(a->mtime), a->type == SSH_FILEXFER_TYPE_DIRECTORY});
+                entries.push_back({a->name, a->size, int64_t(a->mtime), a->type == SSH_FILEXFER_TYPE_DIRECTORY, a->permissions & 07777});
             sftp_attributes_free(a);
         }
         sftp_closedir(dir);
@@ -117,8 +123,8 @@ void SftpClient::download(std::string remote, std::string local, Done done)
         }
         sftp_close(in);
         if (out && fclose(out) != 0 && failure.empty()) failure = "Write failed on " + partial;
-        if (failure.empty() && rename(partial.c_str(), local.c_str()) != 0) failure = "Cannot rename to " + local;
-        if (!failure.empty()) remove(partial.c_str());
+        if (failure.empty() && std::rename(partial.c_str(), local.c_str()) != 0) failure = "Cannot rename to " + local;
+        if (!failure.empty()) std::remove(partial.c_str());
         done(failure);
     });
 }
@@ -143,6 +149,64 @@ void SftpClient::upload(std::string local, std::string remote, Done done)
         if (out) sftp_close(out);
         done(failure);
     });
+}
+
+void SftpClient::call(std::function<int()> op, std::string failure, Done done)
+{
+    post([this, op = std::move(op), failure = std::move(failure), done = std::move(done)] { done(op() == 0 ? "" : error(failure)); });
+}
+
+void SftpClient::rename(std::string from, std::string to, Done done)
+{
+    post([this, from = std::move(from), to = std::move(to), done = std::move(done)] {
+        if (sftp_attributes a = sftp_lstat(sftp_, to.c_str())) { // libssh's posix-rename would replace it
+            sftp_attributes_free(a);
+            return done(to.substr(to.find_last_of('/') + 1) + " already exists");
+        }
+        done(sftp_rename(sftp_, from.c_str(), to.c_str()) == 0 ? "" : error("Cannot rename " + from));
+    });
+}
+
+int SftpClient::removeTree(const std::string& path)
+{
+    sftp_attributes a = sftp_lstat(sftp_, path.c_str()); // a link is removed, not followed
+    if (!a) return -1;
+    const bool directory = a->type == SSH_FILEXFER_TYPE_DIRECTORY;
+    sftp_attributes_free(a);
+    if (!directory) return sftp_unlink(sftp_, path.c_str());
+    if (sftp_dir dir = sftp_opendir(sftp_, path.c_str())) {
+        int rc = 0;
+        while (sftp_attributes e = sftp_readdir(sftp_, dir)) {
+            if (rc == 0 && strcmp(e->name, ".") != 0 && strcmp(e->name, "..") != 0) rc = removeTree(path + "/" + e->name);
+            sftp_attributes_free(e);
+        }
+        sftp_closedir(dir);
+        if (rc != 0) return rc;
+    }
+    return sftp_rmdir(sftp_, path.c_str());
+}
+
+void SftpClient::remove(std::string path, Done done)
+{
+    call([this, path] { return removeTree(path); }, "Cannot delete " + path, std::move(done));
+}
+
+void SftpClient::makeFolder(std::string path, Done done)
+{
+    call([this, path] { return sftp_mkdir(sftp_, path.c_str(), 0755); }, "Cannot create " + path, std::move(done));
+}
+
+void SftpClient::makeFile(std::string path, Done done)
+{
+    call([this, path] {
+        sftp_file f = sftp_open(sftp_, path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
+        return f ? sftp_close(f) : -1;
+    }, "Cannot create " + path, std::move(done));
+}
+
+void SftpClient::setPermissions(std::string path, unsigned mode, Done done)
+{
+    call([this, path, mode] { return sftp_chmod(sftp_, path.c_str(), mode); }, "Cannot change " + path, std::move(done));
 }
 
 } // namespace rdc

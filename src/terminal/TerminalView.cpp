@@ -721,7 +721,7 @@ void TerminalView::find(bool older, bool restart)
 
 bool TerminalView::event(QEvent* event)
 {
-    if (event->type() == QEvent::ShortcutOverride) {
+    if (event->type() == QEvent::ShortcutOverride && hasFocus()) { // not the files panel's: it's a child
         event->accept(); // the shell owns Ctrl+W/Q while focused
         return true;
     }
