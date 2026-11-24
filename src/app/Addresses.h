@@ -19,3 +19,6 @@ QByteArray magicPacket(const QString& mac);
 
 // The folder in a terminal title as "user@host: ~/dir" (many prompts set it); ~ is home. Empty if none.
 QString titleFolder(const QString& title, const QString& home);
+
+// For a POSIX shell's command line: as is when nothing in it is special, else in single quotes
+QString shellQuoted(const QString& path);

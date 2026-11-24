@@ -223,3 +223,10 @@ QString titleFolder(const QString& title, const QString& home)
     if ((path.size() > 1 && path[1] != QLatin1Char('/')) || home.isEmpty()) return {}; // ~user: not known here
     return home + path.mid(1);
 }
+
+QString shellQuoted(const QString& path)
+{
+    static const QRegularExpression plain(QStringLiteral("^[A-Za-z0-9_./+:@%,=-]+$"));
+    if (plain.match(path).hasMatch()) return path;
+    return QLatin1Char('\'') + QString(path).replace(QLatin1Char('\''), QStringLiteral("'\\''")) + QLatin1Char('\'');
+}

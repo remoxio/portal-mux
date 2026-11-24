@@ -18,6 +18,7 @@
 #include <QInputDialog>
 #include <QMenu>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QToolButton>
@@ -30,6 +31,7 @@
 #include <QLineEdit>
 #include <QLocale>
 #include <QPushButton>
+#include <QSettings>
 #include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -39,7 +41,8 @@
 static constexpr int DirRole = Qt::UserRole;
 static constexpr int ModeRole = Qt::UserRole + 1;
 
-SftpView::SftpView(rdc::SshConnection::Params params, bool panel, QWidget* parent) : QWidget(parent), client_(*this, std::move(params))
+SftpView::SftpView(rdc::SshConnection::Params params, QSettings* settings, bool panel, QWidget* parent)
+    : QWidget(parent), client_(*this, std::move(params)), settings_(settings)
 {
     pathEdit_ = new QLineEdit;
     QAbstractButton *up, *refresh, *uploadButton, *downloadButton;
@@ -54,7 +57,7 @@ SftpView::SftpView(rdc::SshConnection::Params params, bool panel, QWidget* paren
         up = button("arrow-up", tr("Up"));
         refresh = button("refresh-cw", tr("Refresh"));
         uploadButton = button("upload", tr("Upload… (or drop files on the list)"));
-        downloadButton = button("download", tr("Download the selected files…"));
+        downloadButton = button("download", tr("Download the selection…"));
         follow_ = button("terminal", tr("Follow the terminal's folder"));
         follow_->setCheckable(true);
         follow_->setChecked(true);
@@ -125,10 +128,17 @@ SftpView::SftpView(rdc::SshConnection::Params params, bool panel, QWidget* paren
     newFolder_ = action("folder-plus", tr("New &Folder…"), [this] { create(true); });
     newFile_ = action("file-plus", tr("New F&ile…"), [this] { create(false); });
     upload_ = action("upload", tr("&Upload Here…"), qOverload<>(&SftpView::upload));
+    uploadFolder_ = action("folder-up", tr("Upload a Folder &Here…"), [this] {
+        const QString folder = QFileDialog::getExistingDirectory(this, tr("Upload a folder"), QDir::homePath());
+        if (!folder.isEmpty()) upload(QStringList{folder});
+    });
     refresh_ = action("refresh-cw", tr("R&efresh"), [this] { open(path_); }, QKeySequence::Refresh);
-    hidden_ = action(nullptr, tr("Show &Hidden Files"), [this] { open(path_); }, QKeySequence(Qt::CTRL | Qt::Key_H));
+    hidden_ = action(nullptr, tr("Show &Hidden Files"), [this] {
+        settings_->setValue(QStringLiteral("files/showHidden"), hidden_->isChecked());
+        open(path_);
+    }, QKeySequence(Qt::CTRL | Qt::Key_H));
     hidden_->setCheckable(true);
-    hidden_->setChecked(true);
+    hidden_->setChecked(settings_->value(QStringLiteral("files/showHidden"), true).toBool());
     list_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(list_, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
         updateActions();
@@ -139,7 +149,7 @@ SftpView::SftpView(rdc::SshConnection::Params params, bool panel, QWidget* paren
             menu.addActions({rename_, delete_, permissions_});
             menu.addSeparator();
         }
-        menu.addActions({copyPath_, newFolder_, newFile_, upload_});
+        menu.addActions({copyPath_, newFolder_, newFile_, upload_, uploadFolder_});
         menu.addSeparator();
         menu.addActions({refresh_, hidden_});
         menu.exec(list_->viewport()->mapToGlobal(pos));
@@ -239,11 +249,11 @@ void SftpView::updateActions()
     const bool folder = current && current->data(0, DirRole).toBool();
     open_->setEnabled(connected && current);
     open_->setIcon(icons::lucide(folder ? "folder-open" : "external-link"));
-    download_->setEnabled(std::any_of(items.begin(), items.end(), [](const QTreeWidgetItem* i) { return !i->data(0, DirRole).toBool(); }));
+    download_->setEnabled(!items.isEmpty());
     rename_->setEnabled(items.size() == 1);
     delete_->setEnabled(!items.isEmpty());
     permissions_->setEnabled(!items.isEmpty());
-    for (QAction* a : {copyPath_, newFolder_, newFile_, upload_, refresh_, hidden_}) a->setEnabled(connected);
+    for (QAction* a : {copyPath_, newFolder_, newFile_, upload_, uploadFolder_, refresh_, hidden_}) a->setEnabled(connected);
 }
 
 void SftpView::open(const QString& path, const QString& select, const QString& message)
@@ -422,8 +432,7 @@ void SftpView::keyPressEvent(QKeyEvent* event)
 void SftpView::download()
 {
     QStringList names;
-    for (QTreeWidgetItem* item : list_->selectedItems())
-        if (!item->data(0, DirRole).toBool()) names << item->text(0);
+    for (const QTreeWidgetItem* item : chosen()) names << item->text(0);
     if (names.isEmpty()) return;
     const QString target = QFileDialog::getExistingDirectory(this, tr("Download to"), QDir::homePath());
     if (target.isEmpty()) return;
@@ -461,11 +470,18 @@ bool SftpView::eventFilter(QObject* watched, QEvent* event)
         if (drag->mimeData()->hasUrls() && started_) drag->acceptProposedAction();
         return true;
     }
+    if (watched == list_->viewport() && (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease) &&
+        static_cast<QMouseEvent*>(event)->button() == Qt::MiddleButton) {
+        const QTreeWidgetItem* item = list_->itemAt(static_cast<QMouseEvent*>(event)->position().toPoint());
+        if (event->type() == QEvent::MouseButtonRelease && item && item->text(0) != QLatin1String(".."))
+            emit pathPicked(remote(item->text(0)));
+        return true;
+    }
     if (watched == list_->viewport() && event->type() == QEvent::Drop) {
         auto* drop = static_cast<QDropEvent*>(event);
         QStringList files;
         for (const QUrl& url : drop->mimeData()->urls())
-            if (url.isLocalFile() && QFileInfo(url.toLocalFile()).isFile()) files << url.toLocalFile();
+            if (url.isLocalFile() && QFileInfo::exists(url.toLocalFile())) files << url.toLocalFile();
         upload(files);
         drop->acceptProposedAction();
         return true;
@@ -480,11 +496,14 @@ void SftpView::upload(const QStringList& files)
     if (files.isEmpty() || path_.isEmpty()) return;
     QStringList existing;
     for (const QString& file : files)
-        if (names_.contains(QFileInfo(file).fileName())) existing << QFileInfo(file).fileName();
+        if (names_.contains(QFileInfo(QDir::cleanPath(file)).fileName())) existing << QFileInfo(QDir::cleanPath(file)).fileName();
     if (!existing.isEmpty() &&
         !prompts::confirm(this, tr("Upload"), tr("Replace %1 on the server?").arg(existing.join(QStringLiteral(", "))), tr("&Replace")))
         return;
     setBusy(tr("Uploading…"));
-    const auto done = finished(int(files.size()), QFileInfo(files.last()).fileName());
-    for (const QString& file : files) client_.upload(file.toStdString(), remote(QFileInfo(file).fileName()).toStdString(), done);
+    const auto done = finished(int(files.size()), QFileInfo(QDir::cleanPath(files.last())).fileName());
+    for (const QString& file : files) {
+        const QString clean = QDir::cleanPath(file); // a dropped folder's URL may end in /
+        client_.upload(clean.toStdString(), remote(QFileInfo(clean).fileName()).toStdString(), done);
+    }
 }

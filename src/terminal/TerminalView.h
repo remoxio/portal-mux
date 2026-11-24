@@ -42,6 +42,7 @@ public:
     void setSidePanelShown(bool on);
     bool sidePanelShown() const { return side_ && !side_->isHidden(); }
     std::string takeTypedPassword(); // what the login prompt was answered with, once
+    void paste(const QString& text);
     void onData(std::string bytes) override;
 
     struct Callbacks;
@@ -79,7 +80,6 @@ private:
 
     void feed(const char* data, size_t len);
     void send(const char* data, size_t len);
-    void paste(const QString& text);
     void pasteClipboard();
     bool clipboardImage() const; // to upload: an image without text, and a session that can
     void resizeTerminal();

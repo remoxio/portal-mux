@@ -35,6 +35,7 @@ public:
     std::string home() const { return home_; }
 
     void list(std::string path, std::function<void(std::vector<Entry>, std::string error)> done);
+    // a file, or a folder with everything in it
     void download(std::string remote, std::string local, Done done);
     void upload(std::string local, std::string remote, Done done);
     void rename(std::string from, std::string to, Done done);
@@ -49,6 +50,10 @@ private:
     std::string error(const std::string& what) const;
     void call(std::function<int()> op, std::string failure, Done done); // op returns 0 on success
     int removeTree(const std::string& path);
+    std::string fetch(const std::string& remote, const std::string& local);
+    std::string fetchFile(const std::string& remote, const std::string& local);
+    std::string send(const std::string& local, const std::string& remote);
+    std::string sendFile(const std::string& local, const std::string& remote);
 
     SessionListener& listener_;
     SshConnection::Params params_;

@@ -371,6 +371,9 @@ static void titleFolderTests()
     for (const char* none : {"vim notes.txt", "al@box: ~bob/x", "box: /etc", "al@box: relative/dir"})
         assert(titleFolder(QLatin1String(none), home).isEmpty());
     assert(titleFolder(QStringLiteral("al@box: ~/x"), {}).isEmpty());
+    assert(shellQuoted(QStringLiteral("/etc/ssh/sshd_config")) == QStringLiteral("/etc/ssh/sshd_config"));
+    assert(shellQuoted(QStringLiteral("/srv/my dir/$x")) == QStringLiteral("'/srv/my dir/$x'"));
+    assert(shellQuoted(QStringLiteral("/tmp/it's")) == QStringLiteral("'/tmp/it'\\''s'"));
 }
 
 static void addressTests()

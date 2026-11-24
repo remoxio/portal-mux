@@ -24,6 +24,7 @@
 #include "app/RemoteView.h"
 #include "app/PageRail.h"
 #include "app/SessionTabs.h"
+#include "app/Prompts.h"
 #include "app/SftpView.h"
 #include "app/SshServers.h"
 #include "app/WindowEffects.h"
@@ -747,7 +748,7 @@ MainWindow::MainWindow(QWidget* parent)
         const Connection* found = findConnection(selectedId());
         if (!found || !serversKnown(*found)) return;
         readSecrets(this, settings_, *found, [this](Connection c) {
-            auto* view = new SftpView(rdc::SshConnection::fromConnection(c, knownHostsFile()));
+            auto* view = new SftpView(rdc::SshConnection::fromConnection(c, knownHostsFile()), settings_);
             view->setProperty("protocol", QStringLiteral("SFTP"));
             view->setProperty("address", QString::fromStdString(c.username.empty() ? c.host : c.username + "@" + c.host));
             connect(view, &SftpView::closeRequested, view, &QObject::deleteLater);
@@ -1907,7 +1908,7 @@ void MainWindow::openVmConsole(LibvirtVms* host, const std::string& uuid)
 
 void MainWindow::addFilePanel(TerminalView* terminal, const Connection& c)
 {
-    auto* files = new SftpView(rdc::SshConnection::fromConnection(c, knownHostsFile()), true);
+    auto* files = new SftpView(rdc::SshConnection::fromConnection(c, knownHostsFile()), settings_, true);
     terminal->setSidePanel(files);
     terminal->setSidePanelShown(settings_->value(QStringLiteral("terminal/filePanel"), true).toBool());
     connect(terminal, &TerminalView::stateChanged, files, [terminal, files](SessionState s) {
@@ -1915,6 +1916,10 @@ void MainWindow::addFilePanel(TerminalView* terminal, const Connection& c)
     });
     connect(terminal, &TerminalView::directoryChanged, files, &SftpView::follow);
     connect(terminal, &TerminalView::titleChanged, files, &SftpView::followTitle);
+    connect(files, &SftpView::pathPicked, terminal, [terminal](const QString& path) {
+        terminal->paste(shellQuoted(path));
+        terminal->setFocus();
+    });
     updateSessionActions(); // its Files button
 }
 
@@ -2281,14 +2286,8 @@ bool MainWindow::confirmCloseTab(int index)
     const auto* view = page ? page->findChild<RemoteView*>() : nullptr;
     const auto* terminal = terminalOf(page);
     if (!(view && view->live()) && !(terminal && terminal->live())) return true;
-    QMessageBox box(QMessageBox::Question, tr("Close Tab"),
-                    tr("Disconnect from \"%1\" and close its tab?").arg(tabs_->tabText(index).remove(QLatin1Char('&'))),
-                    QMessageBox::Cancel, this);
-    const QAbstractButton* disconnect = box.addButton(tr("&Disconnect"), QMessageBox::AcceptRole);
-    box.setDefaultButton(QMessageBox::Cancel);
-    box.setOption(QMessageBox::Option::DontUseNativeDialog);
-    box.exec();
-    return box.clickedButton() == disconnect;
+    return prompts::confirm(this, tr("Close Tab"), tr("Disconnect from \"%1\" and close its tab?").arg(tabs_->tabText(index).remove(QLatin1Char('&'))),
+                            tr("&Disconnect"));
 }
 
 QWidget* MainWindow::currentPage() const

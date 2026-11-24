@@ -13,6 +13,7 @@
 class QAction;
 class QFileSystemWatcher;
 class QLabel;
+class QSettings;
 class QTemporaryDir;
 class QLineEdit;
 class QToolButton;
@@ -24,7 +25,7 @@ class SftpView : public QWidget, public rdc::SessionListener {
 
 public:
     // panel: narrow, beside a terminal, following its folder
-    SftpView(rdc::SshConnection::Params params, bool panel = false, QWidget* parent = nullptr);
+    SftpView(rdc::SshConnection::Params params, QSettings* settings, bool panel = false, QWidget* parent = nullptr);
     ~SftpView() override;
 
     void start(const std::string& password = {}); // connects; password: if the parameters have none
@@ -40,6 +41,7 @@ public:
 
 signals:
     void closeRequested(); // the user cancelled a login or trust prompt
+    void pathPicked(const QString& path); // middle-clicked: for the terminal
 
 private:
     void open(const QString& path, const QString& select = {}, const QString& message = {}); // message: instead of the count
@@ -71,7 +73,8 @@ private:
     QTreeWidget* list_;
     QLabel* status_;
     QToolButton* follow_ = nullptr;
-    QAction *open_, *download_, *rename_, *delete_, *permissions_, *copyPath_, *newFolder_, *newFile_, *upload_, *refresh_, *hidden_;
+    QSettings* settings_;
+    QAction *open_, *download_, *rename_, *delete_, *permissions_, *copyPath_, *newFolder_, *newFile_, *upload_, *uploadFolder_, *refresh_, *hidden_;
     QSet<QString> names_; // the folder's, hidden ones too
     QString renaming_;
     std::unique_ptr<QTemporaryDir> edits_;

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 
 namespace rdc {
 
@@ -93,8 +94,15 @@ void SftpClient::list(std::string path, std::function<void(std::vector<Entry>, s
         if (!dir) return done({}, error("Cannot open " + path));
         std::vector<Entry> entries;
         while (sftp_attributes a = sftp_readdir(sftp_, dir)) {
-            if (strcmp(a->name, ".") != 0 && strcmp(a->name, "..") != 0)
-                entries.push_back({a->name, a->size, int64_t(a->mtime), a->type == SSH_FILEXFER_TYPE_DIRECTORY, a->permissions & 07777});
+            if (strcmp(a->name, ".") != 0 && strcmp(a->name, "..") != 0) {
+                bool directory = a->type == SSH_FILEXFER_TYPE_DIRECTORY;
+                if (a->type == SSH_FILEXFER_TYPE_SYMLINK) // a linked folder opens as one
+                    if (sftp_attributes target = sftp_stat(sftp_, (path + "/" + a->name).c_str())) {
+                        directory = target->type == SSH_FILEXFER_TYPE_DIRECTORY;
+                        sftp_attributes_free(target);
+                    }
+                entries.push_back({a->name, a->size, int64_t(a->mtime), directory, a->permissions & 07777});
+            }
             sftp_attributes_free(a);
         }
         sftp_closedir(dir);
@@ -107,48 +115,113 @@ void SftpClient::list(std::string path, std::function<void(std::vector<Entry>, s
 
 void SftpClient::download(std::string remote, std::string local, Done done)
 {
-    post([this, remote = std::move(remote), local = std::move(local), done = std::move(done)] {
-        sftp_file in = sftp_open(sftp_, remote.c_str(), O_RDONLY, 0);
-        if (!in) return done(error("Cannot open " + remote));
-        // temp name + rename: a failed transfer never replaces an existing file
-        const std::string partial = local + ".part";
-        FILE* out = fopen(partial.c_str(), "wb");
-        std::string failure = out ? "" : "Cannot write " + partial;
-        char buffer[65536];
-        while (failure.empty()) {
-            const ssize_t n = sftp_read(in, buffer, sizeof buffer);
-            if (n == 0) break;
-            if (n < 0) failure = error("Read failed on " + remote);
-            else if (fwrite(buffer, 1, size_t(n), out) != size_t(n)) failure = "Write failed on " + partial;
-        }
-        sftp_close(in);
-        if (out && fclose(out) != 0 && failure.empty()) failure = "Write failed on " + partial;
-        if (failure.empty() && std::rename(partial.c_str(), local.c_str()) != 0) failure = "Cannot rename to " + local;
-        if (!failure.empty()) std::remove(partial.c_str());
-        done(failure);
-    });
+    post([this, remote = std::move(remote), local = std::move(local), done = std::move(done)] { done(fetch(remote, local)); });
 }
 
 void SftpClient::upload(std::string local, std::string remote, Done done)
 {
-    post([this, local = std::move(local), remote = std::move(remote), done = std::move(done)] {
-        FILE* in = fopen(local.c_str(), "rb");
-        if (!in) return done("Cannot read " + local);
-        sftp_file out = sftp_open(sftp_, remote.c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-        std::string failure = out ? "" : error("Cannot create " + remote);
-        char buffer[65536];
-        while (failure.empty()) {
-            const size_t n = fread(buffer, 1, sizeof buffer, in);
-            if (n == 0) {
-                if (ferror(in)) failure = "Read failed on " + local;
-                break;
-            }
-            if (sftp_write(out, buffer, n) != ssize_t(n)) failure = error("Write failed on " + remote);
+    post([this, local = std::move(local), remote = std::move(remote), done = std::move(done)] { done(send(local, remote)); });
+}
+
+// a name a server could send to write elsewhere
+static bool unsafeName(const std::string& name)
+{
+#ifdef _WIN32
+    if (name.find('\\') != std::string::npos) return true;
+#endif
+    return name.empty() || name == "." || name == ".." || name.find('/') != std::string::npos;
+}
+
+std::string SftpClient::fetch(const std::string& remote, const std::string& local)
+{
+    sftp_attributes a = sftp_stat(sftp_, remote.c_str());
+    if (!a) return error("Cannot open " + remote);
+    const bool directory = a->type == SSH_FILEXFER_TYPE_DIRECTORY;
+    sftp_attributes_free(a);
+    if (!directory) return fetchFile(remote, local);
+    std::error_code ec;
+    if (!std::filesystem::create_directory(local, ec) && !std::filesystem::is_directory(local, ec)) return "Cannot create " + local;
+    sftp_dir dir = sftp_opendir(sftp_, remote.c_str());
+    if (!dir) return error("Cannot open " + remote);
+    std::string failure;
+    while (sftp_attributes e = sftp_readdir(sftp_, dir)) {
+        const std::string name = e->name;
+        const bool link = e->type == SSH_FILEXFER_TYPE_SYMLINK;
+        sftp_attributes_free(e);
+        if (!failure.empty() || unsafeName(name)) continue;
+        const std::string path = remote + "/" + name;
+        if (link) { // a linked file comes along, a linked folder not: it could lead back up
+            sftp_attributes target = sftp_stat(sftp_, path.c_str());
+            const bool file = target && target->type == SSH_FILEXFER_TYPE_REGULAR;
+            if (target) sftp_attributes_free(target);
+            if (!file) continue;
         }
-        fclose(in);
-        if (out) sftp_close(out);
-        done(failure);
-    });
+        failure = fetch(path, local + "/" + name);
+    }
+    sftp_closedir(dir);
+    return failure;
+}
+
+std::string SftpClient::fetchFile(const std::string& remote, const std::string& local)
+{
+    sftp_file in = sftp_open(sftp_, remote.c_str(), O_RDONLY, 0);
+    if (!in) return error("Cannot open " + remote);
+    // temp name + rename: a failed transfer never replaces an existing file
+    const std::string partial = local + ".part";
+    FILE* out = fopen(partial.c_str(), "wb");
+    std::string failure = out ? "" : "Cannot write " + partial;
+    char buffer[65536];
+    while (failure.empty()) {
+        const ssize_t n = sftp_read(in, buffer, sizeof buffer);
+        if (n == 0) break;
+        if (n < 0) failure = error("Read failed on " + remote);
+        else if (fwrite(buffer, 1, size_t(n), out) != size_t(n)) failure = "Write failed on " + partial;
+    }
+    sftp_close(in);
+    if (out && fclose(out) != 0 && failure.empty()) failure = "Write failed on " + partial;
+    std::error_code ec;
+    if (failure.empty()) std::filesystem::rename(partial, local, ec); // replaces, on Windows too
+    if (ec) failure = "Cannot rename to " + local;
+    if (!failure.empty()) std::remove(partial.c_str());
+    return failure;
+}
+
+std::string SftpClient::send(const std::string& local, const std::string& remote)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::is_directory(local, ec)) return sendFile(local, remote);
+    if (sftp_mkdir(sftp_, remote.c_str(), 0755) != 0) {
+        sftp_attributes a = sftp_stat(sftp_, remote.c_str()); // there already: filled
+        const bool directory = a && a->type == SSH_FILEXFER_TYPE_DIRECTORY;
+        if (a) sftp_attributes_free(a);
+        if (!directory) return error("Cannot create " + remote);
+    }
+    for (fs::directory_iterator it(local, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->is_symlink(ec) && it->is_directory(ec)) continue; // could lead back up
+        if (std::string failure = send(it->path().string(), remote + "/" + it->path().filename().string()); !failure.empty()) return failure;
+    }
+    return ec ? "Cannot read " + local : "";
+}
+
+std::string SftpClient::sendFile(const std::string& local, const std::string& remote)
+{
+    FILE* in = fopen(local.c_str(), "rb");
+    if (!in) return "Cannot read " + local;
+    sftp_file out = sftp_open(sftp_, remote.c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    std::string failure = out ? "" : error("Cannot create " + remote);
+    char buffer[65536];
+    while (failure.empty()) {
+        const size_t n = fread(buffer, 1, sizeof buffer, in);
+        if (n == 0) {
+            if (ferror(in)) failure = "Read failed on " + local;
+            break;
+        }
+        if (sftp_write(out, buffer, n) != ssize_t(n)) failure = error("Write failed on " + remote);
+    }
+    fclose(in);
+    if (out) sftp_close(out);
+    return failure;
 }
 
 void SftpClient::call(std::function<int()> op, std::string failure, Done done)
