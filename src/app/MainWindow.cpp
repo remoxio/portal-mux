@@ -441,19 +441,6 @@ MainWindow::MainWindow(QWidget* parent)
     file->addAction(tr("&Import from KRDC…"), this, &MainWindow::importFromKrdc);
     file->addSeparator();
     file->addAction(icons::lucide("log-out"), tr("&Quit"), QKeySequence::Quit, this, &QWidget::close)->setMenuRole(QAction::QuitRole);
-    usbAction_ = new QAction(icons::lucide("usb"), tr("&USB Devices…"), this);
-    usbAction_->setToolTip(tr("Hand this computer's USB devices to the VM (SPICE)"));
-    connect(usbAction_, &QAction::triggered, this, &MainWindow::showUsbDevices);
-    relaunchAction_ = new QAction(icons::lucide("refresh-cw"), tr("Reconnect at &Window Size"), this);
-    relaunchAction_->setToolTip(tr("Quits the app on the host and starts it again at this window's size (Moonlight; with Apollo's "
-                                   "virtual display the host's screen gets that size)"));
-    connect(relaunchAction_, &QAction::triggered, this, [this] {
-        if (RemoteView* view = currentView()) view->relaunchAtWindowSize();
-    });
-    sessionsMenu_ = menuBar()->addMenu(tr("S&essions"));
-    connect(sessionsMenu_, &QMenu::aboutToShow, this, &MainWindow::fillSessionsMenu);
-    sessionsMenu_->addAction(tr("No sessions"))->setEnabled(false); // macOS leaves an empty menu out of the menu bar
-    toolsMenu_ = menuBar()->addMenu(tr("&Tools")); // the session's toolbar, and more: updateSessionActions()
     QMenu* view = menuBar()->addMenu(tr("&View"));
     auto addToggle = [&](QAction*& action, const QString& text, const char* key) {
         const QString setting = QStringLiteral("view/") + QLatin1String(key);
@@ -483,6 +470,19 @@ MainWindow::MainWindow(QWidget* parent)
     addToggle(tabBarAction_, tr("Show Ta&b Bar"), "tabBar");
     view->addSeparator();
     view->addAction(tr("Open Test &Pattern"), this, &MainWindow::openTestPattern);
+    usbAction_ = new QAction(icons::lucide("usb"), tr("&USB Devices…"), this);
+    usbAction_->setToolTip(tr("Hand this computer's USB devices to the VM (SPICE)"));
+    connect(usbAction_, &QAction::triggered, this, &MainWindow::showUsbDevices);
+    relaunchAction_ = new QAction(icons::lucide("refresh-cw"), tr("Reconnect at &Window Size"), this);
+    relaunchAction_->setToolTip(tr("Quits the app on the host and starts it again at this window's size (Moonlight; with Apollo's "
+                                   "virtual display the host's screen gets that size)"));
+    connect(relaunchAction_, &QAction::triggered, this, [this] {
+        if (RemoteView* view = currentView()) view->relaunchAtWindowSize();
+    });
+    sessionsMenu_ = menuBar()->addMenu(tr("S&essions"));
+    connect(sessionsMenu_, &QMenu::aboutToShow, this, &MainWindow::fillSessionsMenu);
+    sessionsMenu_->addAction(tr("No sessions"))->setEnabled(false); // macOS leaves an empty menu out of the menu bar
+    toolsMenu_ = menuBar()->addMenu(tr("&Tools")); // the session's toolbar, and more: updateSessionActions()
     QMenu* settings = menuBar()->addMenu(tr("&Configuration"));
     settings->addAction(icons::lucide("settings"), tr("&Settings…"), QKeySequence::Preferences, this,
                         [this] { openSettings(); })
