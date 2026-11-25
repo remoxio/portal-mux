@@ -611,12 +611,19 @@ MainWindow::MainWindow(QWidget* parent)
     views_->setAutoFillBackground(true); // floating over tabs can't be translucent
     tree_ = new QTreeWidget;
     tree_->setHeaderHidden(true);
-    tree_->setContextMenuPolicy(Qt::ActionsContextMenu);
+    tree_->addActions({connectAction_, sftpAction_, editAction_, deleteAction_, newAction}); // also for their shortcuts
     auto* reloadSshConfig = new QAction(icons::lucide("refresh-cw"), tr("&Reload ~/.ssh/config"), this);
     connect(reloadSshConfig, &QAction::triggered, this, [this] { rebuildTree(selectedId()); });
-    auto* separator = new QAction(this);
-    separator->setSeparator(true);
-    tree_->addActions({connectAction_, sftpAction_, editAction_, deleteAction_, newAction, separator, reloadSshConfig});
+    tree_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tree_, &QWidget::customContextMenuRequested, this, [this, reloadSshConfig](const QPoint& at) {
+        QMenu menu;
+        menu.addActions(tree_->actions());
+        if (const QTreeWidgetItem* item = tree_->itemAt(at); item && item->data(0, FoldRole) == QStringLiteral("readonly:") + sshConfigGroup()) {
+            menu.addSeparator();
+            menu.addAction(reloadSshConfig); // on the SSH config group only
+        }
+        menu.exec(tree_->viewport()->mapToGlobal(at));
+    });
     active_ = new QTreeWidget;
     active_->setHeaderHidden(true);
     active_->setContextMenuPolicy(Qt::CustomContextMenu);
