@@ -4,7 +4,11 @@
 #include <QPainter>
 #include <QStyledItemDelegate>
 
-// measured as never fitting: Qt shifts fitting text a pixel
+#include <algorithm>
+
+inline constexpr int OnlineRole = Qt::UserRole + 10; // whether the host answers; unset: not known
+
+// measured as never fitting: Qt shifts fitting text a pixel; OnlineRole as a dot on the right, filled when it answers
 class ElidingDelegate : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
@@ -21,7 +25,25 @@ public:
         if (text.isEmpty()) return;
         const int margin = style->pixelMetric(QStyle::PM_FocusFrameHMargin, nullptr, widget) + 1;
         opt.text = QString(500, QLatin1Char('x'));
-        const QRect rect = style->subElementRect(QStyle::SE_ItemViewItemText, &opt, widget).adjusted(margin, 0, -margin, 0);
+        QRect rect = style->subElementRect(QStyle::SE_ItemViewItemText, &opt, widget).adjusted(margin, 0, -margin, 0);
+        if (const QVariant online = index.data(OnlineRole); online.isValid()) {
+            const int d = std::max(6, opt.fontMetrics.height() / 3);
+            const QRectF dot(rect.right() - d - 2.5, rect.center().y() - d / 2.0 + 0.5, d, d);
+            const QColor green = opt.palette.color(QPalette::Text).lightness() > 128 ? QColor(0x3f, 0xb9, 0x50) : QColor(0x1a, 0x7f, 0x37);
+            painter->save();
+            painter->setRenderHint(QPainter::Antialiasing);
+            if (online.toBool()) {
+                painter->setPen(Qt::NoPen);
+                painter->setBrush(green);
+            } else {
+                QColor dim = opt.palette.color(QPalette::Text);
+                dim.setAlphaF(0.45);
+                painter->setPen(QPen(dim, 1.2));
+            }
+            painter->drawEllipse(dot);
+            painter->restore();
+            rect.setRight(int(dot.left()) - 4);
+        }
         const QPalette::ColorGroup group = !(opt.state & QStyle::State_Enabled) ? QPalette::Disabled
                                            : opt.state & QStyle::State_Active   ? QPalette::Normal
                                                                                 : QPalette::Inactive;

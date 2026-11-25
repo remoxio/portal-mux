@@ -101,6 +101,7 @@ qt_add_executable(portal-mux WIN32 MACOSX_BUNDLE
     src/app/GuestRow.cpp
     src/app/Keymap.cpp
     src/app/KeyboardGrab.cpp
+    src/app/Imports.cpp
     src/app/KrdcImport.cpp
     src/app/Logins.cpp
     src/app/LockKeys.cpp
@@ -109,6 +110,7 @@ qt_add_executable(portal-mux WIN32 MACOSX_BUNDLE
     src/app/MonitorWindow.cpp
     src/app/PageRail.cpp
     src/app/PanelTree.cpp
+    src/app/Reachability.cpp
     src/app/Prompts.cpp
     src/app/HyperV.cpp
     src/app/HyperVHost.cpp

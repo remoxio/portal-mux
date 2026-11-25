@@ -8,6 +8,7 @@
 #include <QTimer>
 
 #include <functional>
+#include <map>
 #include <memory>
 
 namespace rdc {
@@ -30,6 +31,7 @@ class QStatusBar;
 class QSettings;
 class QSplitter;
 class QStackedWidget;
+class Reachability;
 class QToolBar;
 class RemoteView;
 class SessionTabs;
@@ -79,6 +81,12 @@ private:
     void duplicateSelected(); // saved passwords too
     QString dropGroup(QPoint at, bool* ok) const; // the group a connection dropped there goes to
     void importFromKrdc();
+    void importFromApp(const QString& app); // Remmina, PuTTY, MobaXterm, mRemoteNG
+    void importExport();                    // a Portal Mux export or connections.json
+    void exportConnections();
+    // skips those already saved (same id, or unless `exact`, same protocol, address and user); says what it did
+    void importConnections(const QString& title, std::vector<rdc::Connection> found, const QString& note, bool exact = false);
+    void checkOnline(bool all); // false: only those not known yet
     void connectTo(const std::string& id);
     bool serversKnown(const rdc::Connection& c); // false, and says so, if its tunnel or jump host was removed
     void startSession(const rdc::Connection& connection);
@@ -146,6 +154,8 @@ private:
     QString configDir_;
     ConnectionStore store_;
     std::vector<rdc::Connection> sshConfig_;
+    Reachability* reachability_;
+    std::map<QString, bool> online_; // by connection id
 
     ProxmoxView* proxmox_ = nullptr;
     VmView* kvm_ = nullptr; // with libvirt

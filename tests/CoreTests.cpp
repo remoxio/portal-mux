@@ -7,6 +7,7 @@
 #include "app/DomainXml.h"
 #include "app/HyperV.h"
 #include "app/KrdcImport.h"
+#include "app/Imports.h"
 #include "app/Proxmox.h"
 #include "core/Connection.h"
 #include "core/Framebuffer.h"
@@ -645,6 +646,52 @@ static void azureTests()
     assert(!azure::parseTokens(R"({"error":"invalid_grant","error_description":"AADSTS50173: Revoked."})", &error) && error == "AADSTS50173: Revoked.");
 }
 
+static void importTests()
+{
+    auto one = [](const std::vector<rdc::Connection>& v) { assert(v.size() == 1); return v[0]; };
+    rdc::Connection c = one(importRemmina("[remmina]\nname=Office PC\ngroup=Work/Desk\nprotocol=RDP\nserver=pc.lan:3390\n"
+                                         "username=ann\ndomain=CORP\n"));
+    assert(c.protocol == rdc::Protocol::RDP && c.name == "Office PC" && c.group == "Work/Desk" && c.host == "pc.lan" && c.port == 3390 &&
+           c.username == "ann" && c.option("domain") == "CORP");
+    c = one(importRemmina("[remmina]\nprotocol=VNC\nserver=[fe80::1]:5900\n"));
+    assert(c.host == "fe80::1" && c.port == 0 && c.name == "fe80::1");
+    assert(importRemmina("[remmina]\nprotocol=X2GO\nserver=a\n").empty() && importRemmina("[remmina]\nprotocol=RDP\n").empty());
+
+    c = one(importPutty("web%20box", "HostName=root@web.example\nPortNumber=2222\nProtocol=ssh\nUserName=\n"));
+    assert(c.protocol == rdc::Protocol::SSH && c.name == "web box" && c.host == "web.example" && c.port == 2222 && c.username == "root");
+    c = one(importPutty("router", "Protocol=serial\nSerialLine=/dev/ttyUSB0\nSerialSpeed=9600\n"));
+    assert(c.protocol == rdc::Protocol::Serial && c.host == "/dev/ttyUSB0" && c.option("baud") == "9600");
+    assert(importPutty("Default%20Settings", "HostName=x\nProtocol=ssh\n").empty() && importPutty("r", "HostName=x\nProtocol=rlogin\n").empty());
+
+    const auto moba = importMobaXterm("[Bookmarks]\r\nSubRep=\r\nImgNum=42\r\n"
+                                      "db= #109#0%db.lan%22%<default>%%-1%-1%%%%%0%0%0%%%-1%0%0%0%%1080%%0%0%1#MobaFont%10#0# #-1\r\n"
+                                      "[Bookmarks_1]\r\nSubRep=Lab\\Win\r\nImgNum=41\r\n"
+                                      "win desk= #91#4%10.0.0.5%3390%admin%0%-1#MobaFont%10#0# #-1\r\n"
+                                      "vnc=; logout#128#5%pi.lan%5901%%#MobaFont#0# #-1\r\n"
+                                      "web= #313#11%https://x%%#MobaFont#0# #-1\r\n");
+    assert(moba.size() == 3);
+    assert(moba[0].protocol == rdc::Protocol::SSH && moba[0].name == "db" && moba[0].host == "db.lan" && moba[0].port == 0 &&
+           moba[0].username.empty() && moba[0].group.empty());
+    assert(moba[1].protocol == rdc::Protocol::RDP && moba[1].name == "win desk" && moba[1].port == 3390 && moba[1].username == "admin" &&
+           moba[1].group == "Lab/Win");
+    assert(moba[2].protocol == rdc::Protocol::VNC && moba[2].host == "pi.lan" && moba[2].port == 5901);
+
+    QString error;
+    const auto nodes = importMremoteng(R"(<?xml version="1.0" encoding="utf-8"?>
+<Connections Name="Connections" Export="False" FullFileEncryption="False" ConfVersion="2.6">
+  <Node Name="Folder1" Type="Container"><Node Name="Sub" Type="Container">
+    <Node Name="dc" Type="Connection" Protocol="RDP" Hostname="dc.corp" Port="3389" Username="admin" Domain="CORP" Password="xx"/>
+  </Node></Node>
+  <Node Name="sw" Type="Connection" Protocol="SSH2" Hostname="10.1.1.1" Port="2022" Username="ops"/>
+  <Node Name="web" Type="Connection" Protocol="HTTPS" Hostname="w" Port="443"/>
+</Connections>)", &error);
+    assert(error.isEmpty() && nodes.size() == 2);
+    assert(nodes[0].protocol == rdc::Protocol::RDP && nodes[0].group == "Folder1/Sub" && nodes[0].host == "dc.corp" && nodes[0].port == 0 &&
+           nodes[0].username == "admin" && nodes[0].option("domain") == "CORP");
+    assert(nodes[1].protocol == rdc::Protocol::SSH && nodes[1].group.empty() && nodes[1].port == 2022 && nodes[1].username == "ops");
+    assert(importMremoteng(R"(<Connections FullFileEncryption="True">xyz</Connections>)", &error).empty() && error.contains("encrypted"));
+}
+
 static void localTerminalTests()
 {
     ConnectionStore empty(QStringLiteral("/nonexistent/connections.json"));
@@ -665,6 +712,7 @@ static void localTerminalTests()
 
 int main()
 {
+    importTests();
     localTerminalTests();
     azureTests();
     hypervTests();

@@ -6,7 +6,9 @@
 #include "app/ConnectionDialog.h"
 #include "app/ElidingDelegate.h"
 #include "app/Icons.h"
+#include "app/Imports.h"
 #include "app/KrdcImport.h"
+#include "app/Reachability.h"
 #include "app/LockKeys.h"
 #include "app/Look.h"
 #include "app/MonitorWindow.h"
@@ -58,11 +60,15 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -77,6 +83,7 @@
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QSaveFile>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSlider>
@@ -94,6 +101,7 @@
 #include <QToolButton>
 #include <QTimer>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QUdpSocket>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -102,6 +110,7 @@
 #include <algorithm>
 #include <chrono>
 #include <functional>
+#include <set>
 #include <map>
 #include <memory>
 
@@ -484,7 +493,15 @@ MainWindow::MainWindow(QWidget* parent)
     });
     file->addActions({editAction_, duplicateAction_, deleteAction_, connectAction_, sftpAction_});
     file->addSeparator();
-    file->addAction(tr("&Import from KRDC…"), this, &MainWindow::importFromKrdc);
+    QMenu* import = file->addMenu(tr("&Import"));
+    import->addAction(tr("Portal Mux &Export…"), this, &MainWindow::importExport);
+    import->addSeparator();
+    import->addAction(tr("From &KRDC"), this, &MainWindow::importFromKrdc);
+    import->addAction(tr("From &Remmina"), this, [this] { importFromApp(QStringLiteral("Remmina")); });
+    import->addAction(tr("From &PuTTY"), this, [this] { importFromApp(QStringLiteral("PuTTY")); });
+    import->addAction(tr("From &MobaXterm…"), this, [this] { importFromApp(QStringLiteral("MobaXterm")); });
+    import->addAction(tr("From m&RemoteNG…"), this, [this] { importFromApp(QStringLiteral("mRemoteNG")); });
+    file->addAction(tr("E&xport Connections…"), this, &MainWindow::exportConnections);
     file->addSeparator();
     file->addAction(icons::lucide("log-out"), tr("&Quit"), QKeySequence::Quit, this, &QWidget::close)->setMenuRole(QAction::QuitRole);
     QMenu* view = menuBar()->addMenu(tr("&View"));
@@ -626,6 +643,15 @@ MainWindow::MainWindow(QWidget* parent)
     views_->setAutoFillBackground(true); // floating over tabs can't be translucent
     tree_ = new QTreeWidget;
     tree_->setHeaderHidden(true);
+    reachability_ = new Reachability(this);
+    connect(reachability_, &Reachability::answered, this, [this](const QString& id, bool online) {
+        online_[id] = online;
+        for (QTreeWidgetItemIterator it(tree_); *it; ++it)
+            if ((*it)->data(0, IdRole).toString() == id) (*it)->setData(0, OnlineRole, online);
+    });
+    auto* onlineTimer = new QTimer(this);
+    connect(onlineTimer, &QTimer::timeout, this, [this] { checkOnline(true); });
+    onlineTimer->start(60'000);
     tree_->addActions({connectAction_, sftpAction_, editAction_, duplicateAction_, deleteAction_, newAction}); // also for their shortcuts
     tree_->setDragDropMode(QAbstractItemView::InternalMove); // a connection onto a group; the drop is ours (eventFilter)
     tree_->viewport()->installEventFilter(this);
@@ -929,6 +955,7 @@ void MainWindow::rebuildTree(const std::string& selectId)
                                                           : QStringLiteral("%1://%2").arg(QLatin1String(protocolName(c.protocol)),
                                                                                           QString::fromStdString(c.host)));
         item->setData(0, IdRole, QString::fromStdString(c.id));
+        if (const auto known = online_.find(QString::fromStdString(c.id)); known != online_.end()) item->setData(0, OnlineRole, known->second);
         if (c.id == selectId) selected = item;
     }
     QList<QTreeWidgetItem*> readOnly; // never merged with a same-named user group
@@ -947,6 +974,7 @@ void MainWindow::rebuildTree(const std::string& selectId)
             item->setIcon(0, protocolIcon(protocolLabel(c.protocol)));
             item->setToolTip(0, address(c));
             item->setData(0, IdRole, QString::fromStdString(c.id));
+            if (const auto known = online_.find(QString::fromStdString(c.id)); known != online_.end()) item->setData(0, OnlineRole, known->second);
             if (c.id == selectId) selected = item;
         }
         readOnly << g;
@@ -963,6 +991,28 @@ void MainWindow::rebuildTree(const std::string& selectId)
     if (selected) tree_->setCurrentItem(selected);
     applyFilter();
     updateActions();
+    checkOnline(false);
+}
+
+void MainWindow::checkOnline(bool all)
+{
+    if (!settings_->value(QStringLiteral("connections/checkOnline"), true).toBool()) {
+        online_.clear();
+        for (QTreeWidgetItemIterator it(tree_); *it; ++it) (*it)->setData(0, OnlineRole, QVariant());
+        return;
+    }
+    std::vector<Reachability::Target> targets;
+    auto add = [&](const Connection& c) {
+        static const std::set<Protocol> network{Protocol::RDP, Protocol::VNC, Protocol::SPICE, Protocol::SSH, Protocol::Telnet, Protocol::Moonlight};
+        const QString id = QString::fromStdString(c.id);
+        // through an SSH server it isn't reachable from here
+        if (!network.count(c.protocol) || c.host.empty() || !c.option("tunnel").empty() || !c.option("jumpHost").empty() || (!all && online_.count(id)))
+            return;
+        targets.push_back({id, QString::fromStdString(c.host), quint16(c.effectivePort())});
+    };
+    for (const Connection& c : store_.all()) add(c);
+    for (const Connection& c : sshConfig_) add(c);
+    reachability_->check(targets);
 }
 
 void MainWindow::applyFilter()
@@ -1117,7 +1167,7 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
     dialog.setWindowTitle(tr("Settings"));
     // pages apply at once; Cancel restores these as last applied
     const QStringList groups = {QStringLiteral("appearance"), QStringLiteral("sidebar"), QStringLiteral("tabs"), QStringLiteral("font"),
-                                QStringLiteral("sshServers"), QStringLiteral("logins"), QStringLiteral("terminal")};
+                                QStringLiteral("sshServers"), QStringLiteral("logins"), QStringLiteral("terminal"), QStringLiteral("connections")};
     auto current = [this, groups] {
         QMap<QString, QVariant> values;
         for (const QString& key : settings_->allKeys())
@@ -1371,7 +1421,17 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
     auto* tabsLayout = new QVBoxLayout(tabs);
     tabsLayout->addWidget(closeButtons);
     tabsLayout->addWidget(reopen);
-    addPage("panels-top-left", tr("Layout"), {appearance, tabs});
+    auto* connectionsBox = new QGroupBox(tr("Connections"));
+    auto* online = new QCheckBox(tr("Show which hosts answer"));
+    online->setToolTip(tr("A dot in the list, filled when the host answers on its port; checked every minute. "
+                          "Connections through an SSH server aren't checked."));
+    online->setChecked(settings_->value(QStringLiteral("connections/checkOnline"), true).toBool());
+    connect(online, &QCheckBox::toggled, &dialog, [this](bool on) {
+        settings_->setValue(QStringLiteral("connections/checkOnline"), on);
+        checkOnline(true);
+    });
+    (new QVBoxLayout(connectionsBox))->addWidget(online);
+    addPage("panels-top-left", tr("Layout"), {appearance, tabs, connectionsBox});
     addPage("panel-left", tr("Sidebar"), {viewsBox, sidebar});
     const int sidebarRow = pages->count() - 1;
     addPage("type", tr("Font"), {mainFont, sshFont});
@@ -1453,6 +1513,7 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
     if (const QString saved = settings_->value(QStringLiteral("font/main")).toString(); !saved.isEmpty()) font.fromString(saved);
     QApplication::setFont(font);
     for (TerminalView* terminal : findChildren<TerminalView*>()) configureTerminal(terminal);
+    checkOnline(true);
 }
 
 QString MainWindow::dropGroup(QPoint at, bool* ok) const
@@ -1673,6 +1734,12 @@ void MainWindow::importFromKrdc()
     }
     (void)config.open(QIODevice::ReadOnly); // optional: without it, default bookmark settings
 
+    importConnections(tr("Import from KRDC"), importKrdc(bookmarks.readAll(), config.readAll()),
+                      tr("Passwords stay in KWallet: enter them with Edit, or when asked while connecting."));
+}
+
+void MainWindow::importConnections(const QString& title, std::vector<Connection> found, const QString& note, bool exact)
+{
     auto same = [](const Connection& a, const Connection& b) {
         return a.protocol == b.protocol && a.effectivePort() == b.effectivePort() &&
                QString::fromStdString(a.host).compare(QString::fromStdString(b.host), Qt::CaseInsensitive) == 0 &&
@@ -1680,8 +1747,9 @@ void MainWindow::importFromKrdc()
     };
     int added = 0, existing = 0;
     std::string last;
-    for (Connection& c : importKrdc(bookmarks.readAll(), config.readAll())) {
-        if (std::any_of(store_.all().begin(), store_.all().end(), [&](const Connection& o) { return same(o, c); })) {
+    for (Connection& c : found) {
+        if ((!c.id.empty() && store_.find(c.id)) ||
+            (!exact && std::any_of(store_.all().begin(), store_.all().end(), [&](const Connection& o) { return same(o, c); }))) {
             ++existing;
             continue;
         }
@@ -1690,10 +1758,128 @@ void MainWindow::importFromKrdc()
     }
     if (added && !saveStore()) return;
     rebuildTree(last);
-    QString text = tr("Imported %n connection(s).", "", added);
+    QString text = found.empty() ? tr("No connections were found.") : tr("Imported %n connection(s).", "", added);
     if (existing) text += QLatin1Char(' ') + tr("%n already existed and were skipped.", "", existing);
-    if (added) text += QLatin1Char(' ') + tr("Passwords stay in KWallet: enter them with Edit, or when asked while connecting.");
-    QMessageBox::information(this, tr("Import from KRDC"), text);
+    if (added && !note.isEmpty()) text += QLatin1Char(' ') + note;
+    QMessageBox::information(this, title, text);
+}
+
+void MainWindow::importFromApp(const QString& app)
+{
+    const QString title = tr("Import from %1").arg(app);
+    std::vector<Connection> found;
+    auto read = [](const QString& path) {
+        QFile file(path);
+        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    if (app == QLatin1String("Remmina")) {
+        const QString dir = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/remmina");
+        for (const QFileInfo& f : QDir(dir).entryInfoList({QStringLiteral("*.remmina")}, QDir::Files))
+            for (Connection& c : importRemmina(read(f.filePath()))) found.push_back(std::move(c));
+    } else if (app == QLatin1String("PuTTY")) {
+#ifdef Q_OS_WIN
+        QSettings registry(QStringLiteral("HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions"), QSettings::NativeFormat);
+        for (const QString& name : registry.childGroups()) {
+            registry.beginGroup(name);
+            QByteArray text;
+            for (const QString& key : registry.childKeys()) text += key.toUtf8() + '=' + registry.value(key).toString().toUtf8() + '\n';
+            registry.endGroup();
+            for (Connection& c : importPutty(name, text)) found.push_back(std::move(c));
+        }
+#else
+        for (const QFileInfo& f : QDir(QDir::homePath() + QStringLiteral("/.putty/sessions")).entryInfoList(QDir::Files))
+            for (Connection& c : importPutty(f.fileName(), read(f.filePath()))) found.push_back(std::move(c));
+#endif
+    } else { // the user picks the file
+        const bool moba = app == QLatin1String("MobaXterm");
+#ifdef Q_OS_WIN
+        const QString start = qEnvironmentVariable("APPDATA") + (moba ? QStringLiteral("/MobaXterm") : QStringLiteral("/mRemoteNG"));
+#else
+        const QString start = QDir::homePath();
+#endif
+        const QString path = QFileDialog::getOpenFileName(this, title, start,
+                                                          moba ? tr("MobaXterm sessions (*.mxtsessions *.ini);;All files (*)")
+                                                               : tr("mRemoteNG connections (*.xml);;All files (*)"));
+        if (path.isEmpty()) return;
+        QString error;
+        found = moba ? importMobaXterm(read(path)) : importMremoteng(read(path), &error);
+        if (!error.isEmpty()) {
+            QMessageBox::warning(this, title, error);
+            return;
+        }
+    }
+    importConnections(title, std::move(found), tr("Passwords aren't imported: enter them with Edit, or when asked while connecting."));
+}
+
+void MainWindow::exportConnections()
+{
+    const QString path = QFileDialog::getSaveFileName(this, tr("Export Connections"), QDir::homePath() + QStringLiteral("/portal-mux-connections.json"),
+                                                      tr("Portal Mux export (*.json)"));
+    if (path.isEmpty()) return;
+    QJsonArray servers, logins, groups;
+    for (const SshServer& s : loadSshServers(settings_))
+        servers.append(QJsonObject{{QStringLiteral("id"), s.id}, {QStringLiteral("name"), s.name}, {QStringLiteral("host"), s.host},
+                                   {QStringLiteral("user"), s.user}, {QStringLiteral("auth"), s.auth}, {QStringLiteral("keyFile"), s.keyFile}});
+    for (const Login& l : loadLogins(settings_))
+        logins.append(QJsonObject{{QStringLiteral("id"), l.id}, {QStringLiteral("name"), l.name}, {QStringLiteral("user"), l.user},
+                                  {QStringLiteral("domain"), l.domain}});
+    for (const auto& [group, d] : allGroupDefaults(settings_))
+        groups.append(QJsonObject{{QStringLiteral("group"), group}, {QStringLiteral("login"), d.login}, {QStringLiteral("sshServer"), d.sshServer}});
+    const QJsonObject root{{QStringLiteral("version"), 1},       {QStringLiteral("connections"), ConnectionStore::toJson(store_.all())},
+                           {QStringLiteral("sshServers"), servers}, {QStringLiteral("logins"), logins},
+                           {QStringLiteral("groupDefaults"), groups}};
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(root).toJson()) < 0 || !file.commit()) {
+        QMessageBox::warning(this, tr("Export Connections"), tr("Could not write %1: %2").arg(path, file.errorString()));
+        return;
+    }
+    QMessageBox::information(this, tr("Export Connections"),
+                             tr("Saved %n connection(s) with the SSH servers, logins and group settings to %1. Passwords aren't in it.", "",
+                                int(store_.all().size()))
+                                 .arg(path));
+}
+
+void MainWindow::importExport()
+{
+    const QString title = tr("Import a Portal Mux Export");
+    const QString path = QFileDialog::getOpenFileName(this, title, QDir::homePath(), tr("Portal Mux export (*.json);;All files (*)"));
+    if (path.isEmpty()) return;
+    QFile file(path);
+    QJsonParseError parseError{};
+    const QJsonObject root = file.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(file.readAll(), &parseError).object() : QJsonObject();
+    if (!root.value(QStringLiteral("connections")).isArray()) {
+        QMessageBox::warning(this, title, tr("%1 is not a Portal Mux export.").arg(path));
+        return;
+    }
+    auto text = [](const QJsonObject& o, const char* key) { return o.value(QLatin1String(key)).toString(); };
+    std::vector<SshServer> servers = loadSshServers(settings_);
+    for (const QJsonValue& v : root.value(QStringLiteral("sshServers")).toArray()) {
+        const QJsonObject o = v.toObject();
+        if (text(o, "id").isEmpty() || std::any_of(servers.begin(), servers.end(), [&](const SshServer& s) { return s.id == text(o, "id"); })) continue;
+        SshServer s;
+        s.id = text(o, "id");
+        s.name = text(o, "name");
+        s.host = text(o, "host");
+        s.user = text(o, "user");
+        s.auth = text(o, "auth").isEmpty() ? s.auth : text(o, "auth");
+        s.keyFile = text(o, "keyFile");
+        servers.push_back(s);
+    }
+    saveSshServers(settings_, servers);
+    std::vector<Login> logins = loadLogins(settings_);
+    for (const QJsonValue& v : root.value(QStringLiteral("logins")).toArray()) {
+        const QJsonObject o = v.toObject();
+        if (text(o, "id").isEmpty() || std::any_of(logins.begin(), logins.end(), [&](const Login& l) { return l.id == text(o, "id"); })) continue;
+        logins.push_back({text(o, "id"), text(o, "name"), text(o, "user"), text(o, "domain")});
+    }
+    saveLogins(settings_, logins);
+    for (const QJsonValue& v : root.value(QStringLiteral("groupDefaults")).toArray()) {
+        const QJsonObject o = v.toObject();
+        const GroupDefaults mine = groupDefaults(settings_, text(o, "group"));
+        if (mine.login.isEmpty() && mine.sshServer.isEmpty()) setGroupDefaults(settings_, text(o, "group"), {text(o, "login"), text(o, "sshServer")});
+    }
+    importConnections(title, ConnectionStore::fromJson(root.value(QStringLiteral("connections")).toArray()),
+                      tr("Passwords aren't in exports: enter them with Edit, or when asked while connecting."), true);
 }
 
 void MainWindow::duplicateSelected()

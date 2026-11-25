@@ -51,7 +51,7 @@ std::optional<Login> findLogin(QSettings* settings, const QString& id)
     return std::nullopt;
 }
 
-static std::vector<std::pair<QString, GroupDefaults>> loadGroupDefaults(QSettings* settings)
+std::vector<std::pair<QString, GroupDefaults>> allGroupDefaults(QSettings* settings)
 {
     std::vector<std::pair<QString, GroupDefaults>> all;
     const int n = settings->beginReadArray(QStringLiteral("groupDefaults"));
@@ -66,14 +66,14 @@ static std::vector<std::pair<QString, GroupDefaults>> loadGroupDefaults(QSetting
 
 GroupDefaults groupDefaults(QSettings* settings, const QString& group)
 {
-    for (const auto& [name, defaults] : loadGroupDefaults(settings))
+    for (const auto& [name, defaults] : allGroupDefaults(settings))
         if (name == group) return defaults;
     return {};
 }
 
 void setGroupDefaults(QSettings* settings, const QString& group, const GroupDefaults& defaults)
 {
-    auto all = loadGroupDefaults(settings);
+    auto all = allGroupDefaults(settings);
     std::erase_if(all, [&](const auto& entry) { return entry.first == group; });
     if (!defaults.login.isEmpty() || !defaults.sshServer.isEmpty()) all.emplace_back(group, defaults);
     settings->remove(QStringLiteral("groupDefaults"));
@@ -168,20 +168,22 @@ LoginsPage::LoginsPage(QSettings* settings, QWidget* parent) : QWidget(parent), 
     list_->setCurrentRow(logins_.empty() ? -1 : 0);
 }
 
-void LoginsPage::save() const
+void saveLogins(QSettings* settings, const std::vector<Login>& logins)
 {
-    settings_->remove(QStringLiteral("logins"));
-    settings_->beginWriteArray(QStringLiteral("logins"), int(logins_.size()));
-    for (int i = 0; i < int(logins_.size()); ++i) {
-        const Login& l = logins_[size_t(i)];
-        settings_->setArrayIndex(i);
-        settings_->setValue(QStringLiteral("id"), l.id);
-        settings_->setValue(QStringLiteral("name"), l.name);
-        settings_->setValue(QStringLiteral("user"), l.user);
-        settings_->setValue(QStringLiteral("domain"), l.domain);
+    settings->remove(QStringLiteral("logins"));
+    settings->beginWriteArray(QStringLiteral("logins"), int(logins.size()));
+    for (int i = 0; i < int(logins.size()); ++i) {
+        const Login& l = logins[size_t(i)];
+        settings->setArrayIndex(i);
+        settings->setValue(QStringLiteral("id"), l.id);
+        settings->setValue(QStringLiteral("name"), l.name);
+        settings->setValue(QStringLiteral("user"), l.user);
+        settings->setValue(QStringLiteral("domain"), l.domain);
     }
-    settings_->endArray();
+    settings->endArray();
 }
+
+void LoginsPage::save() const { saveLogins(settings_, logins_); }
 
 void LoginsPage::showList()
 {

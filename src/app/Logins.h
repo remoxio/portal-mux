@@ -23,6 +23,7 @@ struct Login {
     QString summary() const; // domain\user
 };
 std::vector<Login> loadLogins(QSettings* settings);
+void saveLogins(QSettings* settings, const std::vector<Login>& logins);
 std::optional<Login> findLogin(QSettings* settings, const QString& id);
 std::string loginSecret(const QString& id); // its password's name in secrets
 
@@ -33,6 +34,7 @@ struct GroupDefaults {
     QString login, sshServer;
 };
 GroupDefaults groupDefaults(QSettings* settings, const QString& group);
+std::vector<std::pair<QString, GroupDefaults>> allGroupDefaults(QSettings* settings); // by group name
 void setGroupDefaults(QSettings* settings, const QString& group, const GroupDefaults& defaults);
 // "As the group" replaced by the group's choice; the login's user name, domain and the name of its password's secret
 // (empty: the connection's own)

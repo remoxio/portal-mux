@@ -22,6 +22,7 @@ struct SshServer {
     QString summary() const; // and the authentication
 };
 std::vector<SshServer> loadSshServers(QSettings* settings);
+void saveSshServers(QSettings* settings, const std::vector<SshServer>& servers);
 std::optional<SshServer> findSshServer(QSettings* settings, const QString& id);
 std::string sshServerSecret(const QString& id); // its password's name in secrets
 

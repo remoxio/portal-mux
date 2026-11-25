@@ -1,4 +1,4 @@
-add_executable(core_tests CoreTests.cpp ${PROJECT_SOURCE_DIR}/src/app/KrdcImport.cpp ${PROJECT_SOURCE_DIR}/src/app/DomainXml.cpp
+add_executable(core_tests CoreTests.cpp ${PROJECT_SOURCE_DIR}/src/app/KrdcImport.cpp ${PROJECT_SOURCE_DIR}/src/app/Imports.cpp ${PROJECT_SOURCE_DIR}/src/app/DomainXml.cpp
     ${PROJECT_SOURCE_DIR}/src/app/Addresses.cpp ${PROJECT_SOURCE_DIR}/src/app/Proxmox.cpp
     ${PROJECT_SOURCE_DIR}/src/app/HyperV.cpp ${PROJECT_SOURCE_DIR}/src/app/Azure.cpp
     ${PROJECT_SOURCE_DIR}/src/app/ConnectionStore.cpp)

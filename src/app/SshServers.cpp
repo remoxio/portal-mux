@@ -177,22 +177,24 @@ SshServersPage::SshServersPage(QSettings* settings, QWidget* parent) : QWidget(p
     list_->setCurrentRow(servers_.empty() ? -1 : 0);
 }
 
-void SshServersPage::save() const
+void saveSshServers(QSettings* settings, const std::vector<SshServer>& servers)
 {
-    settings_->remove(QStringLiteral("sshServers"));
-    settings_->beginWriteArray(QStringLiteral("sshServers"), int(servers_.size()));
-    for (int i = 0; i < int(servers_.size()); ++i) {
-        const SshServer& s = servers_[i];
-        settings_->setArrayIndex(i);
-        settings_->setValue(QStringLiteral("id"), s.id);
-        settings_->setValue(QStringLiteral("name"), s.name);
-        settings_->setValue(QStringLiteral("host"), s.host);
-        settings_->setValue(QStringLiteral("user"), s.user);
-        settings_->setValue(QStringLiteral("auth"), s.auth);
-        settings_->setValue(QStringLiteral("keyFile"), s.keyFile);
+    settings->remove(QStringLiteral("sshServers"));
+    settings->beginWriteArray(QStringLiteral("sshServers"), int(servers.size()));
+    for (int i = 0; i < int(servers.size()); ++i) {
+        const SshServer& s = servers[size_t(i)];
+        settings->setArrayIndex(i);
+        settings->setValue(QStringLiteral("id"), s.id);
+        settings->setValue(QStringLiteral("name"), s.name);
+        settings->setValue(QStringLiteral("host"), s.host);
+        settings->setValue(QStringLiteral("user"), s.user);
+        settings->setValue(QStringLiteral("auth"), s.auth);
+        settings->setValue(QStringLiteral("keyFile"), s.keyFile);
     }
-    settings_->endArray();
+    settings->endArray();
 }
+
+void SshServersPage::save() const { saveSshServers(settings_, servers_); }
 
 void SshServersPage::showList()
 {

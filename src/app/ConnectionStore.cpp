@@ -53,7 +53,27 @@ bool ConnectionStore::load(QString* error)
         QFile::copy(path_, path_ + ".broken");
         return false;
     }
-    for (const QJsonValue& v : doc.object().value(QLatin1String("connections")).toArray()) {
+    connections_ = fromJson(doc.object().value(QLatin1String("connections")).toArray());
+    return true;
+}
+
+bool ConnectionStore::save(QString* error) const
+{
+    const QJsonArray list = toJson(connections_);
+    QJsonObject root{{QLatin1String("version"), 1}, {QLatin1String("connections"), list}};
+
+    QSaveFile file(path_); // atomic: a crash keeps the old file
+    if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(root).toJson()) < 0 || !file.commit()) {
+        *error = file.errorString();
+        return false;
+    }
+    return true;
+}
+
+std::vector<Connection> ConnectionStore::fromJson(const QJsonArray& list)
+{
+    std::vector<Connection> connections;
+    for (const QJsonValue& v : list) {
         const QJsonObject o = v.toObject();
         Connection c;
         c.id = str(o, "id");
@@ -68,15 +88,15 @@ bool ConnectionStore::load(QString* error)
             if (rdc::findProperty(c.protocol, it.key().toStdString()))
                 c.options[it.key().toStdString()] = it.value().toString().toStdString();
         if (c.id.empty()) c.id = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
-        connections_.push_back(std::move(c));
+        connections.push_back(std::move(c));
     }
-    return true;
+    return connections;
 }
 
-bool ConnectionStore::save(QString* error) const
+QJsonArray ConnectionStore::toJson(const std::vector<Connection>& connections)
 {
     QJsonArray list;
-    for (const Connection& c : connections_) {
+    for (const Connection& c : connections) {
         QJsonObject o;
         auto put = [&](const char* key, const std::string& value) {
             if (!value.empty()) o.insert(QLatin1String(key), QString::fromStdString(value));
@@ -98,14 +118,7 @@ bool ConnectionStore::save(QString* error) const
         if (!options.isEmpty()) o.insert(QLatin1String("options"), options);
         list.append(o);
     }
-    QJsonObject root{{QLatin1String("version"), 1}, {QLatin1String("connections"), list}};
-
-    QSaveFile file(path_); // atomic: a crash keeps the old file
-    if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(root).toJson()) < 0 || !file.commit()) {
-        *error = file.errorString();
-        return false;
-    }
-    return true;
+    return list;
 }
 
 const Connection* ConnectionStore::find(const std::string& id) const

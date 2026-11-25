@@ -8,6 +8,7 @@
 #include <functional>
 #include <vector>
 
+class QJsonArray;
 class QObject;
 
 inline constexpr char localTerminalId[] = "local-terminal"; // this computer's terminal: always there, never deleted
@@ -28,6 +29,10 @@ public:
     bool ensureLocalTerminal(); // the first local terminal made by hand becomes it, else a new one; true: changed
 
     const QString& path() const { return path_; }
+
+    // the file's "connections" array; exports use it too
+    static std::vector<rdc::Connection> fromJson(const QJsonArray& list);
+    static QJsonArray toJson(const std::vector<rdc::Connection>& connections);
 
 private:
     QString path_;
