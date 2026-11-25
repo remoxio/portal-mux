@@ -411,12 +411,10 @@ void ProxmoxView::fix(ProxmoxClient* client)
 
 void ProxmoxView::removeServer(ProxmoxClient* client)
 {
-    QMessageBox box(QMessageBox::Question, tr("Remove Server"),
-                    tr("Remove \"%1\" from the list? Nothing changes on the server.").arg(QString::fromStdString(client->server().name)),
-                    QMessageBox::Yes | QMessageBox::No, this);
-    box.setDefaultButton(QMessageBox::No);
-    box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's dialog: Enter presses the first button
-    if (box.exec() != QMessageBox::Yes) return;
+    if (!prompts::confirm(this, tr("Remove Server"),
+                          tr("Remove \"%1\" from the list? Nothing changes on the server.").arg(QString::fromStdString(client->server().name)),
+                          tr("&Remove")))
+        return;
     secrets::remove(keychainKey(client->server().id));
     QFile::remove(configDir_ + QStringLiteral("/proxmox/%1-ca.pem").arg(QString::fromStdString(client->server().id)));
     std::erase(clients_, client);
@@ -546,15 +544,11 @@ void ProxmoxView::act(ProxmoxClient* client, const Guest& guest, const QString& 
 {
     if (action == QLatin1String("stop") || action == QLatin1String("reset")) {
         const bool stop = action == QLatin1String("stop");
-        QMessageBox box(QMessageBox::Warning, stop ? tr("Stop") : tr("Reset"),
-                        stop ? tr("Stop \"%1\"? It is like pulling the power plug: unsaved work in it is lost.").arg(QString::fromStdString(guest.name))
-                             : tr("Reset \"%1\"? It is like pressing its reset button: unsaved work in it is lost.").arg(QString::fromStdString(guest.name)),
-                        QMessageBox::Cancel, this);
-        const QAbstractButton* yes = box.addButton(stop ? tr("&Stop") : tr("R&eset"), QMessageBox::DestructiveRole);
-        box.setDefaultButton(QMessageBox::Cancel);
-        box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's dialog: Enter presses the first button
-        box.exec();
-        if (box.clickedButton() != yes) return;
+        if (!prompts::confirm(this, stop ? tr("Stop") : tr("Reset"),
+                              stop ? tr("Stop \"%1\"? It is like pulling the power plug: unsaved work in it is lost.").arg(QString::fromStdString(guest.name))
+                                   : tr("Reset \"%1\"? It is like pressing its reset button: unsaved work in it is lost.").arg(QString::fromStdString(guest.name)),
+                              stop ? tr("&Stop") : tr("R&eset"), QStyle::SP_MessageBoxWarning))
+            return;
     }
     client->control(guest, action, [this, name = guest.name](const QString& error) {
         emit message(tr("%1: %2").arg(QString::fromStdString(name), error));

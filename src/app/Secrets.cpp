@@ -1,4 +1,5 @@
 #include "app/Secrets.h"
+#include "app/Prompts.h"
 
 #include "app/Icons.h"
 
@@ -385,11 +386,9 @@ void attach(QLineEdit* field, const std::string& id, std::function<void()> delet
         });
     });
     QObject::connect(trash, &QAction::triggered, field, [field, id, trash, show, deleted] {
-        QMessageBox box(QMessageBox::Question, tr("Delete Password"), tr("Delete the saved password? It is asked for when connecting then."),
-                        QMessageBox::Yes | QMessageBox::No, field->window());
-        box.setDefaultButton(QMessageBox::No);
-        box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's dialog: Enter presses the first button
-        if (box.exec() != QMessageBox::Yes) return;
+        if (!prompts::confirm(field->window(), tr("Delete Password"), tr("Delete the saved password? It is asked for when connecting then."),
+                              tr("&Delete")))
+            return;
         remove(id);
         field->clear();
         show(false);

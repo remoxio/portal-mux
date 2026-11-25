@@ -1510,11 +1510,7 @@ void MainWindow::deleteSelected()
 {
     const Connection* c = store_.find(selectedId());
     if (!c || c->id == localTerminalId) return;
-    QMessageBox box(QMessageBox::Question, tr("Delete Connection"), tr("Delete \"%1\"?").arg(QString::fromStdString(c->name)),
-                    QMessageBox::Yes | QMessageBox::No, this);
-    box.setDefaultButton(QMessageBox::No);
-    box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's dialog: Enter presses the first button
-    if (box.exec() != QMessageBox::Yes) return;
+    if (!prompts::confirm(this, tr("Delete Connection"), tr("Delete \"%1\"?").arg(QString::fromStdString(c->name)), tr("&Delete"))) return;
     const std::string id = c->id;
     const std::vector<std::string> keys = secretKeys(c->protocol);
     store_.remove(id); // c dangles from here on
@@ -1600,11 +1596,9 @@ void MainWindow::runPreCommand(const Connection& c, std::function<void()> next)
                                                       : tr("The command before connecting crashed.");
         if (const QString output = QString::fromLocal8Bit(process->readAllStandardError()).trimmed(); !output.isEmpty())
             text += QStringLiteral("\n\n") + output.right(2000);
-        QMessageBox box(QMessageBox::Warning, tr("Command before connecting"), text + QStringLiteral("\n\n") + tr("Connect anyway?"),
-                        QMessageBox::Yes | QMessageBox::No, this);
-        box.setDefaultButton(QMessageBox::No);
-        box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's dialog: Enter presses the first button
-        if (box.exec() == QMessageBox::Yes) next();
+        if (prompts::confirm(this, tr("Command before connecting"), text + QStringLiteral("\n\n") + tr("Connect anyway?"), tr("&Connect Anyway"),
+                             QStyle::SP_MessageBoxWarning))
+            next();
     });
     connect(process, &QProcess::errorOccurred, this, [this, process, done](QProcess::ProcessError error) {
         if (error != QProcess::FailedToStart) return;

@@ -64,12 +64,12 @@ bool trust(QWidget* parent, const QString& title, const QString& details, bool* 
     return true;
 }
 
-bool confirm(QWidget* parent, const QString& title, const QString& text, const QString& action)
+bool confirm(QWidget* parent, const QString& title, const QString& text, const QString& action, QStyle::StandardPixmap icon)
 {
     QDialog dialog(parent); // not QMessageBox: see trust()
     dialog.setWindowTitle(title);
-    auto* icon = new QLabel;
-    icon->setPixmap(dialog.style()->standardIcon(QStyle::SP_MessageBoxQuestion).pixmap(48, 48));
+    auto* picture = new QLabel;
+    picture->setPixmap(dialog.style()->standardIcon(icon).pixmap(48, 48));
     auto* label = new QLabel(text);
     label->setWordWrap(true);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel);
@@ -80,7 +80,7 @@ bool confirm(QWidget* parent, const QString& title, const QString& text, const Q
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     auto* grid = new QGridLayout(&dialog);
-    grid->addWidget(icon, 0, 0, Qt::AlignTop);
+    grid->addWidget(picture, 0, 0, Qt::AlignTop);
     grid->addWidget(label, 0, 1);
     grid->addWidget(buttons, 1, 0, 1, 2);
     grid->setColumnStretch(1, 1);

@@ -1,4 +1,5 @@
 #include "app/HyperVView.h"
+#include "app/Prompts.h"
 
 #include "app/Icons.h"
 #include "app/PanelTree.h"
@@ -372,12 +373,10 @@ void HyperVView::addHost()
 void HyperVView::removeHost(HyperVHost* host)
 {
     if (!host) return;
-    QMessageBox box(QMessageBox::Question, tr("Remove Host"),
-                    tr("Remove \"%1\" from the list? Nothing changes on the host; it stays in Settings → SSH Servers.").arg(host->server().name),
-                    QMessageBox::Yes | QMessageBox::No, this);
-    box.setDefaultButton(QMessageBox::No);
-    box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's box: Enter presses the first button
-    if (box.exec() != QMessageBox::Yes) return;
+    if (!prompts::confirm(this, tr("Remove Host"),
+                          tr("Remove \"%1\" from the list? Nothing changes on the host; it stays in Settings → SSH Servers.").arg(host->server().name),
+                          tr("&Remove")))
+        return;
     ids_.removeAll(host->server().id);
     hosts_.erase(host->server().id);
     delete host;
@@ -508,15 +507,11 @@ void HyperVView::act(HyperVHost* host, const Vm& vm, Action action)
     const std::string id = vm.id; // vm may be gone after the question below
     if (action == Action::TurnOff || action == Action::Reset) {
         const bool off = action == Action::TurnOff;
-        QMessageBox box(QMessageBox::Warning, off ? tr("Turn Off") : tr("Reset"),
-                        off ? tr("Turn off \"%1\"? It is like pulling the power plug: unsaved work in it is lost.").arg(name)
-                            : tr("Reset \"%1\"? It is like pressing its reset button: unsaved work in it is lost.").arg(name),
-                        QMessageBox::Cancel, this);
-        const QAbstractButton* yes = box.addButton(off ? tr("&Turn Off") : tr("R&eset"), QMessageBox::DestructiveRole);
-        box.setDefaultButton(QMessageBox::Cancel);
-        box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's box: Enter presses the first button
-        box.exec();
-        if (box.clickedButton() != yes) return;
+        if (!prompts::confirm(this, off ? tr("Turn Off") : tr("Reset"),
+                              off ? tr("Turn off \"%1\"? It is like pulling the power plug: unsaved work in it is lost.").arg(name)
+                                  : tr("Reset \"%1\"? It is like pressing its reset button: unsaved work in it is lost.").arg(name),
+                              off ? tr("&Turn Off") : tr("R&eset"), QStyle::SP_MessageBoxWarning))
+            return;
     }
     host->control(id, action);
 }

@@ -1,4 +1,5 @@
 #include "app/VmView.h"
+#include "app/Prompts.h"
 
 #include "app/ConnectionStore.h"
 #include "app/PanelTree.h"
@@ -312,12 +313,9 @@ void VmView::removeHost(LibvirtVms* host, bool ask)
 {
     if (!host || !host->remote()) return;
     if (ask) {
-        QMessageBox box(QMessageBox::Question, tr("Remove Host"),
-                        tr("Remove \"%1\" from the list? Nothing changes on the host; its open consoles close.").arg(host->name()),
-                        QMessageBox::Yes | QMessageBox::No, this);
-        box.setDefaultButton(QMessageBox::No);
-        box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's box: Enter presses the first button
-        if (box.exec() != QMessageBox::Yes) return;
+        if (!prompts::confirm(this, tr("Remove Host"),
+                              tr("Remove \"%1\" from the list? Nothing changes on the host; its open consoles close.").arg(host->name()), tr("&Remove")))
+            return;
     }
     std::erase(hosts_, host);
     delete host;
@@ -430,15 +428,11 @@ void VmView::act(LibvirtVms* host, const Vm& vm, Action action)
     const std::string uuid = vm.uuid; // vm may be gone after the question below
     if (action == Action::ForceOff || action == Action::Reset) {
         const bool off = action == Action::ForceOff;
-        QMessageBox box(QMessageBox::Warning, off ? tr("Force Off") : tr("Reset"),
-                        off ? tr("Force off \"%1\"? It is like pulling the power plug: unsaved work in it is lost.").arg(name)
-                            : tr("Reset \"%1\"? It is like pressing its reset button: unsaved work in it is lost.").arg(name),
-                        QMessageBox::Cancel, this);
-        const QAbstractButton* yes = box.addButton(off ? tr("&Force Off") : tr("R&eset"), QMessageBox::DestructiveRole);
-        box.setDefaultButton(QMessageBox::Cancel);
-        box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's box: Enter presses the first button
-        box.exec();
-        if (box.clickedButton() != yes) return;
+        if (!prompts::confirm(this, off ? tr("Force Off") : tr("Reset"),
+                              off ? tr("Force off \"%1\"? It is like pulling the power plug: unsaved work in it is lost.").arg(name)
+                                  : tr("Reset \"%1\"? It is like pressing its reset button: unsaved work in it is lost.").arg(name),
+                              off ? tr("&Force Off") : tr("R&eset"), QStyle::SP_MessageBoxWarning))
+            return;
     }
     host->control(uuid, action);
 }

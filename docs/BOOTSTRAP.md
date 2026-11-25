@@ -377,7 +377,7 @@ Status on Linux, 2026-11-14. "verified" = tested end to end against the local te
 - VNC and SSH workers poll every 10–20 ms instead of waking on a pipe.
 - Quick connect and Reconnect don't keep a password typed at a prompt; saved connections get theirs from the keychain.
 - The sidebar's translucency and blur are verified in a nested KWin only, not on the real Plasma desktop.
-- On KDE, QMessageBox shows KDE's own message dialog, which focuses the first button and lets Enter press it, whatever the default button (Enter forced a VM off). Questions with a dangerous answer set `QMessageBox::Option::DontUseNativeDialog`; the trust prompt is a plain QDialog.
+- Qt 6.11's QMessageBox lets Enter press its first button whatever the default (on KDE and plain X11 alike; Enter forced a VM off). Every question with a dangerous answer is `prompts::confirm` (a QDialog: Cancel the default, the action never focused; a warning icon for power and revert questions); the trust prompt is a plain QDialog too.
 
 ---
 

@@ -459,11 +459,7 @@ void SshServersPage::remove(int row)
 {
     if (row < 0 || row >= int(servers_.size())) return;
     const SshServer& s = servers_[row];
-    QMessageBox box(QMessageBox::Question, tr("Remove SSH Server"), tr("Remove \"%1\"? Its saved password goes too.").arg(s.name),
-                    QMessageBox::Yes | QMessageBox::No, this);
-    box.setDefaultButton(QMessageBox::No);
-    box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's dialog: Enter presses the first button
-    if (box.exec() != QMessageBox::Yes) return;
+    if (!prompts::confirm(this, tr("Remove SSH Server"), tr("Remove \"%1\"? Its saved password goes too.").arg(s.name), tr("&Remove"))) return;
     passwords_.remove(s.id);
     forgotten_ << s.id;
     servers_.erase(servers_.begin() + row);

@@ -1,4 +1,5 @@
 #include "app/VmSettingsDialog.h"
+#include "app/Prompts.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -150,12 +151,7 @@ VmSnapshotsDialog::VmSnapshotsDialog(const QString& vmName, std::function<bool()
             start(SnapshotOp::Take, ask.textValue(), tr("Taking \"%1\"…").arg(ask.textValue()));
     });
     auto confirm = [this](const QString& title, const QString& text, const QString& yesText) {
-        QMessageBox box(QMessageBox::Warning, title, text, QMessageBox::Cancel, this);
-        const QAbstractButton* yes = box.addButton(yesText, QMessageBox::DestructiveRole);
-        box.setDefaultButton(QMessageBox::Cancel);
-        box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's box: Enter presses the first button
-        box.exec();
-        return box.clickedButton() == yes;
+        return prompts::confirm(this, title, text, yesText, QStyle::SP_MessageBoxWarning);
     };
     connect(revert_, &QPushButton::clicked, this, [this, confirm] {
         const QString name = selectedName();

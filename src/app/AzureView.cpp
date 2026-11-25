@@ -1,4 +1,5 @@
 #include "app/AzureView.h"
+#include "app/Prompts.h"
 
 #include "app/AzureClient.h"
 #include "app/Icons.h"
@@ -381,12 +382,9 @@ void AzureView::editAccount(AzureClient* client)
 
 void AzureView::removeAccount(AzureClient* client)
 {
-    QMessageBox box(QMessageBox::Question, tr("Remove Account"),
-                    tr("Remove \"%1\" from the list? Nothing changes in Azure.").arg(accountName(client->account())), QMessageBox::Yes | QMessageBox::No,
-                    this);
-    box.setDefaultButton(QMessageBox::No);
-    box.setOption(QMessageBox::Option::DontUseNativeDialog); // KDE's dialog: Enter presses the first button
-    if (box.exec() != QMessageBox::Yes) return;
+    if (!prompts::confirm(this, tr("Remove Account"), tr("Remove \"%1\" from the list? Nothing changes in Azure.").arg(accountName(client->account())),
+                          tr("&Remove")))
+        return;
     secrets::remove(keychainKey(client->account().id));
     std::erase(clients_, client);
     client->deleteLater();
