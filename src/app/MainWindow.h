@@ -50,6 +50,7 @@ public:
 
     void quickConnect();
     bool openAddress(const QString& text, rdc::Protocol fallback = rdc::Protocol::RDP);
+    void reopenTabs(); // the saved connections open when the app last closed, if so set
 
 protected:
     void showEvent(QShowEvent* event) override;

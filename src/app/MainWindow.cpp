@@ -447,6 +447,16 @@ MainWindow::MainWindow(QWidget* parent)
     QMenu* file = menuBar()->addMenu(tr("&File"));
     file->addAction(newAction);
     file->addAction(icons::lucide("zap"), tr("&Quick Connection…"), this, &MainWindow::quickConnect);
+    QMenu* recent = file->addMenu(tr("Open &Recent"));
+    connect(recent, &QMenu::aboutToShow, this, [this, recent] {
+        recent->clear();
+        for (const QString& id : settings_->value(QStringLiteral("connections/recent")).toStringList())
+            if (const Connection* c = findConnection(id.toStdString()))
+                recent->addAction(QString::fromStdString(c->name), this, [this, id] { connectTo(id.toStdString()); });
+        if (recent->isEmpty()) recent->addAction(tr("No recent connections"))->setEnabled(false);
+        recent->addSeparator();
+        recent->addAction(tr("&Clear List"), this, [this] { settings_->remove(QStringLiteral("connections/recent")); });
+    });
     file->addActions({editAction_, deleteAction_, connectAction_, sftpAction_});
     file->addSeparator();
     file->addAction(tr("&Import from KRDC…"), this, &MainWindow::importFromKrdc);
@@ -1293,7 +1303,13 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
         settings_->setValue(QStringLiteral("tabs/closeButtons"), on);
         tabs_->setTabsClosable(on);
     });
-    (new QVBoxLayout(tabs))->addWidget(closeButtons);
+    auto* reopen = new QCheckBox(tr("Open last time's tabs again at start"));
+    reopen->setToolTip(tr("The saved connections that were open when Portal Mux closed; not when it is started with an address"));
+    reopen->setChecked(settings_->value(QStringLiteral("session/reopenTabs"), true).toBool());
+    connect(reopen, &QCheckBox::toggled, &dialog, [this](bool on) { settings_->setValue(QStringLiteral("session/reopenTabs"), on); });
+    auto* tabsLayout = new QVBoxLayout(tabs);
+    tabsLayout->addWidget(closeButtons);
+    tabsLayout->addWidget(reopen);
     addPage("panels-top-left", tr("Layout"), {appearance, tabs});
     addPage("panel-left", tr("Sidebar"), {viewsBox, sidebar});
     const int sidebarRow = pages->count() - 1;
@@ -1544,6 +1560,10 @@ void MainWindow::connectTo(const std::string& id)
 {
     const Connection* found = findConnection(id);
     if (!found) return;
+    QStringList recent = settings_->value(QStringLiteral("connections/recent")).toStringList();
+    recent.removeAll(QString::fromStdString(id));
+    recent.prepend(QString::fromStdString(id));
+    settings_->setValue(QStringLiteral("connections/recent"), recent.mid(0, 10));
     if (found->protocol == Protocol::RDP) // RDP: a second session would log the first out
         for (int i = 0; i < tabs_->count(); ++i)
             if (tabs_->widget(i)->property("connectionId") == QString::fromStdString(id)) {
@@ -2519,6 +2539,14 @@ void MainWindow::changeEvent(QEvent* event)
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    QStringList open; // saved connections only: a quick connection or a VM console has no id
+    auto note = [&open](QWidget* page) {
+        if (const QString id = page ? page->property("connectionId").toString() : QString(); !id.isEmpty()) open << id;
+    };
+    for (int i = 0; i < tabs_->count(); ++i) note(tabs_->widget(i));
+    for (QMainWindow* window : findChildren<QMainWindow*>(Qt::FindDirectChildrenOnly))
+        if (auto* detached = dynamic_cast<DetachedWindow*>(window)) note(detached->page());
+    settings_->setValue(QStringLiteral("session/openTabs"), open);
     for (QMainWindow* window : findChildren<QMainWindow*>(Qt::FindDirectChildrenOnly))
         if (dynamic_cast<DetachedWindow*>(window)) delete window; // their sessions end with the app
     settings_->setValue(QStringLiteral("window/geometry"), saveGeometry());
@@ -2527,6 +2555,15 @@ void MainWindow::closeEvent(QCloseEvent* event)
     settings_->setValue(QStringLiteral("window/sidebarView"), views_->currentWidget()->objectName());
     settings_->setValue(QStringLiteral("window/sidebarCollapsed"), sidebarMode_ != SidebarMode::Docked);
     QMainWindow::closeEvent(event);
+}
+
+void MainWindow::reopenTabs()
+{
+    if (!settings_->value(QStringLiteral("session/reopenTabs"), true).toBool()) return;
+    const QStringList ids = settings_->value(QStringLiteral("session/openTabs")).toStringList();
+    QTimer::singleShot(0, this, [this, ids] { // once the window is up
+        for (const QString& id : ids) connectTo(id.toStdString());
+    });
 }
 
 std::vector<int> MainWindow::viewOrder() const

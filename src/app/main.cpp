@@ -131,6 +131,7 @@ int main(int argc, char* argv[])
     MainWindow window;
     window.show();
     // shortcut: no single instance yet
+    if (parser.positionalArguments().isEmpty()) window.reopenTabs();
     for (const QString& address : parser.positionalArguments()) window.openAddress(address);
     return app.exec();
 }
