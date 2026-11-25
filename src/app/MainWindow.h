@@ -76,6 +76,8 @@ private:
     void editConnection(rdc::Connection connection);
     void editGroup(const QString& group); // its defaults: Settings for "As the group"
     void deleteSelected();
+    void duplicateSelected(); // saved passwords too
+    QString dropGroup(QPoint at, bool* ok) const; // the group a connection dropped there goes to
     void importFromKrdc();
     void connectTo(const std::string& id);
     bool serversKnown(const rdc::Connection& c); // false, and says so, if its tunnel or jump host was removed
@@ -163,7 +165,7 @@ private:
     QTreeWidget* active_;
     Folding *treeFolding_, *sessionsFolding_;
     SessionTabs* tabs_;
-    QAction *editAction_, *deleteAction_, *connectAction_, *sftpAction_;
+    QAction *editAction_, *duplicateAction_, *deleteAction_, *connectAction_, *sftpAction_;
     QAction *fullScreenAction_, *screenshotAction_, *viewOnlyAction_, *clipboardAction_, *localCursorAction_,
         *grabKeysAction_, *scaleAction_, *reconnectAction_, *disconnectAction_;
     QMenu *sendKeysMenu_, *snippetsMenu_;

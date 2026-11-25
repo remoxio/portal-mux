@@ -39,6 +39,7 @@ public:
     void onError(std::string message) override;
     bool askTrust(const std::string& title, const std::string& details, bool* always) override;
     bool askCredentials(const std::string& prompt, rdc::Credentials& creds) override;
+    rdc::Credentials typedCredentials() const { return typed_; } // answered at a prompt, once that connected
 
     // a widget left of the terminal, as wide as its edge is dragged; null: none
     void setSidePanel(QWidget* panel);
@@ -132,6 +133,8 @@ private:
     std::deque<Line> scrollback_;
     std::unique_ptr<rdc::TerminalSession> session_;
     PromptBridge prompts_{this, [this] { emit closeRequested(); }};
+    rdc::Credentials asked_; // the worker's
+    rdc::Credentials typed_;
     QFont font_;
     QString family_;
     int size_ = 0, zoom_ = 0;

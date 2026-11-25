@@ -8,7 +8,10 @@
 #include <QDir>
 #include <QFile>
 #include <QIcon>
+#include <QFileInfo>
 #include <QLayout>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QWindow>
@@ -88,6 +91,55 @@ void logFreeRdp()
     if (!qEnvironmentVariableIsSet("WLOG_LEVEL")) (void)WLog_SetLogLevel(root, WLOG_INFO);
 }
 
+// one app per user: a second start hands its addresses to the first and quits
+QString instanceName()
+{
+#ifdef _WIN32
+    return QStringLiteral("portal-mux-") + qEnvironmentVariable("USERNAME");
+#else
+    return QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation) + QStringLiteral("/portal-mux.socket");
+#endif
+}
+
+// first line: the launcher's Wayland activation token, so the window may come to the front
+bool handedOver(const QStringList& addresses)
+{
+    QLocalSocket socket;
+    socket.connectToServer(instanceName());
+    if (!socket.waitForConnected(1000)) return false;
+    QByteArray message = qgetenv("XDG_ACTIVATION_TOKEN") + '\n';
+    for (const QString& a : addresses) message += (QFileInfo::exists(a) ? QFileInfo(a).absoluteFilePath() : a).toUtf8() + '\n';
+    socket.write(message);
+    socket.waitForBytesWritten(1000);
+    socket.disconnectFromServer();
+    return true;
+}
+
+void serveInstance(MainWindow* window)
+{
+    auto* server = new QLocalServer(window);
+    server->setSocketOptions(QLocalServer::UserAccessOption);
+    if (!server->listen(instanceName())) { // left by a crash
+        QLocalServer::removeServer(instanceName());
+        if (!server->listen(instanceName())) return;
+    }
+    QObject::connect(server, &QLocalServer::newConnection, window, [server, window] {
+        QLocalSocket* socket = server->nextPendingConnection();
+        auto take = [socket, window] {
+            const QList<QByteArray> lines = socket->readAll().split('\n');
+            socket->deleteLater();
+            if (!lines.value(0).isEmpty()) qputenv("XDG_ACTIVATION_TOKEN", lines[0]);
+            window->setWindowState(window->windowState() & ~Qt::WindowMinimized);
+            window->raise();
+            window->activateWindow();
+            for (qsizetype i = 1; i < lines.size(); ++i)
+                if (!lines[i].isEmpty()) window->openAddress(QString::fromUtf8(lines[i]));
+        };
+        QObject::connect(socket, &QLocalSocket::disconnected, window, take);
+        if (socket->state() != QLocalSocket::ConnectedState) take();
+    });
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -120,6 +172,7 @@ int main(int argc, char* argv[])
                                                 "ssh:// address, or an .rdp or .vnc file."),
                                  QStringLiteral("[address...]"));
     parser.process(app);
+    if (handedOver(parser.positionalArguments())) return 0;
 
     // spice-glib uses GLib's default context; Qt drives it on Linux, else pump it
     if (!QAbstractEventDispatcher::instance()->inherits("QEventDispatcherGlib")) {
@@ -130,7 +183,7 @@ int main(int argc, char* argv[])
 
     MainWindow window;
     window.show();
-    // shortcut: no single instance yet
+    serveInstance(&window);
     if (parser.positionalArguments().isEmpty()) window.reopenTabs();
     for (const QString& address : parser.positionalArguments()) window.openAddress(address);
     return app.exec();

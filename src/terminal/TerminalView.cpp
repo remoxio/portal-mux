@@ -274,8 +274,8 @@ void TerminalView::start(std::unique_ptr<rdc::TerminalSession> session)
 
 void TerminalView::onStateChanged(SessionState state)
 {
-    QMetaObject::invokeMethod(this, [this, state] {
-        if (state == SessionState::Connected) connected_ = true;
+    QMetaObject::invokeMethod(this, [this, state, asked = asked_] {
+        if (state == SessionState::Connected) connected_ = true, typed_ = asked;
         live_ = state == SessionState::Connecting || state == SessionState::Connected;
         if (state == SessionState::Disconnected && connected_) {
             emit stateChanged(state);
@@ -308,7 +308,7 @@ bool TerminalView::askTrust(const std::string& title, const std::string& details
 bool TerminalView::askCredentials(const std::string& prompt, rdc::Credentials& creds)
 {
     const bool ok = prompts::credentials(prompts_, this, QString::fromStdString(prompt), creds);
-    if (ok) typedPassword_ = creds.password;
+    if (ok) typedPassword_ = creds.password, asked_ = creds;
     return ok;
 }
 

@@ -230,8 +230,9 @@ void RemoteView::localClipboardChanged()
 
 void RemoteView::onStateChanged(SessionState state)
 {
-    QMetaObject::invokeMethod(this, [this, state] {
+    QMetaObject::invokeMethod(this, [this, state, asked = asked_] {
         if (state == SessionState::Connected) {
+            typed_ = asked;
             updateGamepadTarget(true); // session drops controller input until now
             syncLocks();
         }
@@ -260,7 +261,9 @@ bool RemoteView::askTrust(const std::string& title, const std::string& details, 
 
 bool RemoteView::askCredentials(const std::string& prompt, rdc::Credentials& creds)
 {
-    return prompts::credentials(prompts_, this, QString::fromStdString(prompt), creds);
+    const bool ok = prompts::credentials(prompts_, this, QString::fromStdString(prompt), creds);
+    if (ok) asked_ = creds;
+    return ok;
 }
 
 void RemoteView::onAudio(const int16_t* samples, size_t frames, int sampleRate, int channels)

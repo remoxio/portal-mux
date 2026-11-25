@@ -71,6 +71,7 @@ public:
     void onError(std::string message) override;
     bool askTrust(const std::string& title, const std::string& details, bool* always) override;
     bool askCredentials(const std::string& prompt, rdc::Credentials& creds) override;
+    rdc::Credentials typedCredentials() const { return typed_; } // answered at a prompt, once that connected
     void onResize(int width, int height) override;
     void onFrameUpdated(const rdc::Rect& dirty) override;
     void onClipboardText(std::string text) override;
@@ -125,6 +126,8 @@ private:
 
     std::unique_ptr<rdc::DisplaySession> session_;
     PromptBridge prompts_{this, [this] { emit closeRequested(); }};
+    rdc::Credentials asked_; // the worker's
+    rdc::Credentials typed_;
     AudioPlayer audio_{this};
     QImage image_;
     QTimer resizeTimer_;

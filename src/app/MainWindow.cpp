@@ -192,6 +192,15 @@ static void readSecrets(QObject* context, QSettings* settings, Connection c, std
     state->step();
 }
 
+// what was typed at a prompt, so Reconnect doesn't ask again
+static Connection withTyped(Connection c, const rdc::Credentials& typed)
+{
+    if (!typed.password.empty()) c.password = typed.password;
+    if (!typed.username.empty()) c.username = typed.username;
+    if (!typed.domain.empty() && rdc::findProperty(c.protocol, "domain")) c.options["domain"] = typed.domain;
+    return c;
+}
+
 static QString protocolLabel(Protocol p)
 {
     switch (p) {
@@ -359,6 +368,7 @@ MainWindow::MainWindow(QWidget* parent)
     newAction->setShortcut(QKeySequence::New);
     editAction_ = new QAction(icons::lucide("pencil"), tr("&Edit…"), this);
     editAction_->setShortcut(Qt::Key_F2);
+    duplicateAction_ = new QAction(icons::lucide("copy"), tr("D&uplicate"), this);
     deleteAction_ = new QAction(icons::lucide("trash"), tr("&Delete"), this);
     deleteAction_->setShortcut(QKeySequence::Delete);
     connectAction_ = new QAction(icons::lucide("plug"), tr("&Connect"), this);
@@ -472,7 +482,7 @@ MainWindow::MainWindow(QWidget* parent)
         recent->addSeparator();
         recent->addAction(tr("&Clear List"), this, [this] { settings_->remove(QStringLiteral("connections/recent")); });
     });
-    file->addActions({editAction_, deleteAction_, connectAction_, sftpAction_});
+    file->addActions({editAction_, duplicateAction_, deleteAction_, connectAction_, sftpAction_});
     file->addSeparator();
     file->addAction(tr("&Import from KRDC…"), this, &MainWindow::importFromKrdc);
     file->addSeparator();
@@ -505,7 +515,7 @@ MainWindow::MainWindow(QWidget* parent)
     addToggle(statusBarAction_, tr("Show Stat&us Bar"), "statusBar");
     addToggle(tabBarAction_, tr("Show Ta&b Bar"), "tabBar");
     view->addSeparator();
-    view->addAction(tr("Open Test &Pattern"), this, &MainWindow::openTestPattern);
+    if (qEnvironmentVariableIsSet("PORTAL_MUX_TEST_PATTERN")) view->addAction(tr("Open Test &Pattern"), this, &MainWindow::openTestPattern); // development
     usbAction_ = new QAction(icons::lucide("usb"), tr("&USB Devices…"), this);
     usbAction_->setToolTip(tr("Hand this computer's USB devices to the VM (SPICE)"));
     connect(usbAction_, &QAction::triggered, this, &MainWindow::showUsbDevices);
@@ -616,7 +626,9 @@ MainWindow::MainWindow(QWidget* parent)
     views_->setAutoFillBackground(true); // floating over tabs can't be translucent
     tree_ = new QTreeWidget;
     tree_->setHeaderHidden(true);
-    tree_->addActions({connectAction_, sftpAction_, editAction_, deleteAction_, newAction}); // also for their shortcuts
+    tree_->addActions({connectAction_, sftpAction_, editAction_, duplicateAction_, deleteAction_, newAction}); // also for their shortcuts
+    tree_->setDragDropMode(QAbstractItemView::InternalMove); // a connection onto a group; the drop is ours (eventFilter)
+    tree_->viewport()->installEventFilter(this);
     auto* reloadSshConfig = new QAction(icons::lucide("refresh-cw"), tr("&Reload ~/.ssh/config"), this);
     connect(reloadSshConfig, &QAction::triggered, this, [this] { rebuildTree(selectedId()); });
     tree_->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -795,6 +807,7 @@ MainWindow::MainWindow(QWidget* parent)
         editConnection(copy);
     });
     connect(deleteAction_, &QAction::triggered, this, &MainWindow::deleteSelected);
+    connect(duplicateAction_, &QAction::triggered, this, &MainWindow::duplicateSelected);
     connect(connectAction_, &QAction::triggered, this, [this] { connectTo(selectedId()); });
     connect(sftpAction_, &QAction::triggered, this, [this] {
         const Connection* found = findConnection(selectedId());
@@ -905,6 +918,7 @@ void MainWindow::rebuildTree(const std::string& selectId)
                 g = new QTreeWidgetItem(tree_, {name});
                 g->setIcon(0, icons::material("folder")); // opening sets folder-open
                 g->setData(0, FoldRole, QStringLiteral("group:") + name);
+                g->setFlags(g->flags() & ~Qt::ItemIsDragEnabled);
             }
             parent = g;
         }
@@ -926,8 +940,10 @@ void MainWindow::rebuildTree(const std::string& selectId)
         g->setToolTip(0, tip);
         g->setData(0, ReadOnlyRole, true);
         g->setData(0, FoldRole, QStringLiteral("readonly:") + title);
+        g->setFlags(g->flags() & ~Qt::ItemIsDragEnabled);
         for (const Connection& c : list) {
             auto* item = new QTreeWidgetItem(g, {QString::fromStdString(c.name)});
+            item->setFlags(item->flags() & ~Qt::ItemIsDragEnabled);
             item->setIcon(0, protocolIcon(protocolLabel(c.protocol)));
             item->setToolTip(0, address(c));
             item->setData(0, IdRole, QString::fromStdString(c.id));
@@ -1439,8 +1455,35 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
     for (TerminalView* terminal : findChildren<TerminalView*>()) configureTerminal(terminal);
 }
 
+QString MainWindow::dropGroup(QPoint at, bool* ok) const
+{
+    const QTreeWidgetItem* item = tree_->itemAt(at);
+    const QTreeWidgetItem* group = item && item->data(0, IdRole).toString().isEmpty() ? item : item ? item->parent() : nullptr;
+    *ok = !group || !group->data(0, ReadOnlyRole).toBool(); // empty space: out of any group
+    return group ? group->text(0) : QString();
+}
+
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    if (watched == tree_->viewport() && (event->type() == QEvent::DragMove || event->type() == QEvent::Drop)) {
+        auto* drop = static_cast<QDropEvent*>(event);
+        const Connection* c = drop->source() == tree_ ? store_.find(selectedId()) : nullptr;
+        bool ok = false;
+        const QString group = c ? dropGroup(drop->position().toPoint(), &ok) : QString();
+        if (!ok || group == QString::fromStdString(c->group)) {
+            drop->ignore();
+            return true;
+        }
+        drop->setDropAction(event->type() == QEvent::Drop ? Qt::IgnoreAction : Qt::MoveAction); // the view would remove the row itself
+        drop->accept();
+        if (event->type() == QEvent::Drop) {
+            Connection moved = *c;
+            moved.group = group.toStdString();
+            const std::string id = store_.upsert(std::move(moved));
+            if (saveStore()) QTimer::singleShot(0, this, [this, id] { rebuildTree(id); });
+        }
+        return true;
+    }
     // set before the window has its size: QSplitter would spread it
     if (watched == splitter_ && event->type() == QEvent::Resize && sidebarMode_ == SidebarMode::Docked &&
         views_->parentWidget() == splitter_ && !views_->isHidden())
@@ -1508,6 +1551,7 @@ void MainWindow::updateActions()
     const Connection* c = findConnection(selectedId());
     for (QAction* a : {editAction_, connectAction_}) a->setEnabled(c != nullptr);
     deleteAction_->setEnabled(c && store_.find(c->id) && c->id != localTerminalId);
+    duplicateAction_->setEnabled(c && store_.find(c->id));
     sftpAction_->setEnabled(c && c->protocol == Protocol::SSH);
 }
 
@@ -1650,6 +1694,25 @@ void MainWindow::importFromKrdc()
     if (existing) text += QLatin1Char(' ') + tr("%n already existed and were skipped.", "", existing);
     if (added) text += QLatin1Char(' ') + tr("Passwords stay in KWallet: enter them with Edit, or when asked while connecting.");
     QMessageBox::information(this, tr("Import from KRDC"), text);
+}
+
+void MainWindow::duplicateSelected()
+{
+    const Connection* found = store_.find(selectedId());
+    if (!found) return;
+    Connection copy = *found;
+    const std::string from = copy.id;
+    const std::vector<std::string> keys = secretKeys(copy.protocol);
+    copy.id.clear();
+    copy.name = tr("%1 (copy)").arg(QString::fromStdString(copy.name)).toStdString();
+    const std::string id = store_.upsert(std::move(copy)); // found dangles from here on
+    if (!saveStore()) return;
+    for (const std::string& key : keys)
+        if (secrets::saved(connectionSecret(from, key)))
+            secrets::read(connectionSecret(from, key), this, [this, to = connectionSecret(id, key)](QString value) {
+                if (!value.isEmpty()) secrets::write(to, value, this, [](QString) {});
+            });
+    rebuildTree(id);
 }
 
 void MainWindow::deleteSelected()
@@ -1848,7 +1911,7 @@ void MainWindow::openSession(const Connection& c, QWidget* replace)
         runPostCommand(terminal);
         connect(terminal, &TerminalView::reconnectRequested, this, [this, terminal, c, armed] {
             *armed = false;
-            openSession(c, terminal);
+            openSession(withTyped(c, terminal->typedCredentials()), terminal);
         });
         terminal->setProperty("connectionId", QString::fromStdString(c.id));
         if (local) terminal->start(std::make_unique<rdc::LocalTerminalSession>(*terminal, c));
@@ -1866,9 +1929,9 @@ void MainWindow::openSession(const Connection& c, QWidget* replace)
     scroll->setProperty("connectionId", QString::fromStdString(c.id)); // connecting again shows this tab (RDP)
     addSessionTab(scroll, name, QString::fromStdString(c.host), at);
     runPostCommand(scroll);
-    connect(view, &RemoteView::reconnectRequested, this, [this, scroll, c, armed] {
+    connect(view, &RemoteView::reconnectRequested, this, [this, scroll, view, c, armed] {
         *armed = false;
-        openSession(c, scroll);
+        openSession(withTyped(c, view->typedCredentials()), scroll);
     });
     connect(view, &RemoteView::closeRequested, scroll, &QObject::deleteLater);
     view->setFocus();
