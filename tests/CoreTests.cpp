@@ -416,6 +416,9 @@ static void addressTests()
     assert(c && c->protocol == Protocol::VNC && c->host == "box" && c->effectivePort() == 5901 && c->username == "al");
     c = connectionFromFile(write("tiger.tigervnc", "TigerVNC Configuration file Version 1.0\r\nServerName=box::5999\r\n"), &error);
     assert(c && c->host == "box" && c->effectivePort() == 5999);
+    c = connectionFromFile(write("app.rdp", "full address:s:apps.example\nremoteapplicationmode:i:1\nremoteapplicationprogram:s:||calc\n"
+                                            "remoteapplicationcmdline:s:/x\nenablerdsaadauth:i:1\n"), &error);
+    assert(c && c->option("remoteApp") == "||calc" && c->option("remoteAppArgs") == "/x" && c->option("security") == "aad");
     assert(!connectionFromFile(write("empty.rdp", "username:s:x\n"), &error) && error.contains(QLatin1String("full address")));
     assert(!connectionFromFile(write("notes.txt", "Host=box\n"), &error));
     assert(!connectionFromFile(dir.filePath(QStringLiteral("missing.rdp")), &error));

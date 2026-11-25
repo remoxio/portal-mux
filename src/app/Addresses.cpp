@@ -123,6 +123,12 @@ static std::optional<Connection> fromRdpFile(const QString& text, QString* error
             if (value.toInt()) c.options["console"] = "true";
         } else if (key == QLatin1String("loadbalanceinfo") && !value.isEmpty()) {
             c.options["loadBalanceInfo"] = value.toStdString();
+        } else if (key == QLatin1String("enablerdsaadauth")) {
+            if (value.toInt()) c.options["security"] = "aad";
+        } else if (key == QLatin1String("remoteapplicationprogram") && !value.isEmpty()) {
+            c.options["remoteApp"] = value.toStdString();
+        } else if (key == QLatin1String("remoteapplicationcmdline") && !value.isEmpty()) {
+            c.options["remoteAppArgs"] = value.toStdString();
         } else if (key == QLatin1String("alternate shell") && !value.isEmpty()) {
             c.options["alternateShell"] = value.toStdString();
         } else if (key == QLatin1String("shell working directory") && !value.isEmpty()) {

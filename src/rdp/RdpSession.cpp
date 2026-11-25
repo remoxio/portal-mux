@@ -8,6 +8,7 @@
 #include <freerdp/client/cliprdr.h>
 #include <freerdp/client/cmdline.h>
 #include <freerdp/client/disp.h>
+#include <freerdp/client/rail.h>
 #include <freerdp/codec/color.h>
 #include <freerdp/event.h>
 #include <freerdp/freerdp.h>
@@ -104,6 +105,7 @@ struct RdpSession::Callbacks {
         instance->VerifyCertificateEx = verifyCertificate;
         instance->VerifyChangedCertificateEx = verifyChangedCertificate;
         instance->LoadChannels = freerdp_client_load_channels;
+        instance->GetAccessToken = client_helper_get_access_token; // Entra ID: FreeRDP's browser sign-in
         return TRUE;
     }
 
@@ -301,6 +303,11 @@ struct RdpSession::Callbacks {
             auto* d = static_cast<DispClientContext*>(e->pInterface);
             d->custom = s;
             d->DisplayControlCaps = dispCaps;
+        } else if (strcmp(e->name, RAIL_SVC_CHANNEL_NAME) == 0) {
+            // RemoteApp: the program starts after the handshake; its windows are drawn into the one screen
+            auto* r = static_cast<RailClientContext*>(e->pInterface);
+            r->ServerHandshake = [](RailClientContext* c, const RAIL_HANDSHAKE_ORDER*) { return client_rail_server_start_cmd(c); };
+            r->ServerHandshakeEx = [](RailClientContext* c, const RAIL_HANDSHAKE_EX_ORDER*) { return client_rail_server_start_cmd(c); };
         } else {
             freerdp_client_OnChannelConnectedEventHandler(context, e);
         }
@@ -823,7 +830,11 @@ bool RdpSession::applySettings()
 
     if (const std::string sec = c.option("security"); sec != "auto")
         ok = ok && setBool(FreeRDP_NlaSecurity, sec == "nla" || sec == "ext") && setBool(FreeRDP_TlsSecurity, sec == "tls") &&
-             setBool(FreeRDP_RdpSecurity, sec == "rdp") && setBool(FreeRDP_ExtSecurity, sec == "ext");
+             setBool(FreeRDP_RdpSecurity, sec == "rdp") && setBool(FreeRDP_ExtSecurity, sec == "ext") &&
+             setBool(FreeRDP_AadSecurity, sec == "aad");
+    if (const std::string app = c.option("remoteApp"); ok && !app.empty())
+        ok = setBool(FreeRDP_RemoteApplicationMode, true) && setString(FreeRDP_RemoteApplicationProgram, app) &&
+             setString(FreeRDP_RemoteApplicationName, c.name) && setString(FreeRDP_RemoteApplicationCmdLine, c.option("remoteAppArgs"));
 
     if (const std::string lb = c.option("loadBalanceInfo"); ok && !lb.empty())
         ok = freerdp_settings_set_pointer_len(st, FreeRDP_LoadBalanceInfo, lb.data(), lb.size());
