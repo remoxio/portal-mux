@@ -1,12 +1,21 @@
 #include "ssh/SshForwards.h"
 
+#include <libssh/callbacks.h>
 #include <libssh/libssh.h>
 
 #include "core/Net.h"
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <random>
+#include <sstream>
+
+#ifndef _WIN32
+#include <sys/un.h>
+#endif
 
 namespace rdc {
 
@@ -87,8 +96,171 @@ static int listenOn(const std::string& bind, int port, std::string& error)
     return fd;
 }
 
+int x11Authorize(std::string& packet, const std::string& fake, const std::string& name, const std::string& data)
+{
+    if (packet.size() < 12) return 0;
+    const bool big = packet[0] == 'B';
+    auto get16 = [&](size_t at) { return size_t(uint8_t(packet[at + !big]) << 8 | uint8_t(packet[at + big])); };
+    auto padded = [](size_t n) { return (n + 3) & ~size_t(3); };
+    const size_t nameSize = get16(6), dataSize = get16(8), end = 12 + padded(nameSize) + padded(dataSize);
+    if (packet.size() < end) return 0;
+    if (packet.compare(12, nameSize, "MIT-MAGIC-COOKIE-1") != 0 || packet.compare(12 + padded(nameSize), dataSize, fake) != 0 ||
+        dataSize != fake.size())
+        return -1;
+    std::string out = packet.substr(0, 6);
+    for (size_t v : {name.size(), data.size()}) {
+        out += char(big ? v >> 8 : v);
+        out += char(big ? v : v >> 8);
+    }
+    out.append(2, '\0');
+    out += name;
+    out.append(padded(name.size()) - name.size(), '\0');
+    out += data;
+    out.append(padded(data.size()) - data.size(), '\0');
+    packet = out + packet.substr(end);
+    return 1;
+}
+
+#ifndef _WIN32
+static int connectUnix(const std::string& path)
+{
+    sockaddr_un addr{};
+    if (path.empty() || path.size() >= sizeof addr.sun_path) return -1;
+    addr.sun_family = AF_UNIX;
+    std::memcpy(addr.sun_path, path.data(), path.size());
+    const int fd = net::openSocket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd >= 0 && ::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0) {
+        net::closeSocket(fd);
+        return -1;
+    }
+    return fd;
+}
+#endif
+
+static int connectAgent()
+{
+#ifdef _WIN32
+    return -1; // shortcut: Windows' agent is a named pipe, not reached yet
+#else
+    const char* path = std::getenv("SSH_AUTH_SOCK");
+    return path ? connectUnix(path) : -1;
+#endif
+}
+
+// $DISPLAY: ":0", "unix:0.0", a socket path (XQuartz: "/private/tmp/…:0") or "host:0" (TCP 6000 + display)
+static int connectX11()
+{
+    const char* display = std::getenv("DISPLAY");
+    const std::string d = display ? display : "";
+    const size_t colon = d.rfind(':');
+    if (colon == std::string::npos) return -1;
+    const std::string host = d.substr(0, colon);
+    const int number = std::atoi(d.c_str() + colon + 1);
+#ifndef _WIN32
+    if (!host.empty() && host[0] == '/') return connectUnix(d);
+    if (host.empty() || host == "unix") return connectUnix("/tmp/.X11-unix/X" + std::to_string(number));
+#endif
+    addrinfo hints{}, *addrs = nullptr;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(host.empty() ? "localhost" : host.c_str(), std::to_string(6000 + number).c_str(), &hints, &addrs) != 0) return -1;
+    int fd = net::openSocket(addrs->ai_family, SOCK_STREAM, 0);
+    if (fd >= 0 && ::connect(fd, addrs->ai_addr, int(addrs->ai_addrlen)) != 0) {
+        net::closeSocket(fd);
+        fd = -1;
+    }
+    freeaddrinfo(addrs);
+    return fd;
+}
+
+// xauth's cookie for $DISPLAY; none: the X server takes clients without one
+static void displayCookie(std::string& name, std::string& cookie)
+{
+#ifndef _WIN32
+    const char* display = std::getenv("DISPLAY");
+    if (!display || std::strchr(display, '\'')) return;
+    FILE* f = popen(("xauth list '" + std::string(display) + "' 2>/dev/null").c_str(), "r");
+    if (!f) return;
+    char line[512];
+    while (cookie.empty() && fgets(line, sizeof line, f)) {
+        std::istringstream in(line);
+        std::string where, proto, hex;
+        if (!(in >> where >> proto >> hex) || proto != "MIT-MAGIC-COOKIE-1" || hex.size() != 32) continue;
+        name = proto;
+        for (size_t i = 0; i < hex.size(); i += 2) cookie += char(std::strtol(hex.substr(i, 2).c_str(), nullptr, 16));
+    }
+    pclose(f);
+#endif
+}
+
+std::vector<std::string> SshForwards::share(ssh_channel shell, bool agent, bool x11)
+{
+    std::vector<std::string> notes;
+    if (!agent && !x11) return notes;
+    callbacks_ = std::make_unique<ssh_callbacks_struct>();
+    *callbacks_ = {};
+    ssh_callbacks_init(callbacks_.get());
+    callbacks_->userdata = this;
+    if (agent) {
+        if (!std::getenv("SSH_AUTH_SOCK")) {
+            notes.push_back("No SSH agent here to forward (SSH_AUTH_SOCK is not set)");
+        } else if (ssh_channel_request_auth_agent(shell) == SSH_OK) {
+            callbacks_->channel_open_request_auth_agent_function = agentOpened;
+            notes.push_back("Forwarding the SSH agent");
+        } else {
+            notes.push_back(std::string("The server refused agent forwarding: ") + ssh_get_error(session_));
+        }
+    }
+    if (x11) {
+        const char* display = std::getenv("DISPLAY");
+        std::random_device random;
+        for (int i = 0; i < 16; ++i) fakeCookie_ += char(random());
+        std::string hex;
+        for (unsigned char c : fakeCookie_) hex += "0123456789abcdef"[c >> 4], hex += "0123456789abcdef"[c & 15];
+        const char* dot = display ? std::strrchr(display, '.') : nullptr;
+        const int screen = dot && dot > std::strrchr(display, ':') ? std::atoi(dot + 1) : 0;
+        if (!display || !*display) {
+            notes.push_back("No X display here (DISPLAY is not set)");
+        } else if (ssh_channel_request_x11(shell, 0, "MIT-MAGIC-COOKIE-1", hex.c_str(), screen) == SSH_OK) {
+            displayCookie(displayAuth_, displayCookie_);
+            callbacks_->channel_open_request_x11_function = x11Opened;
+            notes.push_back(std::string("X11 forwarding to ") + display);
+        } else {
+            notes.push_back(std::string("The server refused X11 forwarding: ") + ssh_get_error(session_));
+        }
+    }
+    ssh_set_callbacks(session_, callbacks_.get());
+    return notes;
+}
+
+ssh_channel SshForwards::agentOpened(ssh_session, void* self) { return static_cast<SshForwards*>(self)->opened(connectAgent(), false); }
+
+ssh_channel SshForwards::x11Opened(ssh_session, const char*, int, void* self) { return static_cast<SshForwards*>(self)->opened(connectX11(), true); }
+
+ssh_channel SshForwards::opened(int fd, bool x11)
+{
+    ssh_channel channel = fd >= 0 ? ssh_channel_new(session_) : nullptr;
+    if (!channel) {
+        if (fd >= 0) net::closeSocket(fd);
+        return nullptr;
+    }
+    net::setNonBlocking(fd, true);
+    Pipe p{fd, channel};
+    p.x11 = x11;
+    opened_.push_back(std::move(p));
+    return channel;
+}
+
 SshForwards::~SshForwards()
 {
+    if (callbacks_) { // libssh keeps the pointer
+        static ssh_callbacks_struct none = [] {
+            ssh_callbacks_struct c{};
+            ssh_callbacks_init(&c);
+            return c;
+        }();
+        ssh_set_callbacks(session_, &none);
+    }
+    for (Pipe& p : opened_) close(p);
     for (Pipe& p : pipes_) close(p);
     for (const Listener& l : listeners_) net::closeSocket(l.fd);
     for (const ForwardSpec& r : remote_) ssh_channel_cancel_forward(session_, r.bind.empty() ? "localhost" : r.bind.c_str(), r.port);
@@ -219,6 +391,8 @@ void SshForwards::close(Pipe& p)
 
 void SshForwards::pump()
 {
+    for (Pipe& p : opened_) pipes_.push_back(std::move(p));
+    opened_.clear();
     for (const Listener& l : listeners_) accept(l);
     int port = 0;
     while (!remote_.empty()) { // connections to the server's forwarded ports
@@ -264,6 +438,16 @@ void SshForwards::pump()
         }
         while (p.channel && !p.socksStage) { // server → local
             const int n = ssh_channel_read_nonblocking(p.channel, buffer, sizeof buffer, 0);
+            if (n > 0 && p.x11) {
+                p.in.append(buffer, size_t(n));
+                const int done = x11Authorize(p.in, fakeCookie_, displayAuth_, displayCookie_);
+                if (done < 0 || (done > 0 && !writeAll(p.fd, p.in.data(), p.in.size()))) {
+                    close(p);
+                    break;
+                }
+                if (done > 0) p.x11 = false, p.in.clear();
+                continue;
+            }
             if (n > 0 && writeAll(p.fd, buffer, size_t(n))) continue;
             if (n < 0 || n > 0 || ssh_channel_is_eof(p.channel)) close(p);
             break;

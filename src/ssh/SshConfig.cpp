@@ -156,6 +156,8 @@ std::vector<Connection> readSshConfig(const std::string& path)
         if (opt.count("identityfile")) c.options["keyFile"] = opt["identityfile"];
         if (opt.count("proxyjump") && lower(opt["proxyjump"]) != "none") c.options["jumpHost"] = opt["proxyjump"];
         if (lower(opt["compression"]) == "yes") c.options["compression"] = "true";
+        if (lower(opt["forwardagent"]) == "yes") c.options["forwardAgent"] = "true";
+        if (lower(opt["forwardx11"]) == "yes") c.options["forwardX11"] = "true";
         if (std::atoi(opt["serveraliveinterval"].c_str()) > 0) c.options["keepalive"] = opt["serveraliveinterval"];
         result.push_back(std::move(c));
     }

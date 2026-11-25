@@ -273,6 +273,11 @@ static std::vector<PropertyDef> sshProperties()
         {"remoteForwards", "Remote forwards (ssh -R)", "Forwarding", K::Text, "", {}, 0, 0,
          "[bind:]port:host:hostport: the server's port leads to host:hostport as seen from here"},
         {"socksPort", "SOCKS proxy port (ssh -D)", "Forwarding", K::Int, "0", {}, 0, 65535, "0 = off; a SOCKS5 proxy on this computer"},
+        {"forwardAgent", "Forward the SSH agent (ssh -A)", "Forwarding", K::Bool, "false", {}, 0, 0,
+         "Programs on the server log in elsewhere with this computer's agent keys; only for servers you trust"},
+        {"forwardX11", "X11 forwarding (ssh -X)", "Forwarding", K::Bool, "false", {}, 0, 0,
+         "Graphical programs started on the server open their windows here; needs an X display here (XWayland, XQuartz) "
+         "and xauth on the server"},
     };
     addTerminalCommon(p);
     addStartCommon(p, true);

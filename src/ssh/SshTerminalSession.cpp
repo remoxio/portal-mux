@@ -188,10 +188,16 @@ void SshTerminalSession::run(std::stop_token stop)
     }
 
     const std::string command = connection_.option("command");
+    SshForwards forwards(ssh_->session());
+    std::vector<std::string> notes;
     ssh_channel channel = ssh_channel_new(ssh_->session());
-    if (!channel || ssh_channel_open_session(channel) != SSH_OK ||
-        ssh_channel_request_pty_size(channel, connection_.option("term").c_str(), cols_, rows_) != SSH_OK ||
-        (command.empty() ? ssh_channel_request_shell(channel) : ssh_channel_request_exec(channel, command.c_str())) != SSH_OK) {
+    bool started = channel && ssh_channel_open_session(channel) == SSH_OK &&
+                   ssh_channel_request_pty_size(channel, connection_.option("term").c_str(), cols_, rows_) == SSH_OK;
+    if (started) {
+        notes = forwards.share(channel, connection_.flag("forwardAgent"), connection_.flag("forwardX11"));
+        started = (command.empty() ? ssh_channel_request_shell(channel) : ssh_channel_request_exec(channel, command.c_str())) == SSH_OK;
+    }
+    if (!started) {
         if (!cancelled()) listener_.onError("Could not start a shell: " + ssh_->lastError());
         if (channel) ssh_channel_free(channel);
         listener_.onStateChanged(cancelled() ? SessionState::Disconnected : SessionState::Error);
@@ -204,8 +210,7 @@ void SshTerminalSession::run(std::stop_token stop)
     std::vector<ForwardSpec> specs = parseForwards('L', connection_.option("localForwards"), &error);
     for (ForwardSpec& s : parseForwards('R', connection_.option("remoteForwards"), &error)) specs.push_back(s);
     if (const int socks = connection_.number("socksPort"); socks > 0) specs.push_back({'D', {}, socks, {}, 0});
-    SshForwards forwards(ssh_->session());
-    std::vector<std::string> notes = forwards.start(specs);
+    for (const std::string& note : forwards.start(specs)) notes.push_back(note);
     if (!error.empty()) notes.push_back("Forwarding settings: " + error);
     for (const std::string& note : notes) listener_.onData("\x1b[2m[" + note + "]\x1b[0m\r\n");
 

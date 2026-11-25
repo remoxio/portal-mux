@@ -438,6 +438,27 @@ static void forwardTests()
     assert(f.size() == 1 && f[0].kind == 'R' && f[0].port == 9000 && error.find("8080:host") != std::string::npos);
     error.clear();
     assert(rdc::parseForwards('L', "  ", &error).empty() && error.empty());
+
+    // X11 setup, little-endian: the fake cookie becomes the display's; the client's next bytes stay
+    const std::string fake(16, 'f'), real(16, 'r');
+    auto setup = [](char order, const std::string& name, const std::string& data) {
+        std::string p{order, 0, 11, 0, 0, 0};
+        for (size_t v : {name.size(), data.size()}) p += order == 'B' ? std::string{char(v >> 8), char(v)} : std::string{char(v), char(v >> 8)};
+        p.append(2, 0);
+        p += name + std::string((4 - name.size() % 4) % 4, 0) + data + std::string((4 - data.size() % 4) % 4, 0);
+        return p;
+    };
+    std::string packet = setup('l', "MIT-MAGIC-COOKIE-1", fake);
+    std::string part = packet.substr(0, 20);
+    assert(rdc::x11Authorize(part, fake, "MIT-MAGIC-COOKIE-1", real) == 0);
+    packet += "next";
+    assert(rdc::x11Authorize(packet, fake, "MIT-MAGIC-COOKIE-1", real) == 1 && packet == setup('l', "MIT-MAGIC-COOKIE-1", real) + "next");
+    packet = setup('B', "MIT-MAGIC-COOKIE-1", fake);
+    assert(rdc::x11Authorize(packet, fake, {}, {}) == 1 && packet == setup('B', {}, {})); // the display takes anyone
+    packet = setup('l', "MIT-MAGIC-COOKIE-1", real);
+    assert(rdc::x11Authorize(packet, fake, "MIT-MAGIC-COOKIE-1", real) == -1);
+    packet = setup('l', "XDM-AUTHORIZATION-1", fake);
+    assert(rdc::x11Authorize(packet, fake, "MIT-MAGIC-COOKIE-1", real) == -1);
 }
 
 static void telnetTests()
