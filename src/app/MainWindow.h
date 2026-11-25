@@ -34,6 +34,7 @@ class QToolBar;
 class RemoteView;
 class SessionTabs;
 class TerminalView;
+class TiledView;
 class VmConsole;
 class VmView;
 class QListWidget;
@@ -90,6 +91,17 @@ private:
     void addFilePanel(TerminalView* terminal, const rdc::Connection& c); // SFTP beside an SSH terminal
     void copyKeyToServer();
     void fillSnippetsMenu();
+    void typeIntoOthers(TerminalView* source, const std::function<void(TerminalView*)>& type); // with Type in All Terminals on
+    void setTiled(bool on);
+    QWidget* tabPage() const; // the current tab's session: in Tile Terminals, the tile last focused
+    TiledView* tiled_ = nullptr;
+    struct TiledTab {
+        QWidget* page;
+        int index;
+        QString text, toolTip;
+    };
+    std::vector<TiledTab> tiledTabs_; // where they go back to
+    QLabel* typeAllCell_ = nullptr;
     void openVmSerial(LibvirtVms* host, const std::string& uuid, QWidget* replace = nullptr);
     void showProxmoxConsole(const QString& key);
     void showSessionState(QWidget* page, const QString& name, rdc::SessionState state);
@@ -156,7 +168,7 @@ private:
     QMenu *sendKeysMenu_, *snippetsMenu_;
     QAction *toolBarAction_, *sidebarAction_, *statusBarAction_, *tabBarAction_;
     QActionGroup* toolBarStyle_ = nullptr; // macOS: Icon Only, Icon and Text, Text Only
-    QAction *usbAction_, *detachAction_, *relaunchAction_, *filesAction_, *copyKeyAction_;
+    QAction *usbAction_, *detachAction_, *relaunchAction_, *filesAction_, *copyKeyAction_, *typeAllAction_, *tileAction_;
     QList<QAction*> viewToggles_; // View menu: Show KVM Manager, Show Proxmox
     struct SidebarView {
         QString key, title;

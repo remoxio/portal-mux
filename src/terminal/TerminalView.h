@@ -58,6 +58,7 @@ signals:
     void bell();
     void directoryChanged(const QString& path); // the shell's, by OSC 7
     void keyTyped(int key, Qt::KeyboardModifiers m, const QString& text); // by the user, not typeKey()
+    void pasted(const QString& text); // by the user: the clipboard or the selection
 
 protected:
     bool event(QEvent* event) override;

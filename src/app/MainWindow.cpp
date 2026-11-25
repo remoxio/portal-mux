@@ -27,6 +27,7 @@
 #include "app/Prompts.h"
 #include "app/Snippets.h"
 #include "app/SshKeys.h"
+#include "app/TiledView.h"
 #include "app/SftpView.h"
 #include "app/SshServers.h"
 #include "app/WindowEffects.h"
@@ -423,8 +424,17 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(disconnectAction_, &QAction::triggered, this, [this] {
         if (DetachedWindow* window = activeDetached()) delete window->page(); // its window closes with it
+        else if (tiled_ && tabs_->currentWidget() == tiled_) delete tiled_->current(); // its tile closes
         else closeTab(tabs_->currentIndex());
     });
+    typeAllAction_ = new QAction(icons::lucide("radio"), tr("Type in &All Terminals"), this);
+    typeAllAction_->setCheckable(true);
+    typeAllAction_->setToolTip(tr("What you type or paste in one terminal goes to every connected terminal too"));
+    connect(typeAllAction_, &QAction::toggled, this, [this](bool on) { typeAllCell_->setVisible(on); });
+    tileAction_ = new QAction(icons::lucide("columns-2"), tr("&Tile Terminals"), this);
+    tileAction_->setCheckable(true);
+    tileAction_->setToolTip(tr("The terminal tabs side by side in one tab; off puts them back"));
+    connect(tileAction_, &QAction::triggered, this, &MainWindow::setTiled);
     copyKeyAction_ = new QAction(icons::lucide("key-round"), tr("Copy My &Key to Server…"), this);
     copyKeyAction_->setToolTip(tr("Adds one of your SSH keys to the server's authorized keys, so it lets you in without a password"));
     connect(copyKeyAction_, &QAction::triggered, this, &MainWindow::copyKeyToServer);
@@ -560,6 +570,10 @@ MainWindow::MainWindow(QWidget* parent)
     fpsCell_ = cell(tr("88 fps"));
     modeCell_ = cell({});
     numCell_ = cell(QStringLiteral("NUM"));
+    typeAllCell_ = cell({});
+    typeAllCell_->setText(tr("Typing into all terminals"));
+    typeAllCell_->setToolTip(tr("Session → Type in All Terminals"));
+    typeAllCell_->setObjectName(QStringLiteral("typeAll")); // in the highlight colour: styleStatusCells()
     styleStatusCells();
     numCell_->setText(QStringLiteral("NUM"));
     numCell_->setToolTip(tr("Num Lock of this computer; sessions follow it"));
@@ -807,7 +821,7 @@ MainWindow::MainWindow(QWidget* parent)
             window->page()->setFocus();
         } else if (RemoteView* view = currentView()) {
             view->setFocus();
-        } else if (QWidget* page = tabs_->currentWidget()) {
+        } else if (QWidget* page = tabPage()) {
             page->setFocus();
         }
     });
@@ -1777,6 +1791,11 @@ TerminalView* MainWindow::createTerminal(const Connection& c, const QString& add
         tabs_->setTabToolTip(tabs_->indexOf(terminal), title.isEmpty() ? host : title);
         updateActiveList();
     });
+    connect(terminal, &TerminalView::keyTyped, this, [this, terminal](int key, Qt::KeyboardModifiers m, const QString& text) {
+        typeIntoOthers(terminal, [&](TerminalView* t) { t->typeKey(key, m, text); });
+    });
+    connect(terminal, &TerminalView::pasted, this,
+            [this, terminal](const QString& text) { typeIntoOthers(terminal, [&](TerminalView* t) { t->paste(text); }); });
     connect(terminal, &TerminalView::bell, this, [this, terminal] {
         if (tabs_->currentWidget() != terminal) {
             tabs_->setTabIcon(tabs_->indexOf(terminal), icons::lucide("bell"));
@@ -1931,6 +1950,13 @@ void MainWindow::openVmConsole(LibvirtVms* host, const std::string& uuid)
 #endif
 }
 
+void MainWindow::typeIntoOthers(TerminalView* source, const std::function<void(TerminalView*)>& type)
+{
+    if (!typeAllAction_->isChecked()) return;
+    for (TerminalView* t : findChildren<TerminalView*>()) // tabs, tiles and detached windows
+        if (t != source && t->live()) type(t);
+}
+
 void MainWindow::fillSnippetsMenu()
 {
     snippetsMenu_->clear();
@@ -1942,8 +1968,12 @@ void MainWindow::fillSnippetsMenu()
             if (!terminal || !terminal->live()) return;
             QString command = s.command;
             while (command.endsWith(QLatin1Char('\n')) || command.endsWith(QLatin1Char('\r'))) command.chop(1);
-            terminal->paste(command);
-            if (s.run) terminal->typeKey(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+            auto type = [&](TerminalView* t) {
+                t->paste(command);
+                if (s.run) t->typeKey(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+            };
+            type(terminal);
+            typeIntoOthers(terminal, type);
             terminal->setFocus();
         });
         a->setToolTip(s.command);
@@ -2228,7 +2258,7 @@ void MainWindow::updateActiveList()
 
 void MainWindow::updateStatusInfo()
 {
-    QWidget* page = tabs_->currentWidget(); // the main window's tab, also while a detached window is active
+    QWidget* page = tabPage(); // the main window's tab, also while a detached window is active
     QString size, scale, fps, mode;
     if (RemoteView* view = page ? page->findChild<RemoteView*>() : nullptr) {
         const RemoteView::DisplayInfo d = view->displayInfo();
@@ -2271,7 +2301,9 @@ void MainWindow::showSessionState(QWidget* page, const QString& name, SessionSta
 
 void MainWindow::styleStatusCells()
 {
-    status_->setStyleSheet(QStringLiteral("QStatusBar QLabel { border: 1px solid %1; border-radius: 2px; padding: 0 6px; }").arg(lineColor().name()));
+    status_->setStyleSheet(QStringLiteral("QStatusBar QLabel { border: 1px solid %1; border-radius: 2px; padding: 0 6px; }"
+                                          "QStatusBar QLabel#typeAll { background: palette(highlight); color: palette(highlighted-text); }")
+                               .arg(lineColor().name()));
 }
 
 void MainWindow::showUsbDevices()
@@ -2363,12 +2395,14 @@ void MainWindow::updateWindowTitle()
 
 void MainWindow::closeTab(int index)
 {
+    if (tiled_ && tabs_->widget(index) == tiled_) return setTiled(false); // the terminals go back to tabs
     delete tabs_->widget(index);
 }
 
 bool MainWindow::confirmCloseTab(int index)
 {
     QWidget* page = tabs_->widget(index);
+    if (tiled_ && page == tiled_) return true;
     const auto* view = page ? page->findChild<RemoteView*>() : nullptr;
     const auto* terminal = terminalOf(page);
     if (!(view && view->live()) && !(terminal && terminal->live())) return true;
@@ -2379,7 +2413,58 @@ bool MainWindow::confirmCloseTab(int index)
 QWidget* MainWindow::currentPage() const
 {
     if (DetachedWindow* window = activeDetached()) return window->page();
-    return tabs_->currentWidget();
+    return tabPage();
+}
+
+QWidget* MainWindow::tabPage() const
+{
+    QWidget* page = tabs_->currentWidget();
+    return page && page == tiled_ ? tiled_->current() : page;
+}
+
+void MainWindow::setTiled(bool on)
+{
+    if (on == bool(tiled_)) return;
+    if (on) {
+        std::vector<int> indexes;
+        for (int i = 0; i < tabs_->count(); ++i)
+            if (qobject_cast<TerminalView*>(tabs_->widget(i))) indexes.push_back(i);
+        if (indexes.size() < 2) return;
+        QWidget* was = tabs_->currentWidget();
+        tiledTabs_.clear();
+        for (int i : indexes) tiledTabs_.push_back({tabs_->widget(i), i, tabs_->tabText(i), tabs_->tabToolTip(i)});
+        for (auto it = indexes.rbegin(); it != indexes.rend(); ++it) tabs_->removeTab(*it);
+        tiled_ = new TiledView;
+        tiled_->setProperty("protocol", QStringLiteral("Terminal"));
+        for (const TiledTab& t : tiledTabs_) tiled_->add(t.page, t.text);
+        connect(tiled_, &TiledView::currentChanged, this, [this] {
+            updateSessionActions();
+            updateStatusInfo();
+        });
+        connect(tiled_, &TiledView::emptied, this, [this] { setTiled(false); });
+        const int at = tabs_->insertTab(indexes.front(), tiled_, tr("Terminals"));
+        tabs_->setTabIcon(at, icons::lucide("columns-2"));
+        tabs_->setCurrentIndex(at);
+        (qobject_cast<TerminalView*>(was) ? was : tiled_->current())->setFocus();
+    } else {
+        TiledView* view = tiled_;
+        tiled_ = nullptr;
+        QWidget* current = view->current();
+        const std::vector<QWidget*> pages = view->take();
+        tabs_->removeTab(tabs_->indexOf(view));
+        view->deleteLater();
+        for (const TiledTab& t : tiledTabs_) // their old places, as far as tabs closed since allow
+            if (std::find(pages.begin(), pages.end(), t.page) != pages.end())
+                tabs_->setTabToolTip(tabs_->insertTab(std::min(t.index, tabs_->count()), t.page, t.text), t.toolTip);
+        tiledTabs_.clear();
+        if (current) {
+            tabs_->setCurrentIndex(tabs_->indexOf(current));
+            current->setFocus();
+        }
+    }
+    updateActiveList();
+    updateSessionActions();
+    updateWindowTitle();
 }
 
 RemoteView* MainWindow::currentView() const
@@ -2391,7 +2476,7 @@ RemoteView* MainWindow::currentView() const
 void MainWindow::detachTab(int index)
 {
     QWidget* page = tabs_->widget(index);
-    if (!page) return;
+    if (!page || page == tiled_) return;
     auto* window = new DetachedWindow(this, [this](DetachedWindow* w) { reattach(w); });
     window->title = tabs_->tabText(index);
     window->toolTip = tabs_->tabToolTip(index);
@@ -2455,7 +2540,7 @@ QList<QAction*> MainWindow::sessionTools(QWidget* page) const
         if (is({"Moonlight"})) tools << nullptr << relaunchAction_;
     } else if (TerminalView* terminal = terminalOf(page)) {
         if (terminal->sidePanel()) tools << filesAction_;
-        tools << snippetsMenu_->menuAction();
+        tools << snippetsMenu_->menuAction() << nullptr << typeAllAction_ << tileAction_;
         tools << nullptr << reconnectAction_;
     }
     return tools << nullptr << disconnectAction_;
@@ -2487,7 +2572,7 @@ void MainWindow::fillSessionBar(QToolBar* bar, const QList<QAction*>& tools)
 
 void MainWindow::updateSessionActions()
 {
-    QWidget* page = tabs_->currentWidget();
+    QWidget* page = tabPage();
     fillSessionBar(sessionBar_, sessionTools(page));
     fillSessionBar(fullScreenBar_, sessionTools(page));
     QList<QAction*> tools = sessionTools(page); // the toolbar's, then what has no button, Disconnect last
@@ -2515,7 +2600,11 @@ void MainWindow::updateSessionActions()
     filesAction_->setChecked(terminal && terminal->sidePanelShown());
     usbAction_->setEnabled(view && currentPage()->property("protocol").toString() == QLatin1String("SPICE"));
     relaunchAction_->setEnabled(view && currentPage()->property("protocol").toString() == QLatin1String("Moonlight"));
-    detachAction_->setEnabled(tabs_->count() > 0);
+    detachAction_->setEnabled(tabs_->count() > 0 && !(tiled_ && tabs_->currentWidget() == tiled_));
+    int terminalTabs = 0;
+    for (int i = 0; i < tabs_->count(); ++i) terminalTabs += qobject_cast<TerminalView*>(tabs_->widget(i)) ? 1 : 0;
+    tileAction_->setEnabled(tiled_ || terminalTabs >= 2);
+    tileAction_->setChecked(tiled_);
     fullScreenAction_->setEnabled(currentPage() || isFullScreen());
     disconnectAction_->setEnabled(currentPage());
     const RemoteView::Options o = view ? view->options() : RemoteView::Options{};
@@ -2539,6 +2628,7 @@ void MainWindow::changeEvent(QEvent* event)
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    setTiled(false); // the tabs to open next time
     QStringList open; // saved connections only: a quick connection or a VM console has no id
     auto note = [&open](QWidget* page) {
         if (const QString id = page ? page->property("connectionId").toString() : QString(); !id.isEmpty()) open << id;

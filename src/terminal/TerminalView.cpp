@@ -364,7 +364,12 @@ bool TerminalView::clipboardImage() const
 // an image goes to a file on the server and its path is pasted, as a dragged-in file (Claude Code takes it as an image)
 void TerminalView::pasteClipboard()
 {
-    if (!clipboardImage()) return paste(QApplication::clipboard()->text());
+    if (!clipboardImage()) {
+        const QString text = QApplication::clipboard()->text();
+        paste(text);
+        emit pasted(text);
+        return;
+    }
     const QMimeData* mime = QApplication::clipboard()->mimeData();
     QByteArray png = mime->data(QStringLiteral("image/png"));
     if (png.isEmpty()) {
@@ -519,7 +524,9 @@ void TerminalView::mousePressEvent(QMouseEvent* event)
         return;
     }
     if (event->button() == Qt::MiddleButton) {
-        paste(QApplication::clipboard()->text(QClipboard::Selection));
+        const QString text = QApplication::clipboard()->text(QClipboard::Selection);
+        paste(text);
+        emit pasted(text);
         return;
     }
     if (event->button() != Qt::LeftButton) return;

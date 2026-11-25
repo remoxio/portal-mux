@@ -120,6 +120,7 @@ qt_add_executable(portal-mux WIN32 MACOSX_BUNDLE
     src/app/SftpView.cpp
     src/app/SshKeys.cpp
     src/app/Snippets.cpp
+    src/app/TiledView.cpp
     src/app/Secrets.cpp
     src/app/SshServers.cpp
     src/app/SessionTabs.h
