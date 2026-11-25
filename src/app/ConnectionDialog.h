@@ -1,16 +1,18 @@
 #pragma once
 
 #include "app/SshServers.h"
-#include "core/Connection.h"
+#include "core/Properties.h"
 
 #include <QDialog>
 
+#include <functional>
 #include <map>
 #include <vector>
 
 class QComboBox;
 class QFormLayout;
 class QLineEdit;
+class QSettings;
 class QSpinBox;
 class QTabWidget;
 
@@ -22,8 +24,8 @@ class ConnectionDialog : public QDialog {
     Q_OBJECT
 
 public:
-    ConnectionDialog(const rdc::Connection& connection, const QStringList& groups, std::vector<SshServer> sshServers,
-                     QWidget* parent = nullptr);
+    // settings: SSH servers, logins and group defaults
+    ConnectionDialog(const rdc::Connection& connection, const QStringList& groups, QSettings* settings, QWidget* parent = nullptr);
 
     rdc::Connection connection() const;
     // Typed secrets by property key; "" = connection password
@@ -33,11 +35,16 @@ private:
     void buildPropertyTabs(const std::map<std::string, std::string>& values);
     std::map<std::string, std::string> currentValues() const;
     rdc::Protocol protocol() const;
-    void fillServers(QComboBox* box, const QStringList& noneLabels, const QString& select); // the SSH tunnel's or jump host's
+    // the SSH tunnel's or jump host's: `first` (none, as the group), then the servers
+    void fillServers(QComboBox* box, const std::vector<rdc::Choice>& first, const QString& select);
+    void fillLogin(QComboBox* box, const QString& select);
+    bool usesLogin() const; // a saved login's user name and password, not the fields'
 
     rdc::Connection original_;
+    QSettings* settings_;
     std::vector<SshServer> sshServers_; // the SSH tunnel's choices
-    std::vector<std::pair<QComboBox*, QStringList>> serverBoxes_; // with their "none" labels
+    std::vector<std::pair<QComboBox*, std::vector<rdc::Choice>>> serverBoxes_; // with their first items
+    std::function<void()> validate_;
     QTabWidget* tabs_;
     QFormLayout* generalForm_;
     QLineEdit *name_, *host_, *username_, *password_;

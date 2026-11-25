@@ -2,8 +2,8 @@
 
 #include "app/ConnectionStore.h"
 #include "app/Icons.h"
+#include "app/Logins.h"
 #include "app/Secrets.h"
-#include "core/Properties.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -21,6 +21,8 @@
 #include <QTabWidget>
 #include <QUuid>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 using rdc::PropertyDef;
 using rdc::PropertyKind;
@@ -52,10 +54,15 @@ static QWidget* withBrowse(QLineEdit* edit, bool directory)
     return box;
 }
 
-ConnectionDialog::ConnectionDialog(const rdc::Connection& c, const QStringList& groups, std::vector<SshServer> sshServers,
-                                   QWidget* parent)
-    : QDialog(parent), original_(c), sshServers_(std::move(sshServers))
+ConnectionDialog::ConnectionDialog(const rdc::Connection& c, const QStringList& groups, QSettings* settings, QWidget* parent)
+    : QDialog(parent), original_(c), settings_(settings), sshServers_(loadSshServers(settings))
 {
+    if (c.id.empty()) { // a new one in a group starts with the group's login and SSH server
+        const GroupDefaults defaults = groupDefaults(settings, QString::fromStdString(c.group));
+        if (!defaults.login.isEmpty()) original_.options.emplace("login", fromGroup);
+        if (!defaults.sshServer.isEmpty())
+            for (const char* key : {"tunnel", "jumpHost"}) original_.options.emplace(key, fromGroup);
+    }
     setWindowTitle(c.id.empty() ? tr("New Connection") : tr("Edit Connection"));
     tabs_ = new QTabWidget;
     auto* general = new QWidget;
@@ -106,7 +113,7 @@ ConnectionDialog::ConnectionDialog(const rdc::Connection& c, const QStringList& 
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     // adb serial (empty = the only device); no port, user or password
-    auto validate = [this, buttons] {
+    validate_ = [this, buttons] {
         const bool android = protocol() == Protocol::Android, serial = protocol() == Protocol::Serial;
         if (auto* label = qobject_cast<QLabel*>(generalForm_->labelForField(host_)))
             label->setText(android || serial ? tr("&Device:") : tr("&Host:"));
@@ -119,16 +126,24 @@ ConnectionDialog::ConnectionDialog(const rdc::Connection& c, const QStringList& 
         generalForm_->setRowVisible(host_, !local);
         generalForm_->setRowVisible(port_, !android && !local && !serial);
         for (QWidget* w : std::initializer_list<QWidget*>{username_, password_})
-            generalForm_->setRowVisible(w, !android && !loginInside && !local && !serial);
+            generalForm_->setRowVisible(w, !android && !loginInside && !local && !serial && !usesLogin());
         buttons->button(QDialogButtonBox::Ok)->setEnabled(android || local || !host_->text().trimmed().isEmpty());
     };
-    connect(host_, &QLineEdit::textChanged, this, validate);
-    connect(protocol_, &QComboBox::currentIndexChanged, this, [this, validate] {
+    connect(host_, &QLineEdit::textChanged, this, validate_);
+    connect(protocol_, &QComboBox::currentIndexChanged, this, [this] {
         buildPropertyTabs(currentValues());
-        validate();
+        validate_();
     });
-    validate();
-    buildPropertyTabs(c.options);
+    connect(group_, &QComboBox::currentTextChanged, this, [this] { // "As the group" names another group's choice
+        if (auto it = editors_.find("login"); it != editors_.end()) {
+            auto* box = static_cast<QComboBox*>(it->second);
+            fillLogin(box, box->currentData().toString());
+        }
+        for (const auto& [box, first] : serverBoxes_) fillServers(box, first, box->currentData().toString());
+        validate_();
+    });
+    buildPropertyTabs(original_.options);
+    validate_();
     resize(760, sizeHint().height());
 }
 
@@ -182,10 +197,12 @@ void ConnectionDialog::buildPropertyTabs(const std::map<std::string, std::string
             auto* e = new QComboBox;
             if (d.key == "tunnel" || d.key == "jumpHost") {
                 e->setMinimumContentsLength(24);
-                QStringList none; // its first items, the value ""
-                for (const rdc::Choice& ch : d.choices) none << tr(ch.label.c_str());
-                serverBoxes_.emplace_back(e, none);
-                fillServers(e, none, value);
+                serverBoxes_.emplace_back(e, d.choices);
+                fillServers(e, d.choices, value);
+            } else if (d.key == "login") {
+                e->setMinimumContentsLength(24);
+                fillLogin(e, value);
+                connect(e, &QComboBox::currentIndexChanged, this, [this] { validate_(); });
             } else {
                 for (const rdc::Choice& ch : d.choices) e->addItem(tr(ch.label.c_str()), QString::fromStdString(ch.value));
                 e->setCurrentIndex(std::max(0, e->findData(value)));
@@ -208,7 +225,12 @@ void ConnectionDialog::buildPropertyTabs(const std::map<std::string, std::string
 #else
             form->addRow(field);
 #endif
-        else
+        else if (d.key == "login") { // above the user name it replaces
+            int row = 0;
+            QFormLayout::ItemRole role;
+            generalForm_->getWidgetPosition(username_, &row, &role);
+            generalForm_->insertRow(row, label + QLatin1Char(':'), field);
+        } else
             form->addRow(label + QLatin1Char(':'), field);
         if (form == generalForm_) generalRows_.push_back(field);
         editors_[d.key] = editor;
@@ -238,23 +260,56 @@ std::map<std::string, std::string> ConnectionDialog::currentValues() const
     return values;
 }
 
-void ConnectionDialog::fillServers(QComboBox* box, const QStringList& noneLabels, const QString& select)
+void ConnectionDialog::fillServers(QComboBox* box, const std::vector<rdc::Choice>& first, const QString& select)
 {
     box->clear();
-    for (const QString& label : noneLabels) box->addItem(label, QString());
+    const QString groupServer = groupDefaults(settings_, group_->currentText().trimmed()).sshServer;
+    const auto server = std::find_if(sshServers_.begin(), sshServers_.end(), [&](const SshServer& s) { return s.id == groupServer; });
+    for (const rdc::Choice& ch : first)
+        box->addItem(ch.value != fromGroup        ? tr(ch.label.c_str())
+                     : server != sshServers_.end() ? tr("As the group: %1").arg(server->name)
+                                                   : tr("As the group (it has none)"),
+                     QString::fromStdString(ch.value));
     for (const SshServer& s : sshServers_) {
         box->addItem(icons::lucide("server"), s.name, s.id);
         box->setItemData(box->count() - 1, s.summary(), Qt::ToolTipRole);
     }
     if (!select.isEmpty() && box->findData(select) < 0) // imported, or removed in Settings
         box->addItem(QUuid::fromString(select).isNull() ? select : tr("A removed SSH server"), select);
-    offerNewSshServer(box, [this, box, noneLabels](const QString& chosen, const std::vector<SshServer>& servers) {
+    offerNewSshServer(box, [this, box, first](const QString& chosen, const std::vector<SshServer>& servers) {
         sshServers_ = servers;
-        for (const auto& [other, labels] : serverBoxes_)
-            if (other != box) fillServers(other, labels, other->currentData().toString());
-        fillServers(box, noneLabels, chosen);
+        for (const auto& [other, items] : serverBoxes_)
+            if (other != box) fillServers(other, items, other->currentData().toString());
+        fillServers(box, first, chosen);
     });
     box->setCurrentIndex(std::max(0, box->findData(select)));
+}
+
+void ConnectionDialog::fillLogin(QComboBox* box, const QString& select)
+{
+    box->clear();
+    const auto group = findLogin(settings_, groupDefaults(settings_, group_->currentText().trimmed()).login);
+    box->addItem(tr("Typed here"), QString());
+    box->addItem(group ? tr("As the group: %1").arg(group->name) : tr("As the group (it has none)"), QString::fromLatin1(fromGroup));
+    for (const Login& l : loadLogins(settings_)) {
+        box->addItem(icons::lucide("key-round"), l.name, l.id);
+        box->setItemData(box->count() - 1, l.summary(), Qt::ToolTipRole);
+    }
+    if (!select.isEmpty() && box->findData(select) < 0) box->addItem(tr("A removed login"), select);
+    offerNewLogin(box, [this, box](const QString& chosen) {
+        fillLogin(box, chosen);
+        validate_();
+    });
+    box->setCurrentIndex(std::max(0, box->findData(select)));
+}
+
+bool ConnectionDialog::usesLogin() const
+{
+    const auto it = editors_.find("login");
+    if (it == editors_.end()) return false;
+    QString id = static_cast<QComboBox*>(it->second)->currentData().toString();
+    if (id == QLatin1String(fromGroup)) id = groupDefaults(settings_, group_->currentText().trimmed()).login;
+    return !id.isEmpty() && findLogin(settings_, id);
 }
 
 rdc::Connection ConnectionDialog::connection() const

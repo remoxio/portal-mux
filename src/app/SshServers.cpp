@@ -1,8 +1,8 @@
 #include "app/SshServers.h"
 
+#include "app/CardRow.h"
 #include "app/ConnectionStore.h"
 #include "app/Icons.h"
-#include "app/Look.h"
 #include "app/Prompts.h"
 #include "ssh/SshConnection.h"
 #include "ssh/SshTunnel.h"
@@ -21,14 +21,10 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
-#include <QMouseEvent>
-#include <QPainter>
 #include <QPointer>
 #include <QPushButton>
 #include <QSettings>
 #include <QShortcut>
-#include <QStyledItemDelegate>
-#include <QToolTip>
 #include <QUuid>
 #include <QVBoxLayout>
 
@@ -42,7 +38,6 @@ namespace {
 
 QSettings* editorSettings = nullptr;
 std::function<void(QWidget*)> editor;
-constexpr int NewServerRole = Qt::UserRole + 100; // the "New SSH Server…" item; its data stays empty
 
 } // namespace
 
@@ -55,31 +50,16 @@ void setSshServersEditor(QSettings* settings, std::function<void(QWidget*)> open
 void offerNewSshServer(QComboBox* box, SshServersRefill refill)
 {
     if (!editor) return;
-    if (box->count() > 0) box->insertSeparator(box->count());
-    box->addItem(icons::lucide("plus"), SshServersPage::tr("New SSH Server…"));
-    box->setItemData(box->count() - 1, true, NewServerRole);
-    if (box->property("offersNewSshServer").toBool()) return; // connected when first offered
-    box->setProperty("offersNewSshServer", true);
-    QObject::connect(box, &QComboBox::currentIndexChanged, box, [box](int index) {
-        if (!box->itemData(index, NewServerRole).toBool()) box->setProperty("chosenSshServer", box->itemData(index));
-    });
-    QObject::connect(box, &QComboBox::activated, box, [box, refill](int index) {
-        if (!box->itemData(index, NewServerRole).toBool()) return;
-        QStringList before;
-        for (const SshServer& s : loadSshServers(editorSettings)) before << s.id;
-        const QString chosen = box->property("chosenSshServer").toString();
-        editor(box->window());
-        const std::vector<SshServer> servers = loadSshServers(editorSettings);
-        QString select = chosen;
-        for (const SshServer& s : servers)
-            if (!before.contains(s.id)) select = s.id;
-        refill(select, servers);
-    });
+    offerNew(box, SshServersPage::tr("New SSH Server…"), [] {
+        QStringList ids;
+        for (const SshServer& s : loadSshServers(editorSettings)) ids << s.id;
+        return ids;
+    }, editor, [refill](const QString& select) { refill(select, loadSshServers(editorSettings)); });
 }
 
 namespace {
 
-constexpr int iconSize = 20, gap = 10, maxRows = 8, editSize = 16, editBox = 28;
+constexpr int maxRows = 8;
 
 // One login on a worker, its prompts over `dialogs`; done(error) on the UI thread, "" = logged in; stops with its parent
 class SshTest : public QObject, private rdc::SessionListener {
@@ -124,109 +104,6 @@ private:
     std::jthread worker_;
 };
 
-// name over user@host, a line between rows, icon buttons on the right
-class ServerRow : public QStyledItemDelegate {
-public:
-    struct Button {
-        const char* icon; // Lucide
-        const char* tip;  // QT_TRANSLATE_NOOP("SshServersPage", …)
-        std::function<void(int row)> run;
-    };
-    ServerRow(std::vector<Button> buttons, QObject* parent) : QStyledItemDelegate(parent), buttons_(std::move(buttons)) {}
-
-    static QRectF buttonRect(const QRectF& r, size_t i) // from the right
-    {
-        return {r.right() - 6 - editBox * qreal(i + 1), r.center().y() - editBox / 2.0, qreal(editBox), qreal(editBox)};
-    }
-    int buttonAt(const QRectF& r, QPointF pos) const
-    {
-        for (size_t i = 0; i < buttons_.size(); ++i)
-            if (buttonRect(r, i).contains(pos)) return int(i);
-        return -1;
-    }
-
-    bool editorEvent(QEvent* event, QAbstractItemModel* model, const QStyleOptionViewItem& option, const QModelIndex& index) override
-    {
-        const auto type = event->type();
-        if (type == QEvent::MouseButtonRelease || type == QEvent::MouseButtonDblClick) {
-            auto* mouse = static_cast<QMouseEvent*>(event);
-            if (const int b = buttonAt(option.rect, mouse->position()); mouse->button() == Qt::LeftButton && b >= 0) {
-                if (type == QEvent::MouseButtonRelease) buttons_[size_t(b)].run(index.row());
-                return true; // not activated as well
-            }
-        }
-        return QStyledItemDelegate::editorEvent(event, model, option, index);
-    }
-
-    bool helpEvent(QHelpEvent* event, QAbstractItemView* view, const QStyleOptionViewItem& option, const QModelIndex& index) override
-    {
-        const int b = event->type() == QEvent::ToolTip ? buttonAt(option.rect, event->pos()) : -1;
-        if (b < 0) return QStyledItemDelegate::helpEvent(event, view, option, index);
-        QToolTip::showText(event->globalPos(), SshServersPage::tr(buttons_[size_t(b)].tip), view, buttonRect(option.rect, size_t(b)).toRect());
-        return true;
-    }
-
-    static QFont small(QFont font)
-    {
-        font.setPointSizeF(font.pointSizeF() * 0.85);
-        return font;
-    }
-
-    QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex&) const override
-    {
-        return {0, option.fontMetrics.height() + QFontMetrics(small(option.font)).height() + 14};
-    }
-
-    void paint(QPainter* p, const QStyleOptionViewItem& option, const QModelIndex& index) const override
-    {
-        QStyleOptionViewItem o = option;
-        initStyleOption(&o, index);
-        const QRectF r = o.rect;
-        QColor text = o.palette.color(QPalette::WindowText), dim = text;
-        dim.setAlphaF(0.55);
-        p->save();
-        p->setRenderHint(QPainter::Antialiasing);
-        const qreal textLeft = r.left() + 8 + iconSize + gap;
-        if (o.state & QStyle::State_Selected) {
-            look::paintSelection(p, r.adjusted(0, 1, 0, -1), o.palette, 6);
-        } else if (index.row() > 0) {
-            QColor line = text;
-            line.setAlphaF(0.1);
-            p->fillRect(QRectF(textLeft, r.top(), r.right() - textLeft - 8, 1), line);
-        }
-        QPixmap icon = o.icon.pixmap(QSize(iconSize, iconSize), p->device()->devicePixelRatioF());
-        if (!icon.isNull()) { // in the text's colour
-            QPainter tint(&icon);
-            tint.setCompositionMode(QPainter::CompositionMode_SourceIn);
-            tint.fillRect(icon.rect(), text);
-        }
-        p->drawPixmap(QPointF(r.left() + 8, r.center().y() - iconSize / 2.0), icon);
-        const QFont smallFont = small(o.font);
-        const int nameHeight = o.fontMetrics.height(), lineHeight = QFontMetrics(smallFont).height();
-        const qreal top = r.center().y() - (nameHeight + lineHeight) / 2.0, width = buttonRect(r, buttons_.size() - 1).left() - gap - textLeft;
-        p->setPen(text);
-        p->setFont(o.font);
-        p->drawText(QRectF(textLeft, top, width, nameHeight), Qt::AlignLeft | Qt::AlignVCenter,
-                    o.fontMetrics.elidedText(o.text, Qt::ElideRight, int(width)));
-        p->setPen(dim);
-        p->setFont(smallFont);
-        p->drawText(QRectF(textLeft, top + nameHeight, width, lineHeight), Qt::AlignLeft | Qt::AlignVCenter,
-                    QFontMetrics(smallFont).elidedText(index.data(Qt::UserRole).toString(), Qt::ElideRight, int(width)));
-        for (size_t i = 0; i < buttons_.size(); ++i) {
-            QPixmap glyph = icons::lucide(buttons_[i].icon).pixmap(QSize(editSize, editSize), p->device()->devicePixelRatioF());
-            QPainter tint(&glyph);
-            tint.setCompositionMode(QPainter::CompositionMode_SourceIn);
-            tint.fillRect(glyph.rect(), dim);
-            tint.end();
-            p->drawPixmap(buttonRect(r, i).center() - QPointF(editSize, editSize) / 2, glyph);
-        }
-        p->restore();
-    }
-
-private:
-    std::vector<Button> buttons_;
-};
-
 } // namespace
 
 QString SshServer::address() const { return user.isEmpty() ? host : user + QLatin1Char('@') + host; }
@@ -265,9 +142,9 @@ std::optional<SshServer> findSshServer(QSettings* settings, const QString& id)
 SshServersPage::SshServersPage(QSettings* settings, QWidget* parent) : QWidget(parent), settings_(settings)
 {
     list_ = new QListWidget;
-    list_->setItemDelegate(new ServerRow({{"trash", QT_TRANSLATE_NOOP("SshServersPage", "Remove"), [this](int row) { remove(row); }},
-                                          {"pencil", QT_TRANSLATE_NOOP("SshServersPage", "Edit"), [this](int row) { edit(row); }}}, // from the right
-                                         list_));
+    list_->setItemDelegate(new CardRow({{"trash", tr("Remove"), [this](int row) { remove(row); }},
+                                        {"pencil", tr("Edit"), [this](int row) { edit(row); }}}, // from the right
+                                       list_));
     new QShortcut(QKeySequence::Delete, list_, [this] { remove(list_->currentRow()); }, Qt::WidgetShortcut);
     list_->setFrameShape(QFrame::NoFrame);
     list_->setAttribute(Qt::WA_MacShowFocusRect, false);

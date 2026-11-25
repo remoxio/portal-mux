@@ -102,6 +102,7 @@ qt_add_executable(portal-mux WIN32 MACOSX_BUNDLE
     src/app/Keymap.cpp
     src/app/KeyboardGrab.cpp
     src/app/KrdcImport.cpp
+    src/app/Logins.cpp
     src/app/LockKeys.cpp
     src/app/Look.cpp
     src/app/MainWindow.cpp
@@ -118,6 +119,7 @@ qt_add_executable(portal-mux WIN32 MACOSX_BUNDLE
     src/app/ProxmoxView.cpp
     src/app/RemoteView.cpp
     src/app/SftpView.cpp
+    src/app/CardRow.cpp
     src/app/SshKeys.cpp
     src/app/Snippets.cpp
     src/app/TiledView.cpp

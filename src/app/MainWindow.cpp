@@ -29,6 +29,7 @@
 #include "app/SshKeys.h"
 #include "app/TiledView.h"
 #include "app/SftpView.h"
+#include "app/Logins.h"
 #include "app/SshServers.h"
 #include "app/WindowEffects.h"
 #include "core/Properties.h"
@@ -165,7 +166,10 @@ static void readSecrets(QObject* context, QSettings* settings, Connection c, std
         std::function<void()> step;
     };
     auto state = std::make_shared<State>();
-    for (const std::string& key : secretKeys(c.protocol)) state->sources.emplace_back(connectionSecret(c.id, key), key);
+    std::string loginPassword;
+    c = withDefaults(settings, std::move(c), &loginPassword);
+    for (const std::string& key : secretKeys(c.protocol))
+        state->sources.emplace_back(key.empty() && !loginPassword.empty() ? loginPassword : connectionSecret(c.id, key), key);
     if (const auto via = findSshServer(settings, QString::fromStdString(c.option("tunnel"))); via && via->auth == QLatin1String("password"))
         state->sources.emplace_back(sshServerSecret(via->id), "tunnel.password");
     if (const auto jump = findSshServer(settings, QString::fromStdString(c.option("jumpHost")))) {
@@ -619,9 +623,14 @@ MainWindow::MainWindow(QWidget* parent)
     connect(tree_, &QWidget::customContextMenuRequested, this, [this, reloadSshConfig](const QPoint& at) {
         QMenu menu;
         menu.addActions(tree_->actions());
-        if (const QTreeWidgetItem* item = tree_->itemAt(at); item && item->data(0, FoldRole) == QStringLiteral("readonly:") + sshConfigGroup()) {
+        const QTreeWidgetItem* item = tree_->itemAt(at);
+        if (item && item->data(0, FoldRole) == QStringLiteral("readonly:") + sshConfigGroup()) {
             menu.addSeparator();
             menu.addAction(reloadSshConfig); // on the SSH config group only
+        }
+        if (item && item->data(0, FoldRole).toString().startsWith(QLatin1String("group:"))) {
+            menu.addSeparator();
+            menu.addAction(icons::lucide("settings"), tr("&Group Settings…"), this, [this, group = item->text(0)] { editGroup(group); });
         }
         menu.exec(tree_->viewport()->mapToGlobal(at));
     });
@@ -700,6 +709,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(proxmox_, &ProxmoxView::message, this, [this](const QString& text) { status_->showMessage(text, 8000); });
     addView("proxmox", icons::brand("proxmox-line"), tr("Proxmox"), proxmox_, proxmox_->titleActions(), tr("Show Pro&xmox"));
     setSshServersEditor(settings_, [this](QWidget* parent) { openSettings(QStringLiteral("sshServers"), parent); });
+    setLoginsEditor(settings_, [this](QWidget* parent) { openSettings(QStringLiteral("logins"), parent); });
     hyperv_ = new HyperVView(settings_, configDir_);
     connect(hyperv_, &HyperVView::openRequested, this, &MainWindow::openHyperVConsole);
     connect(hyperv_, &HyperVView::message, this, [this](const QString& text) { status_->showMessage(text, 8000); });
@@ -1091,7 +1101,7 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
     dialog.setWindowTitle(tr("Settings"));
     // pages apply at once; Cancel restores these as last applied
     const QStringList groups = {QStringLiteral("appearance"), QStringLiteral("sidebar"), QStringLiteral("tabs"), QStringLiteral("font"),
-                                QStringLiteral("sshServers"), QStringLiteral("terminal")};
+                                QStringLiteral("sshServers"), QStringLiteral("logins"), QStringLiteral("terminal")};
     auto current = [this, groups] {
         QMap<QString, QVariant> values;
         for (const QString& key : settings_->allKeys())
@@ -1352,9 +1362,15 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
     auto* sshServers = new SshServersPage(settings_);
     addPage("server", tr("SSH Servers"), {sshServers});
     const int sshRow = pages->count() - 1;
+    auto* logins = new LoginsPage(settings_);
+    addPage("key-round", tr("Logins"), {logins});
+    const int loginsRow = pages->count() - 1;
     addPage("lock", tr("Passwords"), {secrets::page()});
     connect(pages, &QListWidget::currentRowChanged, stack, &QStackedWidget::setCurrentIndex);
-    pages->setCurrentRow(page == QLatin1String("sshServers") ? sshRow : page == QLatin1String("sidebar") ? sidebarRow : 0);
+    pages->setCurrentRow(page == QLatin1String("sshServers") ? sshRow
+                         : page == QLatin1String("logins")   ? loginsRow
+                         : page == QLatin1String("sidebar")  ? sidebarRow
+                                                             : 0);
 
     // OK, Cancel, Apply on every platform
     auto* ok = new QPushButton(tr("OK"));
@@ -1367,7 +1383,7 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
         b->setMinimumWidth(80);
         buttons->addWidget(b);
     }
-    auto changed = [&] { apply->setEnabled(current() != applied || sshServers->pending()); };
+    auto changed = [&] { apply->setEnabled(current() != applied || sshServers->pending() || logins->pending()); };
     changed();
     // every setting the pages write passes here
     for (QObject* control : stack->findChildren<QObject*>()) {
@@ -1378,11 +1394,13 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
         if (auto* button = qobject_cast<QPushButton*>(control)) connect(button, &QPushButton::clicked, &dialog, changed);
     }
     connect(sshServers, &SshServersPage::changed, &dialog, changed);
+    connect(logins, &LoginsPage::changed, &dialog, changed);
     connect(viewList->model(), &QAbstractItemModel::rowsMoved, &dialog, changed);
     connect(viewList, &QListWidget::itemChanged, &dialog, changed);
     for (QToolButton* button : movers) connect(button, &QToolButton::clicked, &dialog, changed);
     auto commit = [&] {
         sshServers->apply();
+        logins->apply();
         hyperv_->reloadServers();
         applied = current();
         changed();
@@ -1514,7 +1532,7 @@ void MainWindow::editConnection(Connection connection)
         if (!c.group.empty() && !groups.contains(QString::fromStdString(c.group))) groups << QString::fromStdString(c.group);
     groups.sort();
 
-    ConnectionDialog dialog(connection, groups, loadSshServers(settings_), this);
+    ConnectionDialog dialog(connection, groups, settings_, this);
     if (dialog.exec() != QDialog::Accepted) return;
     const std::string id = store_.upsert(dialog.connection());
     if (!saveStore()) return;
@@ -1527,6 +1545,74 @@ void MainWindow::editConnection(Connection connection)
                                          .arg(error));
         });
     rebuildTree(id);
+}
+
+void MainWindow::editGroup(const QString& group)
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Group Settings"));
+    GroupDefaults defaults = groupDefaults(settings_, group);
+    auto* login = new QComboBox;
+    login->setMinimumContentsLength(24);
+    std::function<void(const QString&)> fillLogins = [&](const QString& select) {
+        login->clear();
+        login->addItem(tr("None"), QString());
+        for (const Login& l : loadLogins(settings_)) {
+            login->addItem(icons::lucide("key-round"), l.name, l.id);
+            login->setItemData(login->count() - 1, l.summary(), Qt::ToolTipRole);
+        }
+        if (!select.isEmpty() && login->findData(select) < 0) login->addItem(tr("A removed login"), select);
+        offerNewLogin(login, fillLogins);
+        login->setCurrentIndex(std::max(0, login->findData(select)));
+    };
+    fillLogins(defaults.login);
+    auto* server = new QComboBox;
+    server->setMinimumContentsLength(24);
+    std::function<void(const QString&)> fillServers = [&](const QString& select) {
+        server->clear();
+        server->addItem(tr("None: connect directly"), QString());
+        for (const SshServer& s : loadSshServers(settings_)) {
+            server->addItem(icons::lucide("server"), s.name, s.id);
+            server->setItemData(server->count() - 1, s.summary(), Qt::ToolTipRole);
+        }
+        if (!select.isEmpty() && server->findData(select) < 0) server->addItem(tr("A removed SSH server"), select);
+        offerNewSshServer(server, [&](const QString& chosen, const std::vector<SshServer>&) { fillServers(chosen); });
+        server->setCurrentIndex(std::max(0, server->findData(select)));
+    };
+    fillServers(defaults.sshServer);
+    std::vector<std::string> members;
+    for (const Connection& c : store_.all())
+        if (QString::fromStdString(c.group) == group) members.push_back(c.id);
+    auto* note = new QLabel(tr("Connections in \"%1\" use these where their Login or SSH server says \"As the group\"; "
+                               "new connections in the group start that way.").arg(group));
+    note->setWordWrap(true);
+    auto* useAll = new QCheckBox(tr("Switch its %n connection(s) to \"As the group\"", "", int(members.size())));
+    useAll->setToolTip(tr("For the login and the SSH server chosen here; a connection's own user name and password stay saved"));
+    useAll->setVisible(!members.empty());
+    auto* form = new QFormLayout;
+    form->addRow(tr("&Login:"), login);
+    form->addRow(tr("&SSH server:"), server);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->addWidget(note);
+    layout->addLayout(form);
+    layout->addWidget(useAll);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted) return;
+    defaults = {login->currentData().toString(), server->currentData().toString()};
+    setGroupDefaults(settings_, group, defaults);
+    if (!useAll->isChecked()) return;
+    for (const std::string& id : members) {
+        Connection c = *store_.find(id);
+        if (!defaults.login.isEmpty() && rdc::findProperty(c.protocol, "login")) c.options["login"] = fromGroup;
+        if (!defaults.sshServer.isEmpty())
+            for (const char* key : {"tunnel", "jumpHost"})
+                if (rdc::findProperty(c.protocol, key)) c.options[key] = fromGroup;
+        store_.upsert(std::move(c));
+    }
+    saveStore();
 }
 
 void MainWindow::importFromKrdc()
@@ -1579,8 +1665,10 @@ void MainWindow::deleteSelected()
     rebuildTree();
 }
 
-bool MainWindow::serversKnown(const Connection& c)
+bool MainWindow::serversKnown(const Connection& connection)
 {
+    std::string unused;
+    const Connection c = withDefaults(settings_, connection, &unused);
     for (const char* key : {"tunnel", "jumpHost"}) {
         const QString id = QString::fromStdString(c.option(key));
         if (QUuid::fromString(id).isNull() || findSshServer(settings_, id)) continue;

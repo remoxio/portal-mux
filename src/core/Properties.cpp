@@ -58,7 +58,7 @@ static std::vector<PropertyDef> tunnelCommon()
 {
     return {
         // an SSH server of Settings (its id); an imported "[user@]host[:port]" still works
-        {"tunnel", "SSH server", "SSH tunnel", K::Choice, "", {{"", "None: connect directly"}}, 0, 0,
+        {"tunnel", "SSH server", "SSH tunnel", K::Choice, "", {{"", "None: connect directly"}, {"group", "As the group"}}, 0, 0,
          "The connection goes through this SSH server; servers are added in Settings → SSH Servers"},
     };
 }
@@ -263,7 +263,7 @@ static std::vector<PropertyDef> sshProperties()
     std::vector<PropertyDef> p = {
         {"keyFile", "Private key", "General", K::File, "", {}, 0, 0, "Empty = SSH agent and ~/.ssh default keys"},
         // an SSH server of Settings (its id); ~/.ssh/config's "[user@]host[:port][,...]" still works
-        {"jumpHost", "Jump host", "General", K::Choice, "", {{"", "None: connect directly"}}, 0, 0,
+        {"jumpHost", "Jump host", "General", K::Choice, "", {{"", "None: connect directly"}, {"group", "As the group"}}, 0, 0,
          "The connection goes through this SSH server (ProxyJump); servers are added in Settings → SSH Servers"},
         {"command", "Run command instead of a shell", "General", K::Text, ""},
         {"compression", "Compression", "Advanced", K::Bool, "false"},
@@ -334,10 +334,19 @@ static std::vector<PropertyDef> moonlightProperties()
     return p;
 }
 
+// a login of Settings → Logins (its id), "group" or "": the user name and password typed in the connection
+static std::vector<PropertyDef> withLogin(std::vector<PropertyDef> p)
+{
+    p.insert(p.begin(), {"login", "Login", "General", K::Choice, "", {{"", "Typed here"}, {"group", "As the group"}}, 0, 0,
+                         "A user name and password many connections share; logins are added in Settings → Logins"});
+    return p;
+}
+
 const std::vector<PropertyDef>& properties(Protocol protocol)
 {
-    static const std::vector<PropertyDef> rdp = rdpProperties(), vnc = vncProperties(), spice = spiceProperties(),
-                                          ssh = sshProperties(), android = androidProperties(),
+    static const std::vector<PropertyDef> rdp = withLogin(rdpProperties()), vnc = withLogin(vncProperties()),
+                                          spice = withLogin(spiceProperties()), ssh = withLogin(sshProperties()),
+                                          android = androidProperties(),
                                           moonlight = moonlightProperties(), local = localProperties(),
                                           telnet = telnetProperties(), serial = serialProperties();
     switch (protocol) {

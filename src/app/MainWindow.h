@@ -74,6 +74,7 @@ private:
     static QString scrcpyServerPath();
     void updateActions();
     void editConnection(rdc::Connection connection);
+    void editGroup(const QString& group); // its defaults: Settings for "As the group"
     void deleteSelected();
     void importFromKrdc();
     void connectTo(const std::string& id);
