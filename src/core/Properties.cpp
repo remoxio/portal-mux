@@ -1,4 +1,5 @@
 #include "core/Properties.h"
+#include "terminal/ColorSchemes.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -177,6 +178,9 @@ static void addTerminalCommon(std::vector<PropertyDef>& p)
     p.push_back({"font", "Font", "Terminal", K::Text, "", {}, 0, 0, "Empty = Settings → Font → SSH terminal"});
     p.push_back({"fontSize", "Font size (pt)", "Terminal", K::Int, "0", {}, 0, 72, "0 = Settings → Font → SSH terminal"});
     p.push_back({"scrollback", "Scrollback lines", "Terminal", K::Int, "10000", {}, 0, 1000000});
+    std::vector<Choice> colors{{"", "As in Settings"}};
+    for (const ColorScheme& s : colorSchemes) colors.push_back({s.key, s.label});
+    p.push_back({"colors", "Colors", "Terminal", K::Choice, "", colors, 0, 0, "Settings → Font → SSH terminal"});
 }
 
 // /etc/shells, then well-known shells on PATH (fish, nu… are often not listed); one entry per path

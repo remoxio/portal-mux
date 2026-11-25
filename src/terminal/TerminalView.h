@@ -10,10 +10,12 @@
 
 #include <deque>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include <vterm.h>
 
+class QFile;
 class QLabel;
 class QLineEdit;
 
@@ -27,6 +29,7 @@ public:
 
     // empty family / 0 size = system default
     void configure(const QString& fontFamily, int fontSize, int scrollbackLines);
+    void setColorScheme(std::string_view key); // terminal/ColorSchemes.h
     void start(std::unique_ptr<rdc::TerminalSession> session);
     rdc::TerminalSession* session() const { return session_.get(); }
     QSize grid() const { return {cols_, rows_}; }
@@ -66,6 +69,7 @@ protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void keyReleaseEvent(QKeyEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
@@ -81,6 +85,14 @@ private:
         int line = -1, col = 0; // 0 = oldest scrollback line
         auto operator<=>(const Pos&) const = default;
     };
+    struct Text {
+        QString text;
+        std::vector<Pos> at; // each QChar's cell, then the end
+    };
+    struct Link {
+        Pos from, to;
+        QString url;
+    };
 
     void feed(const char* data, size_t len);
     void send(const char* data, size_t len);
@@ -89,6 +101,20 @@ private:
     void resizeTerminal();
     void updateScrollBar(bool stickToBottom);
     Line lineAt(int line) const;
+    const Line& cellsAt(int line, Line& buffer) const; // lineAt without copying the scrollback
+    bool wraps(int line) const; // continues on the next line
+    int lineStart(int line) const; // the first and last screen lines of a wrapped line
+    int lineEnd(int line) const;
+    Text joined(int first, int last) const;
+    Link linkAt(Pos pos) const;
+    void hoverLink(QPoint point, Qt::KeyboardModifiers m);
+    void applyFont();
+    void zoom(int steps); // 0: back to the configured size
+    void startLog();
+    void stopLog();
+    void logLine(int line);
+    void logScrollback();
+    void logScreen();
     Pos posAt(QPoint point) const;
     bool selected(int line, int col) const;
     QString selectedText() const;
@@ -107,6 +133,13 @@ private:
     std::unique_ptr<rdc::TerminalSession> session_;
     PromptBridge prompts_{this, [this] { emit closeRequested(); }};
     QFont font_;
+    QString family_;
+    int size_ = 0, zoom_ = 0;
+    QColor fg_, bg_;
+    Link hover_; // under the mouse while Ctrl is held
+    std::unique_ptr<QFile> log_;
+    long long pushed_ = 0, logged_ = 0; // lines into the scrollback (minus those taken back), and how many of them are logged
+    bool resizing_ = false;
     int cellW_ = 8, cellH_ = 16, ascent_ = 12;
     VTermPos cursor_{0, 0};
     bool cursorVisible_ = true;

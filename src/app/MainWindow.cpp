@@ -42,6 +42,7 @@
 #include "ssh/SshTunnel.h"
 #include "local/LocalTerminalSession.h"
 #include "stream/StreamTerminalSession.h"
+#include "terminal/ColorSchemes.h"
 #include "terminal/TerminalView.h"
 #include "vnc/VncSession.h"
 
@@ -1048,6 +1049,8 @@ void MainWindow::configureTerminal(TerminalView* terminal)
     const int size = terminal->property("ownFontSize").toInt();
     terminal->configure(family.isEmpty() ? font.family() : family, size > 0 ? size : font.pointSize(),
                         terminal->property("scrollback").toInt());
+    const QString colors = terminal->property("ownColors").toString();
+    terminal->setColorScheme((colors.isEmpty() ? settings_->value(QStringLiteral("terminal/colors")).toString() : colors).toStdString());
 }
 
 void MainWindow::quickConnect()
@@ -1088,7 +1091,7 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
     dialog.setWindowTitle(tr("Settings"));
     // pages apply at once; Cancel restores these as last applied
     const QStringList groups = {QStringLiteral("appearance"), QStringLiteral("sidebar"), QStringLiteral("tabs"), QStringLiteral("font"),
-                                QStringLiteral("sshServers")};
+                                QStringLiteral("sshServers"), QStringLiteral("terminal")};
     auto current = [this, groups] {
         QMap<QString, QVariant> values;
         for (const QString& key : settings_->allKeys())
@@ -1231,9 +1234,20 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
                                   [](const QFont& font) { QApplication::setFont(font); });
     QGroupBox* sshFont = fontBox(tr("SSH terminal"), tr("Fixed-width fonts only; connections with their own font keep it."),
                                  QStringLiteral("font/terminal"), QFontDatabase::FixedFont, [this](const QFont&) {
-                                     for (int i = 0; i < tabs_->count(); ++i)
-                                         if (auto* terminal = terminalOf(tabs_->widget(i))) configureTerminal(terminal);
+                                     for (TerminalView* terminal : findChildren<TerminalView*>()) configureTerminal(terminal);
                                  });
+    auto* colors = new QComboBox;
+    for (const ColorScheme& s : colorSchemes) colors->addItem(tr(s.label), QString::fromLatin1(s.key));
+    colors->setCurrentIndex(std::max(0, colors->findData(settings_->value(QStringLiteral("terminal/colors")))));
+    connect(colors, &QComboBox::currentIndexChanged, &dialog, [this, colors] {
+        settings_->setValue(QStringLiteral("terminal/colors"), colors->currentData());
+        for (TerminalView* terminal : findChildren<TerminalView*>()) configureTerminal(terminal);
+    });
+    auto* colorRow = new QHBoxLayout;
+    colorRow->addWidget(new QLabel(tr("Colors:")));
+    colorRow->addWidget(colors);
+    colorRow->addStretch();
+    static_cast<QBoxLayout*>(sshFont->layout())->addLayout(colorRow);
 
     auto* viewsBox = new QGroupBox(tr("Views"));
     auto* viewList = new QListWidget;
@@ -1404,8 +1418,7 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
     QFont font = look::systemFont(QFontDatabase::GeneralFont);
     if (const QString saved = settings_->value(QStringLiteral("font/main")).toString(); !saved.isEmpty()) font.fromString(saved);
     QApplication::setFont(font);
-    for (int i = 0; i < tabs_->count(); ++i)
-        if (auto* terminal = terminalOf(tabs_->widget(i))) configureTerminal(terminal);
+    for (TerminalView* terminal : findChildren<TerminalView*>()) configureTerminal(terminal);
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
@@ -1793,6 +1806,7 @@ TerminalView* MainWindow::createTerminal(const Connection& c, const QString& add
     terminal->setProperty("ownFont", QString::fromStdString(c.option("font")));
     terminal->setProperty("ownFontSize", c.number("fontSize"));
     terminal->setProperty("scrollback", c.number("scrollback"));
+    terminal->setProperty("ownColors", QString::fromStdString(c.option("colors")));
     configureTerminal(terminal);
     connect(terminal, &TerminalView::titleChanged, this, [this, terminal, host = QString::fromStdString(c.host)](const QString& title) {
         tabs_->setTabToolTip(tabs_->indexOf(terminal), title.isEmpty() ? host : title);

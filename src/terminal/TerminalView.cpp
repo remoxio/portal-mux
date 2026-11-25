@@ -1,11 +1,17 @@
 #include "terminal/TerminalView.h"
 #include "app/Icons.h"
+#include "terminal/ColorSchemes.h"
 
 #include "app/Look.h"
 
 #include <QApplication>
 #include <QBuffer>
 #include <QClipboard>
+#include <QDateTime>
+#include <QDesktopServices>
+#include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -13,10 +19,13 @@
 #include <QImage>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollBar>
+#include <QStandardPaths>
 #include <QToolButton>
 #include <QUrl>
 
@@ -27,8 +36,6 @@
 #include <utility>
 
 using rdc::SessionState;
-
-static const QColor defaultFg(0xd0, 0xd0, 0xd0), defaultBg(0x1e, 0x1e, 0x1e);
 
 static VTermModifier vtermModifiers(Qt::KeyboardModifiers m)
 {
@@ -42,22 +49,6 @@ static VTermModifier vtermModifiers(Qt::KeyboardModifiers m)
 static int vtermButton(Qt::MouseButton b)
 {
     return b == Qt::LeftButton ? 1 : b == Qt::MiddleButton ? 2 : b == Qt::RightButton ? 3 : 0;
-}
-
-// each QChar's source cell, plus one for the end
-static QString lineText(const std::vector<VTermScreenCell>& cells, std::vector<int>& cols)
-{
-    QString text;
-    cols.clear();
-    for (int col = 0; col < int(cells.size()); ++col) {
-        char32_t ch = cells[size_t(col)].chars[0];
-        if (ch == char32_t(-1)) continue; // right half of a wide character
-        const QString s = QString::fromUcs4(ch ? &ch : U" ", 1);
-        text += s;
-        cols.insert(cols.end(), size_t(s.size()), col);
-    }
-    cols.push_back(int(cells.size()));
-    return text;
 }
 
 struct TerminalView::Callbacks {
@@ -85,7 +76,6 @@ struct TerminalView::Callbacks {
         case VTERM_PROP_ALTSCREEN: v->altScreen_ = value->boolean; break;
         case VTERM_PROP_MOUSE:
             v->mouseMode_ = value->number;
-            v->viewport()->setMouseTracking(value->number == VTERM_PROP_MOUSE_MOVE);
             v->viewport()->setCursor(value->number == VTERM_PROP_MOUSE_NONE ? Qt::IBeamCursor : Qt::ArrowCursor);
             break;
         case VTERM_PROP_TITLE:
@@ -106,28 +96,36 @@ struct TerminalView::Callbacks {
 
     static int pushLine(int cols, const VTermScreenCell* cells, void* user)
     {
-        auto& sb = view(user)->scrollback_;
-        sb.emplace_back(cells, cells + cols);
-        if (sb.size() > view(user)->maxScrollback_) sb.pop_front();
+        TerminalView* v = view(user);
+        if (v->resizing_ && v->altScreen_) return 1; // libvterm 0.3.3 reads these from the full-screen program's screen
+        v->scrollback_.emplace_back(cells, cells + cols);
+        if (v->scrollback_.size() > v->maxScrollback_) v->scrollback_.pop_front();
+        ++v->pushed_;
+        if (v->log_ && !v->resizing_) v->logScrollback(); // a resize may take them back
         return 1;
     }
 
     static int popLine(int cols, VTermScreenCell* cells, void* user)
     {
-        auto& sb = view(user)->scrollback_;
+        TerminalView* v = view(user);
+        auto& sb = v->scrollback_;
         if (sb.empty()) return 0;
-        const Line& line = sb.back();
-        for (int i = 0; i < cols; ++i) {
-            if (i < int(line.size())) {
-                cells[i] = line[size_t(i)];
-            } else {
-                cells[i] = VTermScreenCell{};
-                cells[i].width = 1;
-                cells[i].fg = line.empty() ? VTermColor{} : line.back().fg;
-                cells[i].bg = line.empty() ? VTermColor{} : line.back().bg;
-            }
+        Line& line = sb.back();
+        size_t used = line.size();
+        while (used > 0 && !line[used - 1].chars[0]) --used;
+        size_t from = 0; // a line wider than the screen now gives back its last screen-wide part and keeps the rest
+        if (used > size_t(cols)) from = (used - 1) / size_t(cols) * size_t(cols);
+        while (from > 0 && line[from].chars[0] == uint32_t(-1)) --from; // a wide character stays whole
+        VTermScreenCell blank{};
+        blank.width = 1;
+        if (!line.empty()) blank.fg = line.back().fg, blank.bg = line.back().bg;
+        for (int i = 0; i < cols; ++i) cells[i] = from + size_t(i) < used ? line[from + size_t(i)] : blank;
+        if (from) {
+            line.resize(from);
+        } else {
+            sb.pop_back();
+            --v->pushed_;
         }
-        sb.pop_back();
         return 1;
     }
 
@@ -194,6 +192,7 @@ TerminalView::TerminalView(QWidget* parent)
 
     setFocusPolicy(Qt::StrongFocus);
     viewport()->setCursor(Qt::IBeamCursor);
+    viewport()->setMouseTracking(true); // links under Ctrl
     viewport()->setAttribute(Qt::WA_OpaquePaintEvent);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
 
@@ -202,11 +201,9 @@ TerminalView::TerminalView(QWidget* parent)
     vterm_screen_set_callbacks(screen_, &screenCallbacks, this);
     vterm_screen_set_unrecognised_fallbacks(screen_, &fallbacks, this);
     vterm_state_set_selection_callbacks(vterm_obtain_state(vt_), &clipboardCallbacks, this, nullptr, 4096); // without a buffer libvterm decodes nothing
-    VTermColor fg, bg;
-    vterm_color_rgb(&fg, uint8_t(defaultFg.red()), uint8_t(defaultFg.green()), uint8_t(defaultFg.blue()));
-    vterm_color_rgb(&bg, uint8_t(defaultBg.red()), uint8_t(defaultBg.green()), uint8_t(defaultBg.blue()));
-    vterm_screen_set_default_colors(screen_, &fg, &bg);
+    setColorScheme({});
     vterm_screen_enable_altscreen(screen_, 1); // keeps full-screen apps out of scrollback
+    vterm_screen_enable_reflow(screen_, true); // a narrower window or a bigger font wraps lines instead of cutting them
     vterm_screen_reset(screen_, 1);
 }
 
@@ -214,21 +211,57 @@ TerminalView::~TerminalView()
 {
     prompts_.close();
     if (session_) session_->disconnect();
+    stopLog();
     vterm_free(vt_);
 }
 
 void TerminalView::configure(const QString& fontFamily, int fontSize, int scrollbackLines)
 {
+    family_ = fontFamily;
+    size_ = fontSize;
+    maxScrollback_ = size_t(std::max(0, scrollbackLines));
+    applyFont();
+}
+
+void TerminalView::applyFont()
+{
     font_ = look::systemFont(QFontDatabase::FixedFont);
-    if (!fontFamily.isEmpty()) font_.setFamily(fontFamily);
-    if (fontSize > 0) font_.setPointSize(fontSize);
+    if (!family_.isEmpty()) font_.setFamily(family_);
+    if (size_ > 0) font_.setPointSize(size_);
+    if (font_.pointSize() > 0) font_.setPointSize(font_.pointSize() + zoom_);
     font_.setStyleHint(QFont::Monospace);
     const QFontMetrics fm(font_);
     cellW_ = std::max(1, fm.horizontalAdvance(QLatin1Char('M')));
     cellH_ = std::max(1, fm.height());
     ascent_ = fm.ascent();
-    maxScrollback_ = size_t(std::max(0, scrollbackLines));
     resizeTerminal();
+    viewport()->update();
+}
+
+void TerminalView::zoom(int steps)
+{
+    const int base = font_.pointSize() - zoom_;
+    zoom_ = steps && base > 0 ? std::clamp(zoom_ + steps, 6 - base, 48 - base) : 0;
+    applyFont();
+}
+
+void TerminalView::setColorScheme(std::string_view key)
+{
+    const ColorScheme& s = colorScheme(key);
+    auto rgb = [](uint32_t c) {
+        VTermColor v;
+        vterm_color_rgb(&v, uint8_t(c >> 16), uint8_t(c >> 8), uint8_t(c));
+        return v;
+    };
+    VTermState* state = vterm_obtain_state(vt_);
+    for (int i = 0; i < 16; ++i) {
+        const VTermColor c = rgb(s.ansi[i]);
+        vterm_state_set_palette_color(state, i, &c);
+    }
+    const VTermColor fg = rgb(s.fg), bg = rgb(s.bg);
+    vterm_screen_set_default_colors(screen_, &fg, &bg);
+    fg_ = QColor::fromRgb(QRgb(s.fg));
+    bg_ = QColor::fromRgb(QRgb(s.bg));
     viewport()->update();
 }
 
@@ -334,7 +367,13 @@ void TerminalView::onData(std::string bytes)
 void TerminalView::feed(const char* data, size_t len)
 {
     const bool atBottom = verticalScrollBar()->value() == verticalScrollBar()->maximum();
-    vterm_input_write(vt_, data, len);
+    std::string_view rest(data, len);
+    for (size_t at; log_ && (at = rest.find("\x1b[2J")) != std::string_view::npos; rest.remove_prefix(at + 4)) {
+        vterm_input_write(vt_, rest.data(), at);
+        if (!altScreen_) logScreen(); // before the clear erases it
+        vterm_input_write(vt_, rest.data() + at, 4);
+    }
+    vterm_input_write(vt_, rest.data(), rest.size());
     updateScrollBar(atBottom);
     viewport()->update();
 }
@@ -401,7 +440,9 @@ void TerminalView::resizeTerminal()
     if (cols == cols_ && rows == rows_) return;
     cols_ = cols;
     rows_ = rows;
+    resizing_ = true;
     vterm_set_size(vt_, rows_, cols_);
+    resizing_ = false;
     if (session_) session_->resize(cols_, rows_);
     updateScrollBar(true);
     emit gridChanged();
@@ -425,8 +466,89 @@ TerminalView::Line TerminalView::lineAt(int line) const
     return cells;
 }
 
+const TerminalView::Line& TerminalView::cellsAt(int line, Line& buffer) const
+{
+    return line < int(scrollback_.size()) ? scrollback_[size_t(line)] : (buffer = lineAt(line));
+}
+
+bool TerminalView::wraps(int line) const
+{
+    const int next = line + 1 - int(scrollback_.size()); // its screen row
+    if (next >= rows_) return false;
+    if (next >= 0) return vterm_state_get_lineinfo(vterm_obtain_state(vt_), next)->continuation;
+    // shortcut: the scrollback keeps no wrap marks, so a full line counts as wrapped
+    const Line& cells = scrollback_[size_t(line)];
+    return !cells.empty() && cells.back().chars[0] && cells.back().chars[0] != ' ';
+}
+
+int TerminalView::lineStart(int line) const
+{
+    while (line > 0 && wraps(line - 1)) --line;
+    return line;
+}
+
+int TerminalView::lineEnd(int line) const
+{
+    while (line < int(scrollback_.size()) + rows_ - 1 && wraps(line)) ++line;
+    return line;
+}
+
+TerminalView::Text TerminalView::joined(int first, int last) const
+{
+    Text t;
+    Line buffer;
+    int end = 0;
+    for (int line = first; line <= last; ++line) {
+        const Line& cells = cellsAt(line, buffer);
+        for (int col = 0; col < int(cells.size()); ++col) {
+            char32_t ch = cells[size_t(col)].chars[0];
+            if (ch == char32_t(-1)) continue; // right half of a wide character
+            const QString s = QString::fromUcs4(ch ? &ch : U" ", 1);
+            t.text += s;
+            t.at.insert(t.at.end(), size_t(s.size()), Pos{line, col});
+        }
+        end = int(cells.size());
+    }
+    t.at.push_back(Pos{last, end});
+    return t;
+}
+
+TerminalView::Link TerminalView::linkAt(Pos pos) const
+{
+    if (pos.line < 0 || pos.line >= int(scrollback_.size()) + rows_) return {};
+    const Text t = joined(std::max(lineStart(pos.line), pos.line - 20), std::min(lineEnd(pos.line), pos.line + 20));
+    static const QRegularExpression url(QStringLiteral(R"(https?://[^\s<>"'`\x{2500}-\x{257f}]+)"));
+    for (auto it = url.globalMatch(t.text); it.hasNext();) {
+        const QRegularExpressionMatch m = it.next();
+        QString link = m.captured();
+        // the sentence's punctuation, and a bracket opened before the link
+        while (!link.isEmpty() && (QStringLiteral(".,;:!?'\"").contains(link.back()) ||
+                                   (link.back() == QLatin1Char(')') && link.count(QLatin1Char('(')) < link.count(QLatin1Char(')'))) ||
+                                   (link.back() == QLatin1Char(']') && link.count(QLatin1Char('[')) < link.count(QLatin1Char(']')))))
+            link.chop(1);
+        const Pos from = t.at[size_t(m.capturedStart())], to = t.at[size_t(m.capturedStart() + link.size())];
+        if (from <= pos && pos < to) return {from, to, link};
+    }
+    return {};
+}
+
+void TerminalView::hoverLink(QPoint point, Qt::KeyboardModifiers m)
+{
+    const Link link = (m & Qt::ControlModifier) && !selecting_ && viewport()->rect().contains(point) ? linkAt(posAt(point)) : Link{};
+    if (link.from != hover_.from || link.to != hover_.to) {
+        hover_ = link;
+        viewport()->update();
+    }
+    const Qt::CursorShape shape = !hover_.url.isEmpty()                  ? Qt::PointingHandCursor
+                                  : mouseMode_ == VTERM_PROP_MOUSE_NONE ? Qt::IBeamCursor
+                                                                         : Qt::ArrowCursor;
+    if (viewport()->cursor().shape() != shape) viewport()->setCursor(shape);
+}
+
 QColor TerminalView::color(VTermColor c) const
 {
+    if (VTERM_COLOR_IS_DEFAULT_FG(&c)) return fg_; // scrollback lines keep the scheme they were written in
+    if (VTERM_COLOR_IS_DEFAULT_BG(&c)) return bg_;
     vterm_screen_convert_color_to_rgb(screen_, &c);
     return QColor(c.rgb.red, c.rgb.green, c.rgb.blue);
 }
@@ -435,7 +557,7 @@ void TerminalView::paintEvent(QPaintEvent*)
 {
     // shortcut: draws every cell each repaint, group runs by attribute if slow
     QPainter p(viewport());
-    p.fillRect(viewport()->rect(), defaultBg);
+    p.fillRect(viewport()->rect(), bg_);
     const int first = verticalScrollBar()->value();
     const int cursorLine = int(scrollback_.size()) + cursor_.row;
     for (int row = 0; row < rows_; ++row) {
@@ -449,14 +571,14 @@ void TerminalView::paintEvent(QPaintEvent*)
             const bool cursorHere = line == cursorLine && col == cursor_.col && cursorVisible_ && hasFocus();
             if (bool(cell.attrs.reverse) != (selected(line, col) != cursorHere)) std::swap(fg, bg);
             const QRect box(col * cellW_, y, width * cellW_, cellH_);
-            if (bg != defaultBg) p.fillRect(box, bg);
+            if (bg != bg_) p.fillRect(box, bg);
             if (cell.chars[0] != 0 && cell.chars[0] != uint32_t(-1)) {
                 int n = 0;
                 while (n < VTERM_MAX_CHARS_PER_CELL && cell.chars[n]) ++n;
                 QFont f = font_;
                 f.setBold(cell.attrs.bold);
                 f.setItalic(cell.attrs.italic);
-                f.setUnderline(cell.attrs.underline);
+                f.setUnderline(cell.attrs.underline || (hover_.from <= Pos{line, col} && Pos{line, col} < hover_.to));
                 f.setStrikeOut(cell.attrs.strike);
                 p.setFont(f);
                 p.setPen(fg);
@@ -466,7 +588,7 @@ void TerminalView::paintEvent(QPaintEvent*)
         }
     }
     if (!hasFocus() && cursorVisible_ && cursorLine >= first && cursorLine < first + rows_) {
-        p.setPen(defaultFg);
+        p.setPen(fg_);
         p.drawRect(cursor_.col * cellW_, (cursorLine - first) * cellH_, cellW_ - 1, cellH_ - 1);
     }
 }
@@ -515,6 +637,11 @@ void TerminalView::mouseToProgram(QPointF point, Qt::KeyboardModifiers m)
 
 void TerminalView::mousePressEvent(QMouseEvent* event)
 {
+    if (event->button() == Qt::LeftButton && (event->modifiers() & Qt::ControlModifier))
+        if (const Link link = linkAt(posAt(event->position().toPoint())); !link.url.isEmpty()) {
+            QDesktopServices::openUrl(QUrl(link.url));
+            return;
+        }
     if (reportsMouse(event->modifiers())) {
         if (const int button = vtermButton(event->button())) {
             verticalScrollBar()->setValue(verticalScrollBar()->maximum());
@@ -545,8 +672,9 @@ void TerminalView::mouseMoveEvent(QMouseEvent* event)
         selEnd_ = posAt(event->position().toPoint());
         viewport()->update();
     } else if (mouseMode_ != VTERM_PROP_MOUSE_NONE) {
-        mouseToProgram(event->position(), event->modifiers());
+        mouseToProgram(event->position(), event->modifiers()); // libvterm sends moves only to programs that asked
     }
+    hoverLink(event->position().toPoint(), event->modifiers());
 }
 
 void TerminalView::mouseReleaseEvent(QMouseEvent* event)
@@ -589,6 +717,14 @@ void TerminalView::mouseDoubleClickEvent(QMouseEvent* event)
 
 void TerminalView::wheelEvent(QWheelEvent* event)
 {
+    if (event->modifiers() == Qt::ControlModifier) {
+        event->accept();
+        wheelRest_ += event->angleDelta().y();
+        const int steps = wheelRest_ / 120;
+        wheelRest_ -= steps * 120;
+        if (steps) zoom(steps);
+        return;
+    }
     const bool toProgram = reportsMouse(event->modifiers());
     // no-mouse full-screen apps get arrows (Konsole); Shift scrolls
     const bool arrows = !toProgram && altScreen_ && !(event->modifiers() & Qt::ShiftModifier);
@@ -624,6 +760,11 @@ void TerminalView::contextMenuEvent(QContextMenuEvent* event)
     menu.addSeparator();
     menu.addAction(icons::lucide("search"), tr("&Find…"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F), this,
                    &TerminalView::openFind);
+    QAction* log = menu.addAction(tr("&Log to File…"), this, [this](bool on) { on ? startLog() : stopLog(); });
+    log->setCheckable(true);
+    log->setChecked(bool(log_));
+    if (log_) log->setToolTip(log_->fileName());
+    menu.setToolTipsVisible(true);
     menu.exec(event->globalPos());
 }
 
@@ -706,7 +847,6 @@ bool TerminalView::eventFilter(QObject* watched, QEvent* event)
     return QAbstractScrollArea::eventFilter(watched, event);
 }
 
-// shortcut: a match must fit one screen line, join wrapped lines if long commands need it
 void TerminalView::find(bool older, bool restart)
 {
     const QString needle = findText_->text();
@@ -720,28 +860,30 @@ void TerminalView::find(bool older, bool restart)
     const int total = int(scrollback_.size()) + rows_;
     const bool fromMatch = !restart && selStart_.line >= 0 && selStart_.line < total;
     const Pos from = fromMatch ? std::min(selStart_, selEnd_) : older ? Pos{total - 1, INT_MAX} : Pos{0, -1};
-    std::vector<int> cols;
-    Line screenLine;
-    for (int i = 0; i <= total; ++i) {
-        const int line = older ? ((from.line - i) % total + total) % total : (from.line + i) % total;
-        const Line& cells = line < int(scrollback_.size()) ? scrollback_[size_t(line)] : (screenLine = lineAt(line));
-        const QString text = lineText(cells, cols);
+    const int start = lineStart(std::min(from.line, total - 1));
+    // wrapped lines are searched as one; the first is searched again last, for the matches on the other side of from
+    for (int first = start, pass = 0;; ++pass) {
+        const int last = lineEnd(first);
+        const Text t = joined(first, last);
         qsizetype at = -1;
         if (older) {
-            for (at = text.lastIndexOf(needle, -1, Qt::CaseInsensitive); at >= 0 && i == 0 && cols[size_t(at)] >= from.col;)
-                at = at > 0 ? text.lastIndexOf(needle, at - 1, Qt::CaseInsensitive) : -1;
+            for (at = t.text.lastIndexOf(needle, -1, Qt::CaseInsensitive); at >= 0 && pass == 0 && !(t.at[size_t(at)] < from);)
+                at = at > 0 ? t.text.lastIndexOf(needle, at - 1, Qt::CaseInsensitive) : -1;
         } else {
-            for (at = text.indexOf(needle, 0, Qt::CaseInsensitive); at >= 0 && i == 0 && cols[size_t(at)] <= from.col;)
-                at = text.indexOf(needle, at + 1, Qt::CaseInsensitive);
+            for (at = t.text.indexOf(needle, 0, Qt::CaseInsensitive); at >= 0 && pass == 0 && !(from < t.at[size_t(at)]);)
+                at = t.text.indexOf(needle, at + 1, Qt::CaseInsensitive);
         }
-        if (at < 0) continue;
-        selStart_ = {line, cols[size_t(at)]};
-        selEnd_ = {line, cols[size_t(at + needle.size())]};
-        selecting_ = false;
-        QScrollBar* bar = verticalScrollBar();
-        if (line < bar->value() || line >= bar->value() + rows_) bar->setValue(line - rows_ / 2);
-        viewport()->update();
-        return;
+        if (at >= 0) {
+            selStart_ = t.at[size_t(at)];
+            selEnd_ = t.at[size_t(at + needle.size())];
+            selecting_ = false;
+            QScrollBar* bar = verticalScrollBar();
+            if (selStart_.line < bar->value() || selEnd_.line >= bar->value() + rows_) bar->setValue(selStart_.line - rows_ / 2);
+            viewport()->update();
+            return;
+        }
+        if (pass > 0 && first == start) break;
+        first = older ? lineStart(first > 0 ? first - 1 : total - 1) : last + 1 < total ? last + 1 : 0;
     }
     findStatus_->setText(tr("Not found"));
     placeFindBar();
@@ -772,8 +914,20 @@ void TerminalView::keyPressEvent(QKeyEvent* event)
         openFind();
         return;
     }
+    if ((m & ~(Qt::ShiftModifier | Qt::KeypadModifier)) == Qt::ControlModifier) {
+        const int key = event->key();
+        if (key == Qt::Key_Plus || key == Qt::Key_Equal || key == Qt::Key_Minus || (key == Qt::Key_0 && !(m & Qt::ShiftModifier)))
+            return zoom(key == Qt::Key_Minus ? -1 : key == Qt::Key_0 ? 0 : 1);
+    }
+    if (event->key() == Qt::Key_Control) hoverLink(viewport()->mapFromGlobal(QCursor::pos()), m | Qt::ControlModifier);
     typeKey(event->key(), m, event->text());
     emit keyTyped(event->key(), m, event->text());
+}
+
+void TerminalView::keyReleaseEvent(QKeyEvent* event)
+{
+    if (event->key() == Qt::Key_Control) hoverLink(viewport()->mapFromGlobal(QCursor::pos()), Qt::NoModifier);
+    QAbstractScrollArea::keyReleaseEvent(event);
 }
 
 void TerminalView::typeKey(int key, Qt::KeyboardModifiers m, const QString& text)
@@ -809,4 +963,71 @@ void TerminalView::typeKey(int key, Qt::KeyboardModifiers m, const QString& text
             if (ch >= 0x20 || ch == 0x1b) vterm_keyboard_unichar(vt_, uint32_t(ch), VTermModifier(mod & VTERM_MOD_ALT));
     }
     verticalScrollBar()->setValue(verticalScrollBar()->maximum());
+}
+
+// the text as shown, wrapped lines joined: what scrolls into the scrollback, the screen before a clear and at the end
+void TerminalView::startLog()
+{
+    static QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    QString name = property("address").toString();
+    name.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9._-]+")), QStringLiteral("_"));
+    const QString suggested = (name.isEmpty() ? QStringLiteral("terminal") : name) +
+                              QDateTime::currentDateTime().toString(QStringLiteral("-yyyyMMdd-HHmmss")) + QStringLiteral(".log");
+    const QString path = QFileDialog::getSaveFileName(this, tr("Log to File"), dir + QLatin1Char('/') + suggested,
+                                                      tr("Log files (*.log *.txt);;All files (*)"));
+    if (path.isEmpty()) return;
+    auto file = std::make_unique<QFile>(path);
+    if (!file->open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Log to File"), tr("%1 could not be written: %2").arg(path, file->errorString()));
+        return;
+    }
+    dir = QFileInfo(path).absolutePath();
+    log_ = std::move(file);
+    logged_ = pushed_;
+}
+
+void TerminalView::stopLog()
+{
+    if (!log_) return;
+    logScreen();
+    log_.reset();
+}
+
+void TerminalView::logLine(int line)
+{
+    Line buffer;
+    const Line& cells = cellsAt(line, buffer);
+    QString text;
+    for (const VTermScreenCell& cell : cells)
+        if (cell.chars[0] != uint32_t(-1)) {
+            int n = 0;
+            while (n < VTERM_MAX_CHARS_PER_CELL && cell.chars[n]) ++n;
+            text += n ? QString::fromUcs4(reinterpret_cast<const char32_t*>(cell.chars), n) : QStringLiteral(" ");
+        }
+    if (!wraps(line))
+        while (text.endsWith(QLatin1Char(' '))) text.chop(1);
+    log_->write(text.toUtf8() + (wraps(line) ? "" : "\n"));
+}
+
+void TerminalView::logScrollback()
+{
+    const long long fresh = std::min<long long>(pushed_ - logged_, (long long)scrollback_.size());
+    for (long long i = fresh; i > 0; --i) logLine(int(scrollback_.size() - size_t(i)));
+    logged_ = std::max(logged_, pushed_);
+    log_->flush();
+}
+
+void TerminalView::logScreen()
+{
+    logScrollback(); // what a resize left there
+    const int sb = int(scrollback_.size());
+    int last = cursor_.row;
+    Line buffer;
+    for (int row = rows_ - 1; row > last; --row) {
+        const Line& cells = cellsAt(sb + row, buffer);
+        if (std::any_of(cells.begin(), cells.end(), [](const VTermScreenCell& c) { return c.chars[0] && c.chars[0] != ' '; })) last = row;
+    }
+    for (int row = 0; row <= last; ++row) logLine(sb + row);
+    if (wraps(sb + last)) log_->write("\n");
+    log_->flush();
 }
