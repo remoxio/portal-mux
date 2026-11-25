@@ -87,6 +87,7 @@ private:
     void openVmConsole(LibvirtVms* host, const std::string& uuid);
     void addVmTab(VmConsole* console); // named by its windowTitle()
     void addFilePanel(TerminalView* terminal, const rdc::Connection& c); // SFTP beside an SSH terminal
+    void copyKeyToServer();
     void openVmSerial(LibvirtVms* host, const std::string& uuid, QWidget* replace = nullptr);
     void showProxmoxConsole(const QString& key);
     void showSessionState(QWidget* page, const QString& name, rdc::SessionState state);
@@ -153,7 +154,7 @@ private:
     QMenu* sendKeysMenu_;
     QAction *toolBarAction_, *sidebarAction_, *statusBarAction_, *tabBarAction_;
     QActionGroup* toolBarStyle_ = nullptr; // macOS: Icon Only, Icon and Text, Text Only
-    QAction *usbAction_, *detachAction_, *relaunchAction_, *filesAction_;
+    QAction *usbAction_, *detachAction_, *relaunchAction_, *filesAction_, *copyKeyAction_;
     QList<QAction*> viewToggles_; // View menu: Show KVM Manager, Show Proxmox
     struct SidebarView {
         QString key, title;

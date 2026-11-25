@@ -48,26 +48,76 @@ void SshTerminalSession::upload(std::string data, std::string extension, std::fu
     });
 }
 
+void SshTerminalSession::installKey(std::string key, std::function<void(std::string, bool)> done)
+{
+    tasks_.post([this, key = std::move(key), done = std::move(done)] {
+        std::string error = channel_ ? "" : "Not connected.";
+        const bool added = channel_ && addAuthorizedKey(key, error);
+        done(error, added);
+    });
+}
+
+std::string SshTerminalSession::sftpError(const std::string& what) const
+{
+    return what + ": " + (sftp_ ? "SFTP error " + std::to_string(sftp_get_error(sftp_)) + ", " : "") + ssh_->lastError();
+}
+
+std::string SshTerminalSession::sftpHome(std::string& error)
+{
+    if (!sftp_) {
+        sftp_ = sftp_new(ssh_->session());
+        if (!sftp_ || sftp_init(sftp_) != SSH_OK) {
+            error = sftpError("Could not start SFTP");
+            if (sftp_) sftp_free(sftp_);
+            sftp_ = nullptr;
+            return {};
+        }
+    }
+    char* home = sftp_canonicalize_path(sftp_, ".");
+    if (!home) {
+        error = sftpError("No home folder");
+        return {};
+    }
+    std::string path = home;
+    ssh_string_free_char(home);
+    return path;
+}
+
+bool SshTerminalSession::addAuthorizedKey(const std::string& key, std::string& error)
+{
+    const std::string home = sftpHome(error);
+    if (home.empty()) return false;
+    const std::string path = home + "/.ssh/authorized_keys";
+    sftp_mkdir(sftp_, (home + "/.ssh").c_str(), 0700); // may exist
+    std::string text;
+    if (sftp_file in = sftp_open(sftp_, path.c_str(), O_RDONLY, 0)) {
+        char buffer[16384];
+        for (ssize_t n; text.size() < (4 << 20) && (n = sftp_read(in, buffer, sizeof buffer)) > 0;) text.append(buffer, size_t(n));
+        sftp_close(in);
+    }
+    const size_t from = key.find(' ') + 1, to = key.find(' ', from);
+    if (text.find(key.substr(from, to - from)) != std::string::npos) return false; // its base64: the comment may differ
+    sftp_file out = sftp_open(sftp_, path.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0600);
+    if (!out) {
+        error = sftpError("Cannot write " + path);
+        return false;
+    }
+    const std::string line = (text.empty() || text.back() == '\n' ? "" : "\n") + key + "\n";
+    const bool written = sftp_write(out, line.data(), line.size()) == ssize_t(line.size());
+    sftp_close(out);
+    if (!written) error = sftpError("Cannot write " + path);
+    return written;
+}
+
 // ~/.cache/portal-mux/paste/paste-<time>-<random><extension>, 0600; files there older than a day go
 std::string SshTerminalSession::store(const std::string& data, const std::string& extension, std::string& error)
 {
     auto fail = [&](const std::string& what) {
-        error = what + ": " + (sftp_ ? "SFTP error " + std::to_string(sftp_get_error(sftp_)) + ", " : "") + ssh_->lastError();
+        error = sftpError(what);
         return std::string();
     };
-    if (!sftp_) {
-        sftp_ = sftp_new(ssh_->session());
-        if (!sftp_ || sftp_init(sftp_) != SSH_OK) {
-            const std::string message = fail("Could not start SFTP");
-            if (sftp_) sftp_free(sftp_);
-            sftp_ = nullptr;
-            return message;
-        }
-    }
-    char* home = sftp_canonicalize_path(sftp_, ".");
-    if (!home) return fail("No home folder");
-    std::string dir = home;
-    ssh_string_free_char(home);
+    std::string dir = sftpHome(error);
+    if (dir.empty()) return {};
     for (const char* part : {"/.cache", "/portal-mux", "/paste"}) sftp_mkdir(sftp_, (dir += part).c_str(), 0700); // may exist
     char stamp[32];
     const std::time_t now = std::time(nullptr);

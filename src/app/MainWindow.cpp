@@ -25,6 +25,7 @@
 #include "app/PageRail.h"
 #include "app/SessionTabs.h"
 #include "app/Prompts.h"
+#include "app/SshKeys.h"
 #include "app/SftpView.h"
 #include "app/SshServers.h"
 #include "app/WindowEffects.h"
@@ -418,6 +419,9 @@ MainWindow::MainWindow(QWidget* parent)
         if (DetachedWindow* window = activeDetached()) delete window->page(); // its window closes with it
         else closeTab(tabs_->currentIndex());
     });
+    copyKeyAction_ = new QAction(icons::lucide("key-round"), tr("Copy My &Key to Server…"), this);
+    copyKeyAction_->setToolTip(tr("Adds one of your SSH keys to the server's authorized keys, so it lets you in without a password"));
+    connect(copyKeyAction_, &QAction::triggered, this, &MainWindow::copyKeyToServer);
     filesAction_ = new QAction(icons::lucide("panel-left"), tr("&Files"), this);
     filesAction_->setCheckable(true);
     filesAction_->setToolTip(tr("The remote files beside the terminal (SFTP): upload, download, following its folder"));
@@ -1698,6 +1702,7 @@ void MainWindow::openSession(const Connection& c, QWidget* replace)
             *armed = false;
             openSession(c, terminal);
         });
+        terminal->setProperty("connectionId", QString::fromStdString(c.id));
         if (local) terminal->start(std::make_unique<rdc::LocalTerminalSession>(*terminal, c));
         else if (c.protocol != Protocol::SSH) terminal->start(std::make_unique<rdc::StreamTerminalSession>(*terminal, c));
         else {
@@ -1898,6 +1903,44 @@ void MainWindow::openVmConsole(LibvirtVms* host, const std::string& uuid)
     (void)host;
     (void)uuid;
 #endif
+}
+
+void MainWindow::copyKeyToServer()
+{
+    QPointer<TerminalView> terminal = terminalOf(currentPage());
+    auto* ssh = terminal && terminal->live() ? dynamic_cast<rdc::SshTerminalSession*>(terminal->session()) : nullptr;
+    if (!ssh) return;
+    const QString title = tr("Copy My Key to Server");
+    const QString host = tabs_->tabText(tabs_->indexOf(terminal)).remove(QLatin1Char('&'));
+    const QString publicPath = sshkeys::pick(this, host);
+    if (publicPath.isEmpty() || !terminal) return;
+    QFile file(publicPath);
+    const QString key = file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readLine()).trimmed() : QString();
+    if (!key.contains(QRegularExpression(QStringLiteral("^\\S+ \\S+")))) {
+        QMessageBox::warning(this, title, tr("%1 is not a public key.").arg(QDir::toNativeSeparators(publicPath)));
+        return;
+    }
+    ssh->installKey(key.toStdString(), [this, terminal, publicPath, host, title](std::string error, bool added) {
+        QMetaObject::invokeMethod(this, [=, this, error = QString::fromStdString(error)] {
+            if (!error.isEmpty()) return (void)QMessageBox::warning(this, title, tr("The key was not added: %1").arg(error));
+            QString text = added ? tr("%1 lets you in with %2 now.") : tr("%1 already lets you in with %2.");
+            text = text.arg(host, QFileInfo(publicPath).fileName());
+            // its private half, for a connection that wouldn't try it by itself
+            const QString privatePath = publicPath.chopped(4);
+            const rdc::Connection* c = terminal ? store_.find(terminal->property("connectionId").toString().toStdString()) : nullptr;
+            const std::string keyFile = c ? c->option("keyFile") : std::string();
+            if (c && QFileInfo::exists(privatePath) && QDir::cleanPath(QString::fromStdString(keyFile)) != privatePath &&
+                (!keyFile.empty() || !sshkeys::triedByDefault(publicPath))) {
+                rdc::Connection changed = *c;
+                changed.options["keyFile"] = QDir::toNativeSeparators(privatePath).toStdString();
+                store_.upsert(changed);
+                if (saveStore()) text += QLatin1Char(' ') + tr("This connection logs in with it from now on.");
+            } else if (!c && !sshkeys::triedByDefault(publicPath)) {
+                text += QLatin1Char(' ') + tr("SSH doesn't try this key by itself: name it with IdentityFile in ~/.ssh/config, or save the connection with it.");
+            }
+            QMessageBox::information(this, title, text);
+        }, Qt::QueuedConnection);
+    });
 }
 
 void MainWindow::addFilePanel(TerminalView* terminal, const Connection& c)
@@ -2400,6 +2443,7 @@ void MainWindow::updateSessionActions()
     if (page) {
         tools.resize(tools.size() - 2);
         if (page->findChild<RemoteView*>()) tools << nullptr << viewOnlyAction_ << localCursorAction_;
+        if (page->property("protocol").toString() == QLatin1String("SSH") && terminalOf(page)) tools << nullptr << copyKeyAction_;
         tools << nullptr << detachAction_ << nullptr << disconnectAction_;
     }
     toolsMenu_->clear();
@@ -2416,6 +2460,7 @@ void MainWindow::updateSessionActions()
     reconnectAction_->setEnabled(view || terminalOf(currentPage()));
     const TerminalView* terminal = terminalOf(currentPage());
     filesAction_->setEnabled(terminal && terminal->sidePanel());
+    copyKeyAction_->setEnabled(terminal && terminal->live() && dynamic_cast<rdc::SshTerminalSession*>(terminal->session()));
     filesAction_->setChecked(terminal && terminal->sidePanelShown());
     usbAction_->setEnabled(view && currentPage()->property("protocol").toString() == QLatin1String("SPICE"));
     relaunchAction_->setEnabled(view && currentPage()->property("protocol").toString() == QLatin1String("Moonlight"));

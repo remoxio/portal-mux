@@ -26,10 +26,15 @@ public:
     void resize(int cols, int rows) override;
     bool canUpload() const override { return true; }
     void upload(std::string data, std::string extension, std::function<void(std::string, std::string)> done) override;
+    // a public key line into ~/.ssh/authorized_keys; done(error, added): false if it was there
+    void installKey(std::string key, std::function<void(std::string, bool)> done);
 
 private:
     void run(std::stop_token stop);
     std::string store(const std::string& data, const std::string& extension, std::string& error);
+    std::string sftpHome(std::string& error); // opens SFTP once
+    std::string sftpError(const std::string& what) const;
+    bool addAuthorizedKey(const std::string& key, std::string& error);
 
     TerminalListener& listener_;
     Connection connection_;

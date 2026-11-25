@@ -28,6 +28,7 @@ public:
     // empty family / 0 size = system default
     void configure(const QString& fontFamily, int fontSize, int scrollbackLines);
     void start(std::unique_ptr<rdc::TerminalSession> session);
+    rdc::TerminalSession* session() const { return session_.get(); }
     QSize grid() const { return {cols_, rows_}; }
 
     void onStateChanged(rdc::SessionState state) override;
