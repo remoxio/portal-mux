@@ -131,7 +131,6 @@ HyperVView::HyperVView(QSettings* settings, QString configDir, QWidget* parent)
         return it == hosts_.end() ? nullptr : it->second;
     }, tree_));
     folding_ = new Folding(tree_, settings_, QStringLiteral("folded/hyperv"), HostRole);
-    tree_->setContextMenuPolicy(Qt::ActionsContextMenu);
     note_ = new QLabel(tr("Add a Hyper-V host with +: a server of Settings → SSH Servers, with an administrator's account."));
     note_->setWordWrap(true);
     note_->setContentsMargins(10, 6, 10, 6);
@@ -157,8 +156,9 @@ HyperVView::HyperVView(QSettings* settings, QString configDir, QWidget* parent)
         s->setSeparator(true);
         return s;
     };
-    tree_->addActions({a.open, separator(), a.start, a.pause, separator(), a.shutdown, a.reboot, a.save, separator(), a.turnOff, a.reset,
-                       separator(), addHost_, removeHost_});
+    rowMenus(tree_, [this] { return selected() != nullptr; },
+             {a.open, separator(), a.start, a.pause, separator(), a.shutdown, a.reboot, a.save, separator(), a.turnOff, a.reset},
+             {removeHost_, separator(), addHost_}, {addHost_});
 
     connect(tree_, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem* item) {
         if (!item->data(0, Qt::UserRole).toString().isEmpty()) return actions_.open->trigger();

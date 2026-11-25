@@ -115,7 +115,6 @@ VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings
     tree_->setFrameShape(QFrame::NoFrame);
     setUpPanels(tree_, new VmDelegate(tree_));
     folding_ = new Folding(tree_, settings_, QStringLiteral("folded/kvm"), FoldRole);
-    tree_->setContextMenuPolicy(Qt::ActionsContextMenu);
     note_ = new QLabel(tr("Add a KVM host with +: libvirt over SSH (qemu+ssh://)."));
     note_->setWordWrap(true);
     note_->setContentsMargins(10, 6, 10, 6);
@@ -142,8 +141,10 @@ VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings
         return s;
     };
     const Actions& a = actions_;
-    tree_->addActions({a.open, a.serial, a.settings, a.snapshots, separator(), a.start, a.pause, separator(), a.shutdown, a.reboot, a.save,
-                       separator(), a.forceOff, a.reset, separator(), addHost_, editHost_, removeHost_});
+    rowMenus(tree_, [this] { return selected() != nullptr; },
+             {a.open, a.serial, a.settings, a.snapshots, separator(), a.start, a.pause, separator(), a.shutdown, a.reboot, a.save, separator(),
+              a.forceOff, a.reset},
+             {editHost_, removeHost_, separator(), addHost_}, {addHost_});
 
     connect(tree_, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem* item) {
         if (!item->data(0, Qt::UserRole).toString().isEmpty()) actions_.open->trigger();

@@ -4,6 +4,7 @@
 
 #include <QApplication>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScrollBar>
@@ -110,6 +111,16 @@ public:
 };
 
 } // namespace
+
+void rowMenus(QTreeWidget* tree, std::function<bool()> onGuest, QList<QAction*> guest, QList<QAction*> host, QList<QAction*> empty)
+{
+    tree->setContextMenuPolicy(Qt::CustomContextMenu);
+    QObject::connect(tree, &QWidget::customContextMenuRequested, tree, [=](const QPoint& at) {
+        QMenu menu;
+        menu.addActions(!tree->itemAt(at) ? empty : onGuest() ? guest : host); // the right-press made the row current
+        menu.exec(tree->viewport()->mapToGlobal(at));
+    });
+}
 
 void setUpPanels(QTreeView* view, PanelDelegate* delegate)
 {

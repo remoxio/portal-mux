@@ -5,8 +5,10 @@
 #include <QSet>
 #include <QStyledItemDelegate>
 
+#include <functional>
 #include <optional>
 
+class QAction;
 class QSettings;
 class QTreeView;
 class QTreeWidget;
@@ -35,6 +37,8 @@ private:
 void setUpPanels(QTreeView* view, PanelDelegate* delegate);
 // once the mouse button is up: a release after the fold ends its animation at once
 void foldLater(QTreeView* view, const QModelIndex& index);
+// right-click menus by row: a guest's own actions, a host's or server's, and on empty space only `empty`
+void rowMenus(QTreeWidget* tree, std::function<bool()> onGuest, QList<QAction*> guest, QList<QAction*> host, QList<QAction*> empty);
 
 // Folded rows kept in the settings across restarts; a row's id is its data(0, role), empty: not kept
 class Folding : public QObject {

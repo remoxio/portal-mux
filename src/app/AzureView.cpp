@@ -110,7 +110,6 @@ AzureView::AzureView(QSettings* settings, QWidget* parent) : QWidget(parent), se
     tree_->setFrameShape(QFrame::NoFrame);
     setUpPanels(tree_, new AzureDelegate(tree_));
     folding_ = new Folding(tree_, settings_, QStringLiteral("folded/azure"), KeyRole);
-    tree_->setContextMenuPolicy(Qt::ActionsContextMenu);
     note_ = new QLabel;
     note_->setWordWrap(true);
     note_->setContentsMargins(10, 6, 10, 6);
@@ -147,8 +146,9 @@ AzureView::AzureView(QSettings* settings, QWidget* parent) : QWidget(parent), se
         s->setSeparator(true);
         return s;
     };
-    tree_->addActions({a.open, a.remote, separator(), a.start, a.restart, a.deallocate, a.powerOff, separator(), a.portal, separator(), signIn_, refresh_,
-                       edit_, remove_, add_});
+    rowMenus(tree_, [this] { return selectedVm() != nullptr; },
+             {a.open, a.remote, separator(), a.start, a.restart, a.deallocate, a.powerOff, separator(), a.portal},
+             {signIn_, refresh_, edit_, remove_, separator(), add_}, {refresh_, add_});
     connect(tree_, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem* item) {
         if (selectedVm()) return actions_.open->trigger();
         if (AzureClient* c = selectedClient(); c && (c->signingIn() || !c->signedIn() || c->problem() != Problem::None)) return fix(c);

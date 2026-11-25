@@ -115,7 +115,6 @@ ProxmoxView::ProxmoxView(QSettings* settings, QString configDir, QWidget* parent
     tree_->setFrameShape(QFrame::NoFrame);
     setUpPanels(tree_, new ProxmoxDelegate(tree_));
     folding_ = new Folding(tree_, settings_, QStringLiteral("folded/proxmox"), KeyRole);
-    tree_->setContextMenuPolicy(Qt::ActionsContextMenu);
     note_ = new QLabel;
     note_->setWordWrap(true);
     note_->setContentsMargins(10, 6, 10, 6);
@@ -147,8 +146,9 @@ ProxmoxView::ProxmoxView(QSettings* settings, QString configDir, QWidget* parent
         s->setSeparator(true);
         return s;
     };
-    tree_->addActions({a.console, separator(), a.start, a.suspend, a.resume, separator(), a.shutdown, a.reboot, separator(), a.stop, a.reset,
-                       separator(), web_, refresh_, edit_, remove_, add_});
+    rowMenus(tree_, [this] { return selectedGuest().has_value(); },
+             {a.console, separator(), a.start, a.suspend, a.resume, separator(), a.shutdown, a.reboot, separator(), a.stop, a.reset},
+             {web_, refresh_, edit_, remove_, separator(), add_}, {refresh_, add_});
     connect(tree_, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem* item) {
         if (selectedGuest()) return actions_.console->trigger();
         if (ProxmoxClient* c = selectedClient(); c && c->problem() != Problem::None) return fix(c);
