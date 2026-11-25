@@ -25,6 +25,7 @@
 #include "app/PageRail.h"
 #include "app/SessionTabs.h"
 #include "app/Prompts.h"
+#include "app/Snippets.h"
 #include "app/SshKeys.h"
 #include "app/SftpView.h"
 #include "app/SshServers.h"
@@ -376,6 +377,11 @@ MainWindow::MainWindow(QWidget* parent)
         if (RemoteView* view = currentView()) emit view->reconnectRequested();
         else if (auto* terminal = terminalOf(currentPage())) emit terminal->reconnectRequested();
     });
+    snippetsMenu_ = new QMenu(tr("S&nippets"), this);
+    snippetsMenu_->setIcon(icons::lucide("scroll-text"));
+    snippetsMenu_->menuAction()->setIconText(tr("Snippets"));
+    snippetsMenu_->setToolTipsVisible(true);
+    connect(snippetsMenu_, &QMenu::aboutToShow, this, &MainWindow::fillSnippetsMenu);
     // scancodes for RDP etc., keysyms for VNC
     sendKeysMenu_ = new QMenu(tr("Send &Keys"), this);
     sendKeysMenu_->setIcon(icons::lucide("command"));
@@ -1905,6 +1911,29 @@ void MainWindow::openVmConsole(LibvirtVms* host, const std::string& uuid)
 #endif
 }
 
+void MainWindow::fillSnippetsMenu()
+{
+    snippetsMenu_->clear();
+    const TerminalView* terminal = terminalOf(currentPage());
+    const QList<snippets::Snippet> list = snippets::load(settings_);
+    for (const snippets::Snippet& s : list) {
+        QAction* a = snippetsMenu_->addAction(s.label(), this, [this, s] {
+            TerminalView* terminal = terminalOf(currentPage());
+            if (!terminal || !terminal->live()) return;
+            QString command = s.command;
+            while (command.endsWith(QLatin1Char('\n')) || command.endsWith(QLatin1Char('\r'))) command.chop(1);
+            terminal->paste(command);
+            if (s.run) terminal->typeKey(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+            terminal->setFocus();
+        });
+        a->setToolTip(s.command);
+        a->setEnabled(terminal && terminal->live());
+    }
+    if (list.isEmpty()) snippetsMenu_->addAction(tr("No snippets yet"))->setEnabled(false);
+    snippetsMenu_->addSeparator();
+    snippetsMenu_->addAction(icons::lucide("pencil"), tr("&Edit Snippets…"), this, [this] { snippets::edit(this, settings_); });
+}
+
 void MainWindow::copyKeyToServer()
 {
     QPointer<TerminalView> terminal = terminalOf(currentPage());
@@ -2406,6 +2435,7 @@ QList<QAction*> MainWindow::sessionTools(QWidget* page) const
         if (is({"Moonlight"})) tools << nullptr << relaunchAction_;
     } else if (TerminalView* terminal = terminalOf(page)) {
         if (terminal->sidePanel()) tools << filesAction_;
+        tools << snippetsMenu_->menuAction();
         tools << nullptr << reconnectAction_;
     }
     return tools << nullptr << disconnectAction_;
@@ -2425,8 +2455,9 @@ void MainWindow::fillSessionBar(QToolBar* bar, const QList<QAction*>& tools)
     if (bar->actions() == actions) return;
     bar->clear();
     bar->addActions(actions);
-    if (auto* button = qobject_cast<QToolButton*>(bar->widgetForAction(sendKeysMenu_->menuAction())))
-        button->setPopupMode(QToolButton::InstantPopup); // the menu opens on click
+    for (QMenu* menu : {sendKeysMenu_, snippetsMenu_})
+        if (auto* button = qobject_cast<QToolButton*>(bar->widgetForAction(menu->menuAction())))
+            button->setPopupMode(QToolButton::InstantPopup); // the menu opens on click
     if (bar == sessionBar_ && !bar->property("capsules").toBool()) { // as wide as it can, with text
         bar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         sessionBarTextWidth_ = bar->sizeHint().width();

@@ -88,6 +88,7 @@ private:
     void addVmTab(VmConsole* console); // named by its windowTitle()
     void addFilePanel(TerminalView* terminal, const rdc::Connection& c); // SFTP beside an SSH terminal
     void copyKeyToServer();
+    void fillSnippetsMenu();
     void openVmSerial(LibvirtVms* host, const std::string& uuid, QWidget* replace = nullptr);
     void showProxmoxConsole(const QString& key);
     void showSessionState(QWidget* page, const QString& name, rdc::SessionState state);
@@ -151,7 +152,7 @@ private:
     QAction *editAction_, *deleteAction_, *connectAction_, *sftpAction_;
     QAction *fullScreenAction_, *screenshotAction_, *viewOnlyAction_, *clipboardAction_, *localCursorAction_,
         *grabKeysAction_, *scaleAction_, *reconnectAction_, *disconnectAction_;
-    QMenu* sendKeysMenu_;
+    QMenu *sendKeysMenu_, *snippetsMenu_;
     QAction *toolBarAction_, *sidebarAction_, *statusBarAction_, *tabBarAction_;
     QActionGroup* toolBarStyle_ = nullptr; // macOS: Icon Only, Icon and Text, Text Only
     QAction *usbAction_, *detachAction_, *relaunchAction_, *filesAction_, *copyKeyAction_;

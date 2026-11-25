@@ -44,6 +44,7 @@ public:
     bool sidePanelShown() const { return side_ && !side_->isHidden(); }
     std::string takeTypedPassword(); // what the login prompt was answered with, once
     void paste(const QString& text);
+    void typeKey(int key, Qt::KeyboardModifiers m, const QString& text); // as if pressed here
     void onData(std::string bytes) override;
 
     struct Callbacks;
@@ -56,6 +57,7 @@ signals:
     void gridChanged();
     void bell();
     void directoryChanged(const QString& path); // the shell's, by OSC 7
+    void keyTyped(int key, Qt::KeyboardModifiers m, const QString& text); // by the user, not typeKey()
 
 protected:
     bool event(QEvent* event) override;

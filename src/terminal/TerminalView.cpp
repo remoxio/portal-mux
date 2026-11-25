@@ -765,7 +765,12 @@ void TerminalView::keyPressEvent(QKeyEvent* event)
         openFind();
         return;
     }
+    typeKey(event->key(), m, event->text());
+    emit keyTyped(event->key(), m, event->text());
+}
 
+void TerminalView::typeKey(int key, Qt::KeyboardModifiers m, const QString& text)
+{
     const VTermModifier vmod = vtermModifiers(m);
     const int mod = vmod;
 
@@ -777,7 +782,6 @@ void TerminalView::keyPressEvent(QKeyEvent* event)
         {Qt::Key_Home, VTERM_KEY_HOME},     {Qt::Key_End, VTERM_KEY_END},         {Qt::Key_PageUp, VTERM_KEY_PAGEUP},
         {Qt::Key_PageDown, VTERM_KEY_PAGEDOWN},
     };
-    const int key = event->key();
     bool handled = false;
     for (auto [qtKey, vtKey] : keys)
         if (key == qtKey) {
@@ -794,7 +798,7 @@ void TerminalView::keyPressEvent(QKeyEvent* event)
     }
     if (!handled) {
         // Shift is applied; keep Alt for the ESC prefix
-        for (char32_t ch : event->text().toUcs4())
+        for (char32_t ch : text.toUcs4())
             if (ch >= 0x20 || ch == 0x1b) vterm_keyboard_unichar(vt_, uint32_t(ch), VTermModifier(mod & VTERM_MOD_ALT));
     }
     verticalScrollBar()->setValue(verticalScrollBar()->maximum());
