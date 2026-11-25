@@ -117,6 +117,7 @@ private:
     int wheelRest_ = 0; // eighths of a degree not yet sent as a wheel step
     std::string titlePart_; // the title arrives in pieces
     std::string oscPart_;   // OSC 7 too
+    std::string clipPart_;  // OSC 52, decoded
     QPointer<QWidget> side_;
     QWidget* sideEdge_ = nullptr;
     int sideWidth_ = 280;

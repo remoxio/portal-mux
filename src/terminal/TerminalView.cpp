@@ -150,10 +150,30 @@ struct TerminalView::Callbacks {
         return 1;
     }
 
+    // OSC 52: a program over SSH copies to this machine's clipboard
+    static int setClipboard(VTermSelectionMask mask, VTermStringFragment frag, void* user)
+    {
+        TerminalView* v = view(user);
+        constexpr size_t limit = 16 << 20;
+        if (frag.initial) v->clipPart_.clear();
+        if (frag.len && v->clipPart_.size() <= limit) v->clipPart_.append(frag.str, frag.len);
+        if (!frag.final) return 1;
+        const QString text = v->clipPart_.size() > limit ? QString() : QString::fromUtf8(v->clipPart_); // too big: dropped, not cut short
+        v->clipPart_.clear();
+        if (text.isEmpty()) return 1; // bad base64 arrives as empty: the clipboard stays
+        if (mask & ~VTERM_SELECTION_PRIMARY) QApplication::clipboard()->setText(text);
+        if ((mask & VTERM_SELECTION_PRIMARY) && QApplication::clipboard()->supportsSelection())
+            QApplication::clipboard()->setText(text, QClipboard::Selection);
+        return 1;
+    }
+
+    static int queryClipboard(VTermSelectionMask, void*) { return 1; } // never shows the clipboard to the remote side
+
     static void output(const char* s, size_t len, void* user) { view(user)->send(s, len); }
 };
 
 static const VTermStateFallbacks fallbacks = {nullptr, nullptr, TerminalView::Callbacks::osc, nullptr, nullptr, nullptr, nullptr};
+static const VTermSelectionCallbacks clipboardCallbacks = {TerminalView::Callbacks::setClipboard, TerminalView::Callbacks::queryClipboard};
 
 static const VTermScreenCallbacks screenCallbacks = {
     TerminalView::Callbacks::damage,
@@ -181,6 +201,7 @@ TerminalView::TerminalView(QWidget* parent)
     vterm_output_set_callback(vt_, Callbacks::output, this);
     vterm_screen_set_callbacks(screen_, &screenCallbacks, this);
     vterm_screen_set_unrecognised_fallbacks(screen_, &fallbacks, this);
+    vterm_state_set_selection_callbacks(vterm_obtain_state(vt_), &clipboardCallbacks, this, nullptr, 4096); // without a buffer libvterm decodes nothing
     VTermColor fg, bg;
     vterm_color_rgb(&fg, uint8_t(defaultFg.red()), uint8_t(defaultFg.green()), uint8_t(defaultFg.blue()));
     vterm_color_rgb(&bg, uint8_t(defaultBg.red()), uint8_t(defaultBg.green()), uint8_t(defaultBg.blue()));
