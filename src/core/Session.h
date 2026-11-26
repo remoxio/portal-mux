@@ -31,6 +31,7 @@ struct DisplayListener : SessionListener {
     virtual void onFrameUpdated(const Rect& dirty) = 0;
     virtual void onClipboardText(std::string text) = 0;
     virtual void onClipboardUris(std::string uriList) = 0; // text/uri-list of local paths
+    virtual void onClipboardFiles() {} // remote files without local paths: DisplaySession::offerClipboardFiles
     virtual void onClipboardImage(std::string /*bmp file*/) {}
     // BGRA, width*height*4 bytes; empty = hide
     virtual void onCursor(std::vector<uint8_t> bgra, int width, int height, int hotX, int hotY) = 0;
@@ -55,6 +56,7 @@ public:
     virtual void sendPointer(const PointerEvent& event) = 0;
     virtual void sendClipboardText(const std::string& text) = 0;
     virtual void sendClipboardUris(const std::string&) {}
+    virtual bool offerClipboardFiles() { return false; } // on the pasteboard, fetched on paste (macOS); false: not offered
     // a BMP file, offered with the text beside it
     virtual bool takesClipboardImages() const { return false; }
     virtual void sendClipboardImage(const std::string& /*bmp*/, const std::string& text) { if (!text.empty()) sendClipboardText(text); }

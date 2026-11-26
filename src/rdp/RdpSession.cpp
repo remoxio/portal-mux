@@ -17,6 +17,7 @@
 #include <freerdp/locale/locale.h>
 #include <freerdp/settings.h>
 #include <freerdp/utils/cliprdr_utils.h>
+#include <freerdp/version.h>
 #include <winpr/clipboard.h>
 #include <winpr/string.h>
 #include <winpr/synch.h>
@@ -395,6 +396,7 @@ struct RdpSession::Callbacks {
         {
             std::lock_guard lock(s->clipMutex_);
             s->serverFileGroupId_ = 0;
+            s->serverFiles_.clear();
             for (UINT32 i = 0; i < list->numFormats; ++i) {
                 const CLIPRDR_FORMAT& f = list->formats[i];
                 if (f.formatName && strcmp(f.formatName, "FileGroupDescriptorW") == 0) s->serverFileGroupId_ = f.formatId;
@@ -424,13 +426,21 @@ struct RdpSession::Callbacks {
         if (!(r->common.msgFlags & CB_RESPONSE_OK) || !r->requestedFormatData) return CHANNEL_RC_OK;
         std::unique_lock lock(s->clipMutex_);
         if (s->pendingFormat_ != 0 && s->pendingFormat_ == s->serverFileGroupId_) {
+            if (!cliprdr_file_context_has_local_support(s->fileContext_)) { // no FUSE mount
+                s->serverFiles_.assign(reinterpret_cast<const char*>(r->requestedFormatData), r->common.dataLen);
+                s->localClipboard_.clear(); // the same local copy again is offered again
+                s->localUris_.clear();
+                s->localImage_.clear();
+                lock.unlock();
+                s->listener_.onClipboardFiles();
+                return CHANNEL_RC_OK;
+            }
             std::string uris;
             ClipboardLock(s->clipboard_);
             // WinPR's FileGroupDescriptorW -> uri-list returns nothing in 3.32; built here
             FILEDESCRIPTORW* files = nullptr;
             UINT32 count = 0;
-            if (cliprdr_file_context_has_local_support(s->fileContext_) &&
-                cliprdr_file_context_update_server_data(s->fileContext_, s->clipboard_, r->requestedFormatData,
+            if (cliprdr_file_context_update_server_data(s->fileContext_, s->clipboard_, r->requestedFormatData,
                                                         r->common.dataLen) &&
                 cliprdr_parse_file_list(r->requestedFormatData, r->common.dataLen, &files, &count) == CHANNEL_RC_OK) {
                 const char* base = ClipboardGetDelegate(s->clipboard_)->basePath;
@@ -656,6 +666,26 @@ void RdpSession::sendClipboardUris(const std::string& uriList)
         localImage_.clear();
     }
     post([this] { announceClipboard(); });
+}
+
+bool RdpSession::offerClipboardFiles()
+{
+    {
+        std::lock_guard lock(clipMutex_);
+        offeredFiles_ = serverFiles_;
+    }
+#if FREERDP_VERSION_MAJOR == 3 && FREERDP_VERSION_MINOR < 33 // no pasteboard support yet
+    return false;
+#else
+    if (offeredFiles_.empty()) return false;
+    const char* types[] = {"text/uri-list"};
+    auto data = [](void* self, const char* type, size_t* size) -> const void* {
+        const std::string& files = static_cast<RdpSession*>(self)->offeredFiles_;
+        *size = files.size();
+        return strcmp(type, "FileGroupDescriptorW") == 0 ? files.data() : nullptr;
+    };
+    return cliprdr_file_context_set_local_clipboard_data(fileContext_, data, this, types, 1);
+#endif
 }
 
 void RdpSession::resizeDesktop(int width, int height)

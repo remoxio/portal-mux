@@ -172,7 +172,7 @@ if(APPLE)
     qt_add_resources(portal-mux breeze PREFIX "/" BASE third_party
                      FILES ${breeze_icons} third_party/icons/breeze/index.theme third_party/icons/breeze-dark/index.theme) # macOS has no icon theme
     enable_language(OBJCXX)
-    target_sources(portal-mux PRIVATE src/app/Look_mac.mm src/app/WindowEffects_mac.mm data/icons/portal-mux.icns)
+    target_sources(portal-mux PRIVATE src/app/Look_mac.mm src/app/Pasteboard_mac.mm src/app/WindowEffects_mac.mm data/icons/portal-mux.icns)
     set_source_files_properties(data/icons/portal-mux.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     set_target_properties(portal-mux PROPERTIES MACOSX_BUNDLE_ICON_FILE portal-mux.icns MACOSX_BUNDLE_BUNDLE_NAME "Portal Mux") # the app menu's name
     target_link_libraries(portal-mux PRIVATE "-framework AppKit")

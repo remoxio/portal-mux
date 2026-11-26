@@ -76,6 +76,7 @@ public:
     void onFrameUpdated(const rdc::Rect& dirty) override;
     void onClipboardText(std::string text) override;
     void onClipboardUris(std::string uriList) override;
+    void onClipboardFiles() override;
     void onClipboardImage(std::string bmp) override;
     void onCursor(std::vector<uint8_t> bgra, int width, int height, int hotX, int hotY) override;
     void onAudio(const int16_t* samples, size_t frames, int sampleRate, int channels) override;

@@ -4,6 +4,9 @@
 #include "app/KeyboardGrab.h"
 #include "app/Keymap.h"
 #include "app/LockKeys.h"
+#ifdef Q_OS_MACOS
+#include "app/Pasteboard.h"
+#endif
 
 #include <QBuffer>
 #include <QClipboard>
@@ -24,6 +27,9 @@
 #include <utility>
 
 static const QString remoteMark = QStringLiteral("application/x-portal-mux-remote"); // ours: not offered back
+#ifdef Q_OS_MACOS
+static long ownFiles = -1; // the pasteboard holding remote files: reading them would download them all
+#endif
 
 using rdc::KeyEvent;
 using rdc::PointerEvent;
@@ -201,6 +207,9 @@ void RemoteView::updateKeyboardGrab()
 void RemoteView::localClipboardChanged()
 {
     if (!session_ || !options_.clipboard) return;
+#ifdef Q_OS_MACOS
+    if (pasteboardChangeCount() == ownFiles) return;
+#endif
     const QMimeData* mime = QGuiApplication::clipboard()->mimeData();
     if (!mime || mime->hasFormat(remoteMark)) return;
     if (mime->hasUrls() && mime->urls() == lastRemoteUrls_) return;
@@ -365,6 +374,16 @@ void RemoteView::onClipboardUris(std::string uriList)
         mime->setData(QStringLiteral("x-special/gnome-copied-files"), ("copy\n" + lines.join(QLatin1Char('\n'))).toUtf8());
         lastRemoteUrls_ = urls;
         QGuiApplication::clipboard()->setMimeData(mime);
+    }, Qt::QueuedConnection);
+}
+
+void RemoteView::onClipboardFiles()
+{
+    QMetaObject::invokeMethod(this, [this] {
+        if (!session_ || !options_.clipboard || !session_->offerClipboardFiles()) return;
+#ifdef Q_OS_MACOS
+        ownFiles = pasteboardChangeCount();
+#endif
     }, Qt::QueuedConnection);
 }
 

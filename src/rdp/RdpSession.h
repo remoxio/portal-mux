@@ -31,6 +31,7 @@ public:
     void sendPointer(const PointerEvent& event) override;
     void sendClipboardText(const std::string& text) override;
     void sendClipboardUris(const std::string& uriList) override;
+    bool offerClipboardFiles() override;
     bool takesClipboardImages() const override { return true; }
     void sendClipboardImage(const std::string& bmp, const std::string& text) override;
     void resizeDesktop(int width, int height) override;
@@ -82,6 +83,8 @@ private:
     wClipboard* clipboard_ = nullptr;
     uint32_t fileGroupId_ = 0, uriListId_ = 0, bmpId_ = 0;
     uint32_t serverFileGroupId_ = 0;            // 0 if not offered
+    std::string serverFiles_;                   // its file list where there is no FUSE mount
+    std::string offeredFiles_;                  // UI thread: the one on the pasteboard
     uint32_t pendingFormat_ = 0;
 };
 
