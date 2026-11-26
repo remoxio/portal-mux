@@ -3,6 +3,8 @@
 #include <QApplication>
 #include <QDialog>
 #include <QEvent>
+#include <QFormLayout>
+#include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
 #include <QPainter>
@@ -11,6 +13,7 @@
 #include <QStyleHints>
 #include <QStyleOption>
 #include <QTreeView>
+#include <QVBoxLayout>
 
 #include <algorithm>
 #include <initializer_list>
@@ -323,6 +326,25 @@ void paintSelection(QPainter* p, const QRectF& rect, const QPalette& palette, qr
     p->setBrush(fill);
     p->drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
     p->restore();
+}
+
+QLabel* hintedRow(QFormLayout* form, const QString& label, QWidget* field, const QString& hint)
+{
+    auto* note = new QLabel(hint);
+    note->setWordWrap(true);
+    note->setForegroundRole(QPalette::PlaceholderText);
+    QFont font = note->font();
+    font.setPointSizeF(font.pointSizeF() * 0.85);
+    note->setFont(font);
+    auto* cell = new QVBoxLayout;
+    cell->setSpacing(3);
+    cell->addWidget(field);
+    cell->addWidget(note);
+    auto* name = new QLabel(label);
+    name->setBuddy(field);
+    name->setMaximumHeight(field->sizeHint().height()); // QFormLayout then aligns it with the field, not the cell
+    form->addRow(name, cell);
+    return note;
 }
 
 } // namespace look

@@ -3,6 +3,7 @@
 #include "app/ConnectionStore.h"
 #include "app/PanelTree.h"
 #include "app/Icons.h"
+#include "app/Look.h"
 #include "app/Prompts.h"
 #include "app/ProxmoxClient.h"
 #include "app/ProxmoxTerminal.h"
@@ -334,21 +335,18 @@ void ProxmoxView::editServer(ProxmoxClient* client)
     QDialog dialog(this);
     dialog.setWindowTitle(client ? tr("Edit Proxmox Server") : tr("Add Proxmox Server"));
     auto* name = new QLineEdit(QString::fromStdString(old.name));
+    name->setPlaceholderText(tr("As the address"));
     auto* address = new QLineEdit(client ? QStringLiteral("%1:%2").arg(QString::fromStdString(old.host)).arg(old.port) : QString());
     address->setPlaceholderText(tr("pve.example.com or pve.example.com:8006"));
     auto* user = new QLineEdit(QString::fromStdString(client ? old.user : "root@pam"));
     auto* secret = new QLineEdit;
     secret->setEchoMode(QLineEdit::Password);
     secret->setPlaceholderText(client ? tr("Unchanged") : QString());
-    auto* hint = new QLabel(tr("An API token instead of a password: user@realm!tokenid as the user, its secret as the password. "
-                               "Accounts with a second factor need a token."));
-    hint->setWordWrap(true);
     auto* form = new QFormLayout;
     form->addRow(tr("&Name:"), name);
     form->addRow(tr("&Address:"), address);
-    form->addRow(tr("&User:"), user);
-    form->addRow(tr("&Password:"), secret);
-    form->addRow(hint);
+    look::hintedRow(form, tr("&User:"), user, tr("user@realm, or user@realm!tokenid for an API token."));
+    look::hintedRow(form, tr("&Password:"), secret, tr("Or the API token's secret. Accounts with a second factor need a token."));
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -363,7 +361,7 @@ void ProxmoxView::editServer(ProxmoxClient* client)
     auto* layout = new QVBoxLayout(&dialog);
     layout->addLayout(form);
     layout->addWidget(buttons);
-    dialog.resize(520, dialog.sizeHint().height());
+    dialog.resize(520, std::max(dialog.sizeHint().height(), dialog.heightForWidth(520))); // the hints wrapped
     if (dialog.exec() != QDialog::Accepted) return;
 
     Server s = old;

@@ -2,6 +2,7 @@
 #include "app/Prompts.h"
 
 #include "app/Icons.h"
+#include "app/Look.h"
 #include "app/PanelTree.h"
 #include "app/Secrets.h"
 #include "app/SshServers.h"
@@ -346,12 +347,10 @@ void HyperVView::addHost()
         server->setCurrentIndex(server->findData(select));
     };
     fill({}, loadSshServers(settings_));
-    auto* hint = new QLabel(tr("Portal Mux runs PowerShell on it over SSH: it needs OpenSSH Server (an optional feature of Windows), "
-                               "and the account must be an administrator or in Hyper-V Administrators."));
-    hint->setWordWrap(true);
     auto* form = new QFormLayout;
-    form->addRow(tr("&SSH server:"), server);
-    form->addRow(hint);
+    look::hintedRow(form, tr("&SSH server:"), server,
+                    tr("Portal Mux runs PowerShell on it over SSH: it needs OpenSSH Server (an optional feature of Windows), "
+                       "and the account must be an administrator or in Hyper-V Administrators."));
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -362,7 +361,7 @@ void HyperVView::addHost()
     auto* layout = new QVBoxLayout(&dialog);
     layout->addLayout(form);
     layout->addWidget(buttons);
-    dialog.resize(520, dialog.sizeHint().height());
+    dialog.resize(520, std::max(dialog.sizeHint().height(), dialog.heightForWidth(520))); // the hint wrapped
     if (dialog.exec() != QDialog::Accepted) return;
     const QString id = server->currentData().toString();
     ids_ << id;

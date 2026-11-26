@@ -3,6 +3,7 @@
 
 #include "app/AzureClient.h"
 #include "app/Icons.h"
+#include "app/Look.h"
 #include "app/PanelTree.h"
 #include "app/Secrets.h"
 
@@ -348,24 +349,21 @@ void AzureView::editAccount(AzureClient* client)
     auto* tenant = new QLineEdit(QString::fromStdString(old.tenant));
     auto* app = new QLineEdit(QString::fromStdString(old.clientId));
     app->setPlaceholderText(tr("Azure CLI's"));
-    auto* hint = new QLabel(tr("You sign in in your web browser. Directory: \"organizations\" for your work account's own, or a directory's "
-                               "ID or domain (guest and personal accounts). Application ID: empty for Azure CLI's, or your own "
-                               "(a public client, redirect URI http://localhost)."));
-    hint->setWordWrap(true);
     auto* form = new QFormLayout;
     form->addRow(tr("&Name:"), name);
-    form->addRow(tr("&Directory:"), tenant);
-    form->addRow(tr("&Application ID:"), app);
-    form->addRow(hint);
+    look::hintedRow(form, tr("&Directory:"), tenant,
+                    tr("\"organizations\" for your work account's own; a directory's ID or domain for guest and personal accounts."));
+    look::hintedRow(form, tr("&Application ID:"), app, tr("Empty for Azure CLI's. Your own: a public client with the redirect URI http://localhost."));
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     buttons->button(QDialogButtonBox::Ok)->setText(client ? tr("OK") : tr("Sign In"));
+    if (!client) buttons->button(QDialogButtonBox::Ok)->setToolTip(tr("In your web browser"));
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     connect(tenant, &QLineEdit::textChanged, &dialog, [&] { buttons->button(QDialogButtonBox::Ok)->setEnabled(!tenant->text().trimmed().isEmpty()); });
     auto* layout = new QVBoxLayout(&dialog);
     layout->addLayout(form);
     layout->addWidget(buttons);
-    dialog.resize(520, std::max(dialog.sizeHint().height(), dialog.heightForWidth(520))); // the hint wrapped
+    dialog.resize(520, std::max(dialog.sizeHint().height(), dialog.heightForWidth(520))); // the hints wrapped
     if (dialog.exec() != QDialog::Accepted) return;
 
     Account a = old;
