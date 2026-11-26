@@ -12,6 +12,8 @@
 #include <freerdp/codec/color.h>
 #include <freerdp/event.h>
 #include <freerdp/freerdp.h>
+#include <freerdp/heartbeat.h>
+#include <freerdp/transport_io.h>
 #include <freerdp/gdi/gdi.h>
 #include <freerdp/graphics.h>
 #include <freerdp/locale/locale.h>
@@ -52,6 +54,7 @@ namespace {
 struct RdpContext {
     rdpClientContext common; // must be first: FreeRDP casts
     RdpSession* self;
+    pTransportRWFkt readPdu; // FreeRDP's, wrapped
 };
 
 struct RdpPointer {
@@ -115,8 +118,32 @@ struct RdpSession::Callbacks {
     static BOOL preConnect(freerdp* instance)
     {
         rdpContext* ctx = instance->context;
-        return PubSub_SubscribeChannelConnected(ctx->pubSub, channelConnected) >= 0 &&
+        // every PDU counts as the server being there; its heartbeat says how long it may be silent
+        rdpTransportIo io = *freerdp_get_io_callbacks(ctx);
+        if (io.ReadPdu != readPdu) reinterpret_cast<RdpContext*>(ctx)->readPdu = io.ReadPdu;
+        io.ReadPdu = readPdu;
+        instance->heartbeat->ServerHeartbeat = serverHeartbeat;
+        return freerdp_set_io_callbacks(ctx, &io) && PubSub_SubscribeChannelConnected(ctx->pubSub, channelConnected) >= 0 &&
                PubSub_SubscribeChannelDisconnected(ctx->pubSub, channelDisconnected) >= 0;
+    }
+
+    static int readPdu(rdpTransport* transport, wStream* s)
+    {
+        auto* ctx = reinterpret_cast<RdpContext*>(transport_get_context(transport));
+        const int read = ctx->readPdu(transport, s);
+        if (read > 0) ctx->self->lastHeard_ = std::chrono::steady_clock::now();
+        return read;
+    }
+
+    static BOOL serverHeartbeat(freerdp* instance, BYTE period, BYTE, BYTE reconnectAfter)
+    {
+        RdpSession* s = self(instance->context);
+        const int limit = period * reconnectAfter;
+        if (limit != s->silenceLimit_)
+            WLog_INFO("portal-mux.rdp", "%s: the server's heartbeat: every %u s, a reconnect after %u missed", s->label().c_str(), period,
+                      reconnectAfter);
+        s->silenceLimit_ = limit;
+        return TRUE;
     }
 
     static BOOL postConnect(freerdp* instance)
@@ -607,6 +634,16 @@ void RdpSession::post(std::function<void()> task)
 }
 
 // marks in the log where a screen stops answering input
+// as Windows' own client: past the missed heartbeats the server allows, it reconnects (a session that went silent with the connection open)
+bool RdpSession::serverSilent()
+{
+    const auto quiet = std::chrono::steady_clock::now() - lastHeard_;
+    if (silenceLimit_ <= 0 || quiet < std::chrono::seconds(silenceLimit_)) return false;
+    WLog_WARN("portal-mux.rdp", "%s: nothing from the server for %lld s, its heartbeat allows %d; reconnecting", label().c_str(),
+              (long long)std::chrono::duration_cast<std::chrono::seconds>(quiet).count(), silenceLimit_);
+    return true;
+}
+
 void RdpSession::checkFrozen()
 {
     const auto now = std::chrono::steady_clock::now();
@@ -994,11 +1031,12 @@ void RdpSession::run(std::stop_token stop)
             ResetEvent(wakeEvent_);
             tasks_.drain();
             checkFrozen();
-            if (gfxLost_.exchange(false)) {
-                WLog_WARN("portal-mux.rdp", "%s: graphics channel lost; reconnecting without H.264", label().c_str());
+            const bool gfxLost = gfxLost_.exchange(false);
+            if (gfxLost || serverSilent()) {
                 rdpSettings* st = context_->settings;
+                if (gfxLost) WLog_WARN("portal-mux.rdp", "%s: graphics channel lost; reconnecting without H.264", label().c_str());
                 connected_ = false;
-                if (freerdp_settings_set_bool(st, FreeRDP_GfxH264, FALSE) && freerdp_settings_set_bool(st, FreeRDP_GfxAVC444, FALSE) &&
+                if ((!gfxLost || (freerdp_settings_set_bool(st, FreeRDP_GfxH264, FALSE) && freerdp_settings_set_bool(st, FreeRDP_GfxAVC444, FALSE))) &&
                     reconnect(stop, true)) {
                     connected_ = true;
                     listener_.onStateChanged(SessionState::Connected);

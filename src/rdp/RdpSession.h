@@ -50,6 +50,7 @@ private:
     void announceClipboard();
     void sendLayout();
     void checkFrozen();
+    bool serverSilent(); // past the server's heartbeat limit
     std::string label() const { return connection_.name.empty() ? connection_.host : connection_.name; }
 
     DisplayListener& listener_;
@@ -69,6 +70,8 @@ private:
     std::chrono::steady_clock::time_point lastInput_;            // presses and wheel, the worker's
     std::atomic<bool> frozen_ = false;                           // logged: no update since input
     std::atomic<bool> gfxLost_ = false;                          // FreeRDP closed the graphics channel mid-session
+    std::chrono::steady_clock::time_point lastHeard_;            // the server's last PDU, the worker's
+    int silenceLimit_ = 0; // s: its heartbeat period times the missed beats it wants a reconnect after; 0: it sends none
     int wantWidth_ = 1024, wantHeight_ = 768;
     double pixelRatio_ = 1;
     int sentScale_ = 0;
