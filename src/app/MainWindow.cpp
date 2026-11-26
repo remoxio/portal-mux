@@ -66,6 +66,7 @@
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -260,6 +261,7 @@ static QWidget* viewPage(const QString& title, QWidget* body, const QList<QActio
             button->setDefaultAction(action);
             button->setAutoRaise(true);
             button->setIconSize(QSize(16, 16));
+            if (action->menu()) button->setPopupMode(QToolButton::InstantPopup);
             bar->addWidget(button);
         }
         bar->addStretch();
@@ -375,6 +377,28 @@ MainWindow::MainWindow(QWidget* parent)
 
     auto* newAction = new QAction(icons::lucide("plus"), tr("&New Connection…"), this);
     newAction->setShortcut(QKeySequence::New);
+    newGroupAction_ = new QAction(icons::lucide("folder-plus"), tr("New &Group…"), this);
+    connect(newGroupAction_, &QAction::triggered, this, [this] { nameGroup({}); });
+    moveUpAction_ = new QAction(icons::lucide("arrow-up"), tr("Move &Up"), this);
+    connect(moveUpAction_, &QAction::triggered, this, [this] { stepSelected(true); });
+    moveDownAction_ = new QAction(icons::lucide("arrow-down"), tr("Move Do&wn"), this);
+    connect(moveDownAction_, &QAction::triggered, this, [this] { stepSelected(false); });
+    auto* moveToMenu = new QMenu(this);
+    moveToAction_ = new QAction(icons::lucide("folder-input"), tr("Move to &Group"), this);
+    moveToAction_->setMenu(moveToMenu);
+    connect(moveToMenu, &QMenu::aboutToShow, this, [this, moveToMenu] {
+        moveToMenu->clear();
+        const Connection* c = store_.find(selectedId());
+        if (!c) return;
+        const std::string id = c->id, now = c->group;
+        for (const QString& group : QStringList{QString()} + groupList()) {
+            QAction* a = moveToMenu->addAction(group.isEmpty() ? tr("No Group") : group, this, [this, id, group] { moveToGroup(id, group); });
+            a->setCheckable(true);
+            a->setChecked(group.toStdString() == now);
+            a->setEnabled(!a->isChecked());
+            if (group.isEmpty()) moveToMenu->addSeparator();
+        }
+    });
     editAction_ = new QAction(icons::lucide("pencil"), tr("&Edit…"), this);
     editAction_->setShortcut(Qt::Key_F2);
     duplicateAction_ = new QAction(icons::lucide("copy"), tr("D&uplicate"), this);
@@ -480,6 +504,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     QMenu* file = menuBar()->addMenu(tr("&File"));
     file->addAction(newAction);
+    file->addAction(newGroupAction_);
     file->addAction(icons::lucide("zap"), tr("&Quick Connection…"), this, &MainWindow::quickConnect);
     QMenu* recent = file->addMenu(tr("Open &Recent"));
     connect(recent, &QMenu::aboutToShow, this, [this, recent] {
@@ -652,7 +677,10 @@ MainWindow::MainWindow(QWidget* parent)
     auto* onlineTimer = new QTimer(this);
     connect(onlineTimer, &QTimer::timeout, this, [this] { checkOnline(true); });
     onlineTimer->start(60'000);
-    tree_->addActions({connectAction_, sftpAction_, editAction_, duplicateAction_, deleteAction_, newAction}); // also for their shortcuts
+    auto* moves = new QAction(this);
+    moves->setSeparator(true);
+    tree_->addActions({connectAction_, sftpAction_, editAction_, duplicateAction_, deleteAction_, newAction, newGroupAction_, moves, moveUpAction_,
+                       moveDownAction_, moveToAction_}); // also for their shortcuts
     tree_->setDragDropMode(QAbstractItemView::InternalMove); // a connection onto a group; the drop is ours (eventFilter)
     tree_->viewport()->installEventFilter(this);
     auto* reloadSshConfig = new QAction(icons::lucide("refresh-cw"), tr("&Reload ~/.ssh/config"), this);
@@ -731,7 +759,7 @@ MainWindow::MainWindow(QWidget* parent)
     // a button can't take the toolbar action's icon
     auto* sidebarNew = new QAction(icons::lucide("plus"), newAction->text(), this);
     connect(sidebarNew, &QAction::triggered, newAction, &QAction::trigger);
-    addView("connections", icons::lucide("network"), tr("Connections"), connectionsPage, {sidebarNew});
+    addView("connections", icons::lucide("network"), tr("Connections"), connectionsPage, {newGroupAction_, sidebarNew, editAction_, deleteAction_, moveUpAction_, moveDownAction_, moveToAction_});
 #ifdef PORTAL_MUX_LIBVIRT
     auto* vmView = kvm_ = new VmView(settings_);
     connect(vmView, &VmView::vmsChanged, this, &MainWindow::updateStatusInfo);
@@ -823,6 +851,7 @@ MainWindow::MainWindow(QWidget* parent)
         editConnection(c);
     });
     connect(editAction_, &QAction::triggered, this, [this] {
+        if (const QString group = selectedGroup(); !group.isEmpty()) return nameGroup(group);
         const Connection* c = findConnection(selectedId());
         if (!c) return;
         Connection copy = *c;
@@ -853,7 +882,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(tree_, &QTreeWidget::currentItemChanged, this, &MainWindow::updateActions);
     for (auto [signal, icon] : {std::pair{&QTreeWidget::itemExpanded, "folder-open"}, std::pair{&QTreeWidget::itemCollapsed, "folder"}})
         connect(tree_, signal, this, [icon](QTreeWidgetItem* group) {
-            if (!group->data(0, ReadOnlyRole).toBool()) group->setIcon(0, icons::material(icon));
+            if (!group->data(0, ReadOnlyRole).toBool()) group->setIcon(0, icons::lucide(icon, QPalette::PlaceholderText));
         });
     connect(filter_, &QLineEdit::textChanged, this, &MainWindow::applyFilter);
     connect(filter_, &QLineEdit::returnPressed, this, [this] { connectTo(selectedId()); });
@@ -926,68 +955,71 @@ MainWindow::MainWindow(QWidget* parent)
         QMessageBox::warning(this, tr("Connections"),
                              tr("Could not read %1: %2\nA copy was saved as %1.broken.").arg(store_.path(), error));
     if (store_.ensureLocalTerminal()) saveStore();
+    if (!settings_->value(QStringLiteral("connections/ordered")).toBool()) { // the list was sorted by name: that becomes the user's order
+        store_.sortByName();
+        if (saveStore()) settings_->setValue(QStringLiteral("connections/ordered"), true);
+    }
     rebuildTree();
 }
 
-void MainWindow::rebuildTree(const std::string& selectId)
+void MainWindow::rebuildTree(const std::string& selectId, const QString& selectGroup)
 {
     const Rebuild quiet(tree_);
     tree_->clear();
-    std::map<QString, QTreeWidgetItem*> groups;
     QTreeWidgetItem* selected = nullptr;
-    for (const Connection& c : store_.all()) {
-        QTreeWidgetItem* parent = nullptr;
-        if (!c.group.empty()) {
-            const QString name = QString::fromStdString(c.group);
-            auto& g = groups[name];
-            if (!g) {
-                g = new QTreeWidgetItem(tree_, {name});
-                g->setIcon(0, icons::material("folder")); // opening sets folder-open
-                g->setData(0, FoldRole, QStringLiteral("group:") + name);
-                g->setFlags(g->flags() & ~Qt::ItemIsDragEnabled);
-            }
-            parent = g;
-        }
-        auto* item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(tree_);
-        item->setText(0, QString::fromStdString(c.name));
+    auto addConnection = [&](QTreeWidgetItem* parent, const Connection& c, const QString& tip) {
+        auto* item = parent ? new QTreeWidgetItem(parent, {QString::fromStdString(c.name)}) : new QTreeWidgetItem(tree_, {QString::fromStdString(c.name)});
         item->setIcon(0, protocolIcon(protocolLabel(c.protocol)));
-        item->setToolTip(0, c.protocol == Protocol::Local ? tr("A terminal on this computer")
-                                                          : QStringLiteral("%1://%2").arg(QLatin1String(protocolName(c.protocol)),
-                                                                                          QString::fromStdString(c.host)));
+        item->setToolTip(0, tip);
         item->setData(0, IdRole, QString::fromStdString(c.id));
         if (const auto known = online_.find(QString::fromStdString(c.id)); known != online_.end()) item->setData(0, OnlineRole, known->second);
         if (c.id == selectId) selected = item;
-    }
-    QList<QTreeWidgetItem*> readOnly; // never merged with a same-named user group
-    auto addReadOnly = [&](const QString& title, const char* icon, const QString& tip, const std::vector<Connection>& list,
-                           const std::function<QString(const Connection&)>& address) {
-        if (list.empty()) return;
-        auto* g = new QTreeWidgetItem(tree_, {title});
-        g->setIcon(0, icons::material(icon));
-        g->setToolTip(0, tip);
-        g->setData(0, ReadOnlyRole, true);
-        g->setData(0, FoldRole, QStringLiteral("readonly:") + title);
-        g->setFlags(g->flags() & ~Qt::ItemIsDragEnabled);
-        for (const Connection& c : list) {
-            auto* item = new QTreeWidgetItem(g, {QString::fromStdString(c.name)});
-            item->setFlags(item->flags() & ~Qt::ItemIsDragEnabled);
-            item->setIcon(0, protocolIcon(protocolLabel(c.protocol)));
-            item->setToolTip(0, address(c));
-            item->setData(0, IdRole, QString::fromStdString(c.id));
-            if (const auto known = online_.find(QString::fromStdString(c.id)); known != online_.end()) item->setData(0, OnlineRole, known->second);
-            if (c.id == selectId) selected = item;
-        }
-        readOnly << g;
+        return item;
     };
+    auto address = [](const Connection& c) {
+        return c.protocol == Protocol::Local ? tr("A terminal on this computer")
+                                             : QStringLiteral("%1://%2").arg(QLatin1String(protocolName(c.protocol)), QString::fromStdString(c.host));
+    };
+    auto groupItem = [&](const QString& title, const QString& fold, int count) {
+        auto* g = new QTreeWidgetItem(tree_, {title});
+        QFont bold = g->font(0);
+        bold.setWeight(QFont::DemiBold);
+        g->setFont(0, bold);
+        g->setData(0, FoldRole, fold);
+        g->setData(0, CountRole, count);
+        g->setFlags(g->flags() & ~Qt::ItemIsDragEnabled);
+        return g;
+    };
+    // as the user ordered them: ungrouped first, then each group, ~/.ssh/config last
+    for (const Connection& c : store_.all())
+        if (c.group.empty()) addConnection(nullptr, c, address(c));
+    QList<QTreeWidgetItem*> folds;
+    for (const QString& name : groupList()) {
+        const auto inside = std::count_if(store_.all().begin(), store_.all().end(), [&](const Connection& c) { return c.group == name.toStdString(); });
+        QTreeWidgetItem* g = groupItem(name, QStringLiteral("group:") + name, int(inside));
+        for (const Connection& c : store_.all())
+            if (c.group == name.toStdString()) addConnection(g, c, address(c));
+        if (name == selectGroup) selected = g;
+        folds << g;
+    }
     sshConfig_ = rdc::readSshConfig(QDir::homePath().toStdString() + "/.ssh/config");
-    addReadOnly(sshConfigGroup(), "folder-secure", tr("Hosts from ~/.ssh/config (read-only; Edit saves a copy)"), sshConfig_,
-                [](const Connection& c) {
-                    return QStringLiteral("ssh://%1%2").arg(c.username.empty() ? QString() : QString::fromStdString(c.username) + u'@',
-                                                           QString::fromStdString(c.host));
-                });
-    tree_->sortItems(0, Qt::AscendingOrder);
-    for (auto& [name, g] : groups) treeFolding_->apply(g);
-    for (QTreeWidgetItem* g : readOnly) treeFolding_->apply(g);
+    if (!sshConfig_.empty()) { // never merged with a same-named user group
+        QTreeWidgetItem* g = groupItem(sshConfigGroup(), QStringLiteral("readonly:") + sshConfigGroup(), int(sshConfig_.size()));
+        g->setIcon(0, icons::lucide("folder-lock", QPalette::PlaceholderText));
+        g->setToolTip(0, tr("Hosts from ~/.ssh/config (read-only; Edit saves a copy)"));
+        g->setData(0, ReadOnlyRole, true);
+        for (const Connection& c : sshConfig_) {
+            QTreeWidgetItem* item = addConnection(g, c, QStringLiteral("ssh://%1%2").arg(c.username.empty() ? QString() : QString::fromStdString(c.username) + u'@',
+                                                                                        QString::fromStdString(c.host)));
+            item->setFlags(item->flags() & ~Qt::ItemIsDragEnabled);
+        }
+        folds << g;
+    }
+    for (QTreeWidgetItem* g : folds) {
+        treeFolding_->apply(g);
+        if (!g->data(0, ReadOnlyRole).toBool())
+            g->setIcon(0, icons::lucide(g->isExpanded() && g->childCount() ? "folder-open" : "folder", QPalette::PlaceholderText));
+    }
     if (selected) tree_->setCurrentItem(selected);
     applyFilter();
     updateActions();
@@ -1038,7 +1070,7 @@ void MainWindow::applyFilter()
             show(top->child(j), wholeGroup || matches(top->child(j)));
             shown += !top->child(j)->isHidden();
         }
-        top->setHidden(shown == 0);
+        top->setHidden(shown == 0 && !(wholeGroup && !top->childCount())); // an empty group shows unless searched past
     }
     QTreeWidgetItem* current = tree_->currentItem();
     if (!text.isEmpty() && first && (!current || current->isHidden() || current->data(0, IdRole).toString().isEmpty()))
@@ -1539,10 +1571,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
         drop->setDropAction(event->type() == QEvent::Drop ? Qt::IgnoreAction : Qt::MoveAction); // the view would remove the row itself
         drop->accept();
         if (event->type() == QEvent::Drop) {
-            Connection moved = *c;
-            moved.group = group.toStdString();
-            const std::string id = store_.upsert(std::move(moved));
-            if (saveStore()) QTimer::singleShot(0, this, [this, id] { rebuildTree(id); });
+            QTimer::singleShot(0, this, [this, id = c->id, group] { moveToGroup(id, group); }); // not while the view handles the drop
         }
         return true;
     }
@@ -1611,9 +1640,17 @@ QString MainWindow::sshConfigGroup() { return tr("SSH config"); }
 void MainWindow::updateActions()
 {
     const Connection* c = findConnection(selectedId());
-    for (QAction* a : {editAction_, connectAction_}) a->setEnabled(c != nullptr);
-    deleteAction_->setEnabled(c && store_.find(c->id) && c->id != localTerminalId);
-    duplicateAction_->setEnabled(c && store_.find(c->id));
+    const QString group = selectedGroup();
+    const bool saved = c && store_.find(c->id);
+    connectAction_->setEnabled(c != nullptr);
+    editAction_->setEnabled(c || !group.isEmpty());
+    editAction_->setText(group.isEmpty() ? tr("&Edit…") : tr("&Rename Group…"));
+    deleteAction_->setEnabled((saved && c->id != localTerminalId) || !group.isEmpty());
+    deleteAction_->setText(group.isEmpty() ? tr("&Delete") : tr("&Delete Group"));
+    moveUpAction_->setEnabled(canStep(true));
+    moveDownAction_->setEnabled(canStep(false));
+    moveToAction_->setEnabled(saved);
+    duplicateAction_->setEnabled(saved);
     sftpAction_->setEnabled(c && c->protocol == Protocol::SSH);
 }
 
@@ -1633,7 +1670,7 @@ bool MainWindow::saveStore()
 
 void MainWindow::editConnection(Connection connection)
 {
-    QStringList groups;
+    QStringList groups = groupList();
     for (const Connection& c : store_.all())
         if (!c.group.empty() && !groups.contains(QString::fromStdString(c.group))) groups << QString::fromStdString(c.group);
     groups.sort();
@@ -1651,6 +1688,144 @@ void MainWindow::editConnection(Connection connection)
                                          .arg(error));
         });
     rebuildTree(id);
+}
+
+static const QString groupsKey = QStringLiteral("connections/groups");
+
+QStringList MainWindow::groupList() const
+{
+    QStringList list = settings_->value(groupsKey).toStringList();
+    QStringList found; // named in the connection dialog, or imported
+    for (const Connection& c : store_.all())
+        if (const QString g = QString::fromStdString(c.group); !g.isEmpty() && !list.contains(g) && !found.contains(g)) found << g;
+    if (found.isEmpty()) return list;
+    std::sort(found.begin(), found.end(), [](const QString& a, const QString& b) { return a.localeAwareCompare(b) < 0; });
+    list << found;
+    settings_->setValue(groupsKey, list); // kept from now on, also once empty
+    return list;
+}
+
+void MainWindow::nameGroup(const QString& old)
+{
+    bool ok = false;
+    const QString name =
+        QInputDialog::getText(this, old.isEmpty() ? tr("New Group") : tr("Rename Group"), tr("Name:"), QLineEdit::Normal, old, &ok).trimmed();
+    if (!ok || name.isEmpty() || name == old) return;
+    QStringList list = groupList();
+    if (list.contains(name)) {
+        QMessageBox::information(this, windowTitle(), tr("There is a group named \"%1\" already.").arg(name));
+        return;
+    }
+    if (old.isEmpty()) {
+        list << name;
+    } else {
+        const std::vector<Connection> all = store_.all();
+        for (Connection c : all)
+            if (c.group == old.toStdString()) {
+                c.group = name.toStdString();
+                store_.upsert(std::move(c));
+            }
+        if (!saveStore()) return;
+        list.replace(list.indexOf(old), name);
+        const GroupDefaults defaults = groupDefaults(settings_, old);
+        setGroupDefaults(settings_, old, {});
+        setGroupDefaults(settings_, name, defaults);
+    }
+    settings_->setValue(groupsKey, list);
+    rebuildTree({}, name);
+}
+
+void MainWindow::deleteGroup(const QString& group)
+{
+    std::vector<std::string> inside;
+    for (const Connection& c : store_.all())
+        if (c.group == group.toStdString()) inside.push_back(c.id);
+    if (!inside.empty() &&
+        !prompts::confirm(this, tr("Delete Group"),
+                          inside.size() == 1 ? tr("Delete the group \"%1\" and its connection?").arg(group)
+                                             : tr("Delete the group \"%1\" and its %2 connections?").arg(group).arg(inside.size()),
+                          tr("&Delete")))
+        return;
+    std::vector<std::pair<std::string, std::vector<std::string>>> secretsOf; // removed once the store is saved
+    for (const std::string& id : inside) {
+        Connection c = *store_.find(id);
+        if (id == localTerminalId) { // never deleted: out of the group
+            c.group.clear();
+            store_.upsert(std::move(c));
+            continue;
+        }
+        secretsOf.emplace_back(id, secretKeys(c.protocol));
+        store_.remove(id);
+    }
+    if (!inside.empty() && !saveStore()) return;
+    for (const auto& [id, keys] : secretsOf)
+        for (const std::string& key : keys) secrets::remove(connectionSecret(id, key));
+    QStringList list = groupList();
+    list.removeAll(group);
+    settings_->setValue(groupsKey, list);
+    setGroupDefaults(settings_, group, {});
+    rebuildTree();
+}
+
+QString MainWindow::selectedGroup() const
+{
+    const QTreeWidgetItem* item = tree_->currentItem();
+    return item && item->data(0, FoldRole).toString().startsWith(QLatin1String("group:")) ? item->text(0) : QString();
+}
+
+std::string MainWindow::neighbourOf(const std::string& id, bool up) const
+{
+    const Connection* c = store_.find(id);
+    if (!c) return {};
+    std::string before;
+    bool passed = false;
+    for (const Connection& other : store_.all()) {
+        if (other.group != c->group) continue;
+        if (passed) return other.id;
+        if (other.id == id) {
+            if (up) return before;
+            passed = true;
+        }
+        before = other.id;
+    }
+    return {};
+}
+
+bool MainWindow::canStep(bool up) const
+{
+    if (const QString group = selectedGroup(); !group.isEmpty()) {
+        const QStringList list = groupList();
+        const int to = int(list.indexOf(group)) + (up ? -1 : 1);
+        return list.contains(group) && to >= 0 && to < list.size();
+    }
+    return !neighbourOf(selectedId(), up).empty();
+}
+
+void MainWindow::stepSelected(bool up)
+{
+    if (const QString group = selectedGroup(); !group.isEmpty()) {
+        if (!canStep(up)) return;
+        QStringList list = groupList();
+        const int at = int(list.indexOf(group));
+        list.swapItemsAt(at, at + (up ? -1 : 1));
+        settings_->setValue(groupsKey, list);
+        return rebuildTree({}, group);
+    }
+    const std::string id = selectedId(), other = neighbourOf(id, up);
+    if (other.empty()) return;
+    store_.swap(id, other);
+    if (saveStore()) rebuildTree(id);
+}
+
+void MainWindow::moveToGroup(const std::string& id, const QString& group)
+{
+    const Connection* c = store_.find(id);
+    if (!c || c->group == group.toStdString()) return;
+    Connection moved = *c;
+    moved.group = group.toStdString();
+    store_.upsert(std::move(moved));
+    store_.moveToEnd(id);
+    if (saveStore()) rebuildTree(id);
 }
 
 void MainWindow::editGroup(const QString& group)
@@ -1828,7 +2003,7 @@ void MainWindow::exportConnections()
         groups.append(QJsonObject{{QStringLiteral("group"), group}, {QStringLiteral("login"), d.login}, {QStringLiteral("sshServer"), d.sshServer}});
     const QJsonObject root{{QStringLiteral("version"), 1},       {QStringLiteral("connections"), ConnectionStore::toJson(store_.all())},
                            {QStringLiteral("sshServers"), servers}, {QStringLiteral("logins"), logins},
-                           {QStringLiteral("groupDefaults"), groups}};
+                           {QStringLiteral("groupDefaults"), groups}, {QStringLiteral("groups"), QJsonArray::fromStringList(groupList())}};
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(root).toJson()) < 0 || !file.commit()) {
         QMessageBox::warning(this, tr("Export Connections"), tr("Could not write %1: %2").arg(path, file.errorString()));
@@ -1874,6 +2049,10 @@ void MainWindow::importExport()
         logins.push_back({text(o, "id"), text(o, "name"), text(o, "user"), text(o, "domain")});
     }
     saveLogins(settings_, logins);
+    QStringList groups = groupList();
+    for (const QJsonValue& v : root.value(QStringLiteral("groups")).toArray())
+        if (!v.toString().isEmpty() && !groups.contains(v.toString())) groups << v.toString();
+    settings_->setValue(groupsKey, groups);
     for (const QJsonValue& v : root.value(QStringLiteral("groupDefaults")).toArray()) {
         const QJsonObject o = v.toObject();
         const GroupDefaults mine = groupDefaults(settings_, text(o, "group"));
@@ -1904,6 +2083,7 @@ void MainWindow::duplicateSelected()
 
 void MainWindow::deleteSelected()
 {
+    if (const QString group = selectedGroup(); !group.isEmpty()) return deleteGroup(group);
     const Connection* c = store_.find(selectedId());
     if (!c || c->id == localTerminalId) return;
     if (!prompts::confirm(this, tr("Delete Connection"), tr("Delete \"%1\"?").arg(QString::fromStdString(c->name)), tr("&Delete"))) return;

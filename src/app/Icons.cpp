@@ -15,9 +15,12 @@ namespace {
 // SVG recoloured at paint time, from the painted widget's palette
 class TintedSvgEngine : public QIconEngine {
 public:
-    TintedSvgEngine(QByteArray svg, QColor color) : svg_(std::move(svg)), color_(color) {}
+    TintedSvgEngine(QByteArray svg, QColor color, QPalette::ColorRole role = QPalette::WindowText)
+        : svg_(std::move(svg)), color_(color), role_(role)
+    {
+    }
 
-    QIconEngine* clone() const override { return new TintedSvgEngine(svg_, color_); }
+    QIconEngine* clone() const override { return new TintedSvgEngine(svg_, color_, role_); }
 
     void paint(QPainter* painter, const QRect& rect, QIcon::Mode mode, QIcon::State) override
     {
@@ -39,7 +42,7 @@ private:
     {
         QColor color = color_.isValid() ? color_
                      : mode == QIcon::Selected ? palette.color(QPalette::HighlightedText)
-                                               : palette.color(QPalette::WindowText);
+                                               : palette.color(role_);
         if (mode == QIcon::Disabled) color.setAlphaF(color.alphaF() * 0.4);
         QByteArray svg = svg_;
         svg.replace("currentColor", color.name(QColor::HexRgb).toLatin1());
@@ -63,13 +66,14 @@ private:
 
     QByteArray svg_;
     QColor color_;
+    QPalette::ColorRole role_;
 };
 
-QIcon tinted(const QString& path, QColor color)
+QIcon tinted(const QString& path, QColor color, QPalette::ColorRole role = QPalette::WindowText)
 {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return {};
-    return QIcon(new TintedSvgEngine(file.readAll(), color));
+    return QIcon(new TintedSvgEngine(file.readAll(), color, role));
 }
 
 } // namespace
@@ -89,6 +93,11 @@ QIcon brand(const char* name)
 QIcon lucide(const char* name, QColor color)
 {
     return tinted(QStringLiteral(":/icons/lucide/%1.svg").arg(QLatin1String(name)), color);
+}
+
+QIcon lucide(const char* name, QPalette::ColorRole role)
+{
+    return tinted(QStringLiteral(":/icons/lucide/%1.svg").arg(QLatin1String(name)), {}, role);
 }
 
 } // namespace icons

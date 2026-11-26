@@ -69,7 +69,7 @@ private:
     void openSettings(const QString& page = {}, QWidget* parent = nullptr); // page: "sshServers"
     QFont terminalFont() const;
     void configureTerminal(TerminalView* terminal);
-    void rebuildTree(const std::string& selectId = {});
+    void rebuildTree(const std::string& selectId = {}, const QString& selectGroup = {});
     std::string selectedId() const;
     const rdc::Connection* findConnection(const std::string& id) const;
     static QString sshConfigGroup();
@@ -77,6 +77,15 @@ private:
     void updateActions();
     void editConnection(rdc::Connection connection);
     void editGroup(const QString& group); // its defaults: Settings for "As the group"
+    // the list as the user ordered it: connections in the store's order, groups in groupList()'s
+    QStringList groupList() const; // also empty ones; a group only connections name joins last
+    void nameGroup(const QString& old); // a new one, old empty
+    void deleteGroup(const QString& group); // its connections too, asked first
+    QString selectedGroup() const;
+    std::string neighbourOf(const std::string& id, bool up) const; // in its group
+    bool canStep(bool up) const;
+    void stepSelected(bool up);
+    void moveToGroup(const std::string& id, const QString& group); // last in it
     void deleteSelected();
     void duplicateSelected(); // saved passwords too
     QString dropGroup(QPoint at, bool* ok) const; // the group a connection dropped there goes to
@@ -175,7 +184,8 @@ private:
     QTreeWidget* active_;
     Folding *treeFolding_, *sessionsFolding_;
     SessionTabs* tabs_;
-    QAction *editAction_, *duplicateAction_, *deleteAction_, *connectAction_, *sftpAction_;
+    QAction *editAction_, *duplicateAction_, *deleteAction_, *connectAction_, *sftpAction_, *newGroupAction_;
+    QAction *moveUpAction_, *moveDownAction_, *moveToAction_;
     QAction *fullScreenAction_, *screenshotAction_, *viewOnlyAction_, *clipboardAction_, *localCursorAction_,
         *grabKeysAction_, *scaleAction_, *reconnectAction_, *disconnectAction_;
     QMenu *sendKeysMenu_, *snippetsMenu_;

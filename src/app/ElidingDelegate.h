@@ -7,6 +7,7 @@
 #include <algorithm>
 
 inline constexpr int OnlineRole = Qt::UserRole + 10; // whether the host answers; unset: not known
+inline constexpr int CountRole = Qt::UserRole + 11;  // a group's items, dimmed on the right
 
 // measured as never fitting: Qt shifts fitting text a pixel; OnlineRole as a dot on the right, filled when it answers
 class ElidingDelegate : public QStyledItemDelegate {
@@ -43,6 +44,19 @@ public:
             painter->drawEllipse(dot);
             painter->restore();
             rect.setRight(int(dot.left()) - 4);
+        }
+        if (const QVariant count = index.data(CountRole); count.isValid()) {
+            QFont small = opt.font;
+            small.setWeight(QFont::Normal);
+            small.setPointSizeF(small.pointSizeF() * 0.85);
+            const QString number = QString::number(count.toInt());
+            const int width = QFontMetrics(small).horizontalAdvance(number);
+            painter->save();
+            painter->setFont(small);
+            painter->setPen(opt.palette.color(opt.state & QStyle::State_Selected ? QPalette::HighlightedText : QPalette::PlaceholderText));
+            painter->drawText(QRect(rect.right() - width - 2, rect.top(), width + 2, rect.height()), Qt::AlignRight | Qt::AlignVCenter, number);
+            painter->restore();
+            rect.setRight(rect.right() - width - 8);
         }
         const QPalette::ColorGroup group = !(opt.state & QStyle::State_Enabled) ? QPalette::Disabled
                                            : opt.state & QStyle::State_Active   ? QPalette::Normal

@@ -147,6 +147,26 @@ void ConnectionStore::remove(const std::string& id)
     std::erase_if(connections_, [&](const Connection& c) { return c.id == id; });
 }
 
+void ConnectionStore::swap(const std::string& a, const std::string& b)
+{
+    const auto first = std::find_if(connections_.begin(), connections_.end(), [&](const Connection& c) { return c.id == a; });
+    const auto second = std::find_if(connections_.begin(), connections_.end(), [&](const Connection& c) { return c.id == b; });
+    if (first != connections_.end() && second != connections_.end()) std::iter_swap(first, second);
+}
+
+void ConnectionStore::moveToEnd(const std::string& id)
+{
+    const auto it = std::find_if(connections_.begin(), connections_.end(), [&](const Connection& c) { return c.id == id; });
+    if (it != connections_.end()) std::rotate(it, it + 1, connections_.end());
+}
+
+void ConnectionStore::sortByName()
+{
+    std::stable_sort(connections_.begin(), connections_.end(), [](const Connection& a, const Connection& b) {
+        return QString::fromStdString(a.name).localeAwareCompare(QString::fromStdString(b.name)) < 0;
+    });
+}
+
 bool ConnectionStore::ensureLocalTerminal()
 {
     if (find(localTerminalId)) return false;

@@ -227,6 +227,23 @@ public:
             stepper.subControls &= ~SC_SpinBoxFrame;
             return QProxyStyle::drawComplexControl(control, &stepper, p, widget);
         }
+        // a flat button outside a toolbar: its icon only, a faint fill under the pointer, as AppKit's accessory buttons
+        if (const auto* tool = qstyleoption_cast<const QStyleOptionToolButton*>(option);
+            control == CC_ToolButton && tool && (tool->state & State_AutoRaise) && widget && !qobject_cast<const QToolBar*>(widget->parentWidget())) {
+            if ((tool->state & State_Enabled) && (tool->state & (State_MouseOver | State_Sunken | State_On))) {
+                QColor fill = tool->palette.color(QPalette::Active, QPalette::WindowText);
+                fill.setAlphaF(tool->state & (State_Sunken | State_On) ? 0.16 : 0.08);
+                p->save();
+                p->setRenderHint(QPainter::Antialiasing);
+                p->setPen(Qt::NoPen);
+                p->setBrush(fill);
+                p->drawRoundedRect(QRectF(tool->rect).adjusted(1, 1, -1, -1), 5, 5);
+                p->restore();
+            }
+            QStyleOptionToolButton label = *tool;
+            label.state &= ~(State_Sunken | State_On); // no pressed offset
+            return proxy()->drawControl(CE_ToolButtonLabel, &label, p, widget);
+        }
         // a button in a capsule: a round highlight, not AppKit's bezel
         if (const auto* tool = qstyleoption_cast<const QStyleOptionToolButton*>(option);
             control == CC_ToolButton && tool && widget && capsules(widget->parentWidget())) {

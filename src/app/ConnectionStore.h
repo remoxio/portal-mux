@@ -26,6 +26,10 @@ public:
     const rdc::Connection* find(const std::string& id) const;
     std::string upsert(rdc::Connection connection);
     void remove(const std::string& id);
+    // the list's order is the user's
+    void swap(const std::string& a, const std::string& b);
+    void moveToEnd(const std::string& id);
+    void sortByName();
     bool ensureLocalTerminal(); // the first local terminal made by hand becomes it, else a new one; true: changed
 
     const QString& path() const { return path_; }
