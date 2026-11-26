@@ -4,10 +4,19 @@
 #include "app/ConnectionStore.h"
 #include "app/PanelTree.h"
 #include "app/Icons.h"
+#include "app/SshServers.h"
 #include "app/VmSettingsDialog.h"
+#include "ssh/SshTunnel.h"
 
 #include <QAction>
+#include <QComboBox>
+#include <QDir>
+#include <QFileDialog>
+#include <QHBoxLayout>
+#include <QSignalBlocker>
+#include <QSpinBox>
 #include <QUrl>
+#include <QUrlQuery>
 #include <QSettings>
 #include <QLineEdit>
 #include <QFormLayout>
@@ -26,6 +35,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <functional>
+#include <tuple>
 
 using Action = LibvirtVms::Action;
 using State = LibvirtVms::State;
@@ -106,6 +116,38 @@ protected:
     }
 };
 
+struct SshLogin {
+    QString user, host, keyFile;
+    int port = 22;
+};
+
+SshLogin loginOf(const SshServer& s)
+{
+    const rdc::SshConnection::Params p = rdc::SshTunnel::parse(s.address().toStdString());
+    return {QString::fromStdString(p.user), QString::fromStdString(p.host),
+            s.auth == QLatin1String("publicKey") ? s.keyFile : QString(), p.port};
+}
+
+// qemu+ssh://[user@]host[:port]/system?keyfile=…; other query items as in `base`
+QString libvirtUri(const SshLogin& login, const QString& machines, const QUrl& base)
+{
+    QUrlQuery query(base);
+    query.removeAllQueryItems(QStringLiteral("keyfile"));
+    QString key = login.keyFile.trimmed();
+    if (key.startsWith(QLatin1String("~/"))) key = QDir::homePath() + key.mid(1); // libvirt doesn't expand it
+    if (!key.isEmpty()) query.addQueryItem(QStringLiteral("keyfile"), key);
+    QUrl url;
+    url.setScheme(QStringLiteral("qemu+ssh"));
+    if (!login.user.trimmed().isEmpty()) url.setUserName(login.user.trimmed()); // else qemu+ssh://@host
+    url.setHost(login.host.trimmed());
+    if (login.port != 22) url.setPort(login.port);
+    url.setPath(QLatin1Char('/') + machines);
+    url.setQuery(query);
+    return url.toString(QUrl::FullyEncoded); // libvirt's parser takes no spaces
+}
+
+QString machinesOf(const QUrl& url) { return url.path() == QLatin1String("/session") ? QStringLiteral("session") : QStringLiteral("system"); }
+
 } // namespace
 
 VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings_(settings)
@@ -158,14 +200,22 @@ VmView::VmView(QSettings* settings, QWidget* parent) : QWidget(parent), settings
 #endif
     if (local_) addHost(tr("This computer"), testUri && *testUri ? testUri : "qemu:///system");
     const int n = settings_->beginReadArray(QStringLiteral("libvirtHosts"));
-    std::vector<std::pair<QString, std::string>> saved;
+    std::vector<std::tuple<QString, QString, QString>> saved;
     for (int i = 0; i < n; ++i) {
         settings_->setArrayIndex(i);
-        saved.emplace_back(settings_->value(QStringLiteral("name")).toString(), settings_->value(QStringLiteral("uri")).toString().toStdString());
+        saved.emplace_back(settings_->value(QStringLiteral("name")).toString(), settings_->value(QStringLiteral("uri")).toString(),
+                           settings_->value(QStringLiteral("server")).toString());
     }
     settings_->endArray();
-    for (const auto& [name, uri] : saved)
-        if (!uri.empty()) addHost(name, uri);
+    const std::vector<SshServer> servers = loadSshServers(settings_);
+    for (const auto& [name, uri, server] : saved) {
+        const auto s = std::find_if(servers.begin(), servers.end(), [&](const SshServer& s) { return s.id == server; });
+        if (s == servers.end()) { // none, or removed in Settings: its last address
+            if (!uri.isEmpty()) addHost(name, uri.toStdString());
+            continue;
+        }
+        servers_[addHost(name, libvirtUri(loginOf(*s), machinesOf(QUrl(uri)), QUrl(uri)).toStdString())] = server;
+    }
     rebuild();
 }
 
@@ -250,7 +300,7 @@ VmConsole* VmView::console(LibvirtVms* host, const std::string& uuid, VmConsole:
     return console;
 }
 
-void VmView::addHost(const QString& name, const std::string& uri)
+LibvirtVms* VmView::addHost(const QString& name, const std::string& uri)
 {
     auto* host = new LibvirtVms(name, uri, this);
     hosts_.push_back(host);
@@ -260,6 +310,40 @@ void VmView::addHost(const QString& name, const std::string& uri)
     connect(host, &LibvirtVms::failed, this, [this](const QString&, const QString& name, const QString& text) {
         QMessageBox::warning(this, tr("Virtual machine"), name.isEmpty() ? text : tr("%1: %2").arg(name, text));
     });
+    return host;
+}
+
+void VmView::putHost(LibvirtVms* old, const QString& name, const std::string& uri, const QString& server)
+{
+    const auto at = std::find(hosts_.begin(), hosts_.end(), old) - hosts_.begin();
+    LibvirtVms* host = addHost(name, uri);
+    if (!server.isEmpty()) servers_[host] = server;
+    if (old) { // in its place; its consoles close with it
+        std::rotate(hosts_.begin() + at, hosts_.end() - 1, hosts_.end());
+        std::erase(hosts_, old);
+        servers_.erase(old);
+        delete old;
+    }
+    save();
+    rebuild();
+}
+
+void VmView::reloadServers()
+{
+    const std::vector<SshServer> servers = loadSshServers(settings_);
+    for (LibvirtVms* host : std::vector(hosts_)) {
+        const auto linked = servers_.find(host);
+        if (linked == servers_.end()) continue;
+        const auto s = std::find_if(servers.begin(), servers.end(), [&](const SshServer& s) { return s.id == linked->second; });
+        if (s == servers.end()) { // removed: its last address stays
+            servers_.erase(linked);
+            continue;
+        }
+        const QUrl uri(host->uri());
+        if (const QString now = libvirtUri(loginOf(*s), machinesOf(uri), uri); now != host->uri())
+            putHost(host, host->name(), now.toStdString(), s->id);
+    }
+    save();
 }
 
 void VmView::save() const
@@ -271,6 +355,7 @@ void VmView::save() const
         settings_->setArrayIndex(int(i - first));
         settings_->setValue(QStringLiteral("name"), hosts_[i]->name());
         settings_->setValue(QStringLiteral("uri"), hosts_[i]->uri());
+        if (const auto server = servers_.find(hosts_[i]); server != servers_.end()) settings_->setValue(QStringLiteral("server"), server->second);
     }
     settings_->endArray();
 }
@@ -278,36 +363,113 @@ void VmView::save() const
 void VmView::editHost(LibvirtVms* host)
 {
     if (host && !host->remote()) return;
+    const QUrl old(host ? host->uri() : QString());
     QDialog dialog(this);
     dialog.setWindowTitle(host ? tr("Edit libvirt Host") : tr("Add libvirt Host"));
     auto* name = new QLineEdit(host ? host->name() : QString());
-    auto* address = new QLineEdit(host ? host->uri() : QString());
-    address->setPlaceholderText(tr("user@host, a ~/.ssh/config name, or qemu+ssh://user@host/system"));
-    auto* hint = new QLabel(tr("Connects with ssh, as virsh does: your keys, agent and ~/.ssh/config, no password prompt. "
-                               "The host's key must be known (ssh to it once), and its user must be allowed to use libvirt."));
+    auto* server = new QComboBox;
+    auto* hostName = new QLineEdit(old.host());
+    hostName->setPlaceholderText(tr("Host name, address or a Host of ~/.ssh/config"));
+    auto* port = new QSpinBox;
+    port->setRange(1, 65535);
+    port->setValue(old.port(22));
+    auto* user = new QLineEdit(old.userName());
+    user->setPlaceholderText(tr("Empty = your user name here"));
+    auto* keyFile = new QLineEdit(QUrlQuery(old).queryItemValue(QStringLiteral("keyfile"), QUrl::FullyDecoded));
+    keyFile->setPlaceholderText(tr("Empty = SSH agent and ~/.ssh default keys"));
+    auto* browse = new QPushButton(tr("Browse…"));
+    auto* keyRow = new QWidget;
+    auto* keyLayout = new QHBoxLayout(keyRow);
+    keyLayout->setContentsMargins(0, 0, 0, 0);
+    keyLayout->addWidget(keyFile, 1);
+    keyLayout->addWidget(browse);
+    auto* machines = new QComboBox;
+    machines->addItem(tr("System"), QStringLiteral("system"));
+    machines->setItemData(0, tr("The machines libvirt runs for the whole host (/system)"), Qt::ToolTipRole);
+    machines->addItem(tr("User session"), QStringLiteral("session"));
+    machines->setItemData(1, tr("The user's own machines, run as that user (/session)"), Qt::ToolTipRole);
+    machines->setCurrentIndex(machines->findData(machinesOf(old)));
+    auto* address = new QLineEdit;
+    address->setReadOnly(true);
+    address->setPlaceholderText(tr("Made of the fields above"));
+    auto* hint = new QLabel(tr("libvirt logs in with ssh: the private key, else your SSH agent and ~/.ssh/config; it can't type a password. "
+                               "The host's key must be known (ssh to it once), and the user must be allowed to use libvirt (the libvirt group)."));
     hint->setWordWrap(true);
+    auto* passwordNote = new QLabel(tr("This server logs in with a password: libvirt tries your SSH agent and ~/.ssh default keys instead."));
+    passwordNote->setWordWrap(true);
     auto* form = new QFormLayout;
     form->addRow(tr("&Name:"), name);
+    form->addRow(tr("&SSH server:"), server);
+    form->addRow(tr("&Host:"), hostName);
+    form->addRow(tr("&Port:"), port);
+    form->addRow(tr("&User name:"), user);
+    form->addRow(tr("Private &key:"), keyRow);
+    form->addRow(tr("&Machines:"), machines);
     form->addRow(tr("&Address:"), address);
     form->addRow(hint);
+    form->addRow(passwordNote);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    auto validate = [&] { buttons->button(QDialogButtonBox::Ok)->setEnabled(!address->text().trimmed().isEmpty()); };
-    connect(address, &QLineEdit::textChanged, &dialog, validate);
-    validate();
+    QPushButton* ok = buttons->button(QDialogButtonBox::Ok);
+
+    std::vector<SshServer> servers;
+    auto chosen = [&]() -> const SshServer* {
+        const QString id = server->currentData().toString();
+        const auto s = std::find_if(servers.begin(), servers.end(), [&](const SshServer& s) { return s.id == id; });
+        return id.isEmpty() || s == servers.end() ? nullptr : &*s;
+    };
+    auto useServer = [&] { // its login in the fields, not editable here
+        const SshServer* s = chosen();
+        if (s) {
+            const SshLogin login = loginOf(*s);
+            hostName->setText(login.host);
+            port->setValue(login.port);
+            user->setText(login.user);
+            keyFile->setText(login.keyFile);
+        }
+        for (QWidget* w : {static_cast<QWidget*>(hostName), static_cast<QWidget*>(port), static_cast<QWidget*>(user), keyRow}) w->setEnabled(!s);
+        name->setPlaceholderText(s ? s->name : tr("As the host"));
+        form->setRowVisible(passwordNote, s && s->auth != QLatin1String("publicKey"));
+        if (dialog.isVisible()) dialog.resize(dialog.width(), dialog.layout()->totalHeightForWidth(dialog.width())); // the note's lines
+    };
+    SshServersRefill fill = [&](const QString& select, const std::vector<SshServer>& list) {
+        servers = list;
+        {
+            const QSignalBlocker block(server);
+            server->clear();
+            server->addItem(tr("None: the fields below"), QString());
+            for (const SshServer& s : servers) server->addItem(icons::lucide("server"), s.name + QStringLiteral("  (") + s.address() + QLatin1Char(')'), s.id);
+            offerNewSshServer(server, fill);
+            server->setCurrentIndex(std::max(0, server->findData(select)));
+        }
+        useServer();
+    };
+    const auto linked = servers_.find(host);
+    fill(linked != servers_.end() ? linked->second : QString(), loadSshServers(settings_));
+    connect(server, &QComboBox::currentIndexChanged, &dialog, useServer);
+    auto update = [&] {
+        const bool any = !hostName->text().trimmed().isEmpty();
+        address->setText(any ? libvirtUri({user->text(), hostName->text(), keyFile->text(), port->value()}, machines->currentData().toString(), old) : QString());
+        address->setCursorPosition(0);
+        ok->setEnabled(any);
+    };
+    for (QLineEdit* e : {hostName, user, keyFile}) connect(e, &QLineEdit::textChanged, &dialog, update);
+    connect(port, &QSpinBox::valueChanged, &dialog, update);
+    connect(machines, &QComboBox::currentIndexChanged, &dialog, update);
+    connect(browse, &QPushButton::clicked, &dialog, [&] {
+        const QString path = QFileDialog::getOpenFileName(&dialog, tr("Private Key"), keyFile->text().isEmpty() ? QDir::homePath() + QStringLiteral("/.ssh") : keyFile->text());
+        if (!path.isEmpty()) keyFile->setText(path);
+    });
+    update();
     auto* layout = new QVBoxLayout(&dialog);
     layout->addLayout(form);
     layout->addWidget(buttons);
-    dialog.resize(520, dialog.sizeHint().height());
+    dialog.resize(560, dialog.sizeHint().height());
     if (dialog.exec() != QDialog::Accepted) return;
-    QString uri = address->text().trimmed();
-    if (!uri.contains(QLatin1String("://"))) uri = QStringLiteral("qemu+ssh://%1/system").arg(uri);
-    const QString title = name->text().trimmed().isEmpty() ? QUrl(uri).host() : name->text().trimmed();
-    if (host) removeHost(host, false); // its consoles close with it
-    addHost(title, uri.toStdString());
-    save();
-    rebuild();
+    const SshServer* s = chosen();
+    const QString title = !name->text().trimmed().isEmpty() ? name->text().trimmed() : s ? s->name : hostName->text().trimmed();
+    putHost(host, title, address->text().toStdString(), s ? s->id : QString());
 }
 
 void VmView::removeHost(LibvirtVms* host, bool ask)
@@ -319,6 +481,7 @@ void VmView::removeHost(LibvirtVms* host, bool ask)
             return;
     }
     std::erase(hosts_, host);
+    servers_.erase(host);
     delete host;
     save();
     rebuild();

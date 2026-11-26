@@ -6,6 +6,7 @@
 #include <QWidget>
 
 #include <functional>
+#include <map>
 #include <vector>
 
 class Folding;
@@ -25,6 +26,7 @@ public:
     VmConsole* console(LibvirtVms* host, const std::string& uuid, VmConsole::Open openDisplay); // its tab, with its power buttons
 
     static QString stateText(LibvirtVms::State state);
+    void reloadServers(); // after Settings → SSH Servers changed
 
 signals:
     void openRequested(LibvirtVms* host, const std::string& uuid);
@@ -46,13 +48,15 @@ private:
     void act(LibvirtVms* host, const LibvirtVms::Vm& vm, LibvirtVms::Action action);
     void editSettings(LibvirtVms* host, const std::string& uuid);
     void editSnapshots(LibvirtVms* host, const std::string& uuid);
-    void addHost(const QString& name, const std::string& uri);
+    LibvirtVms* addHost(const QString& name, const std::string& uri);
+    void putHost(LibvirtVms* old, const QString& name, const std::string& uri, const QString& server); // old null: a new one
     void editHost(LibvirtVms* host); // null: a new one
     void removeHost(LibvirtVms* host, bool ask = true);
     void save() const;
 
     QSettings* settings_;
     std::vector<LibvirtVms*> hosts_; // this computer first, if local_
+    std::map<const LibvirtVms*, QString> servers_; // hosts on a server of Settings → SSH Servers: its id
     bool local_ = true;
     QTreeWidget* tree_;
     QLabel* note_; // no hosts yet

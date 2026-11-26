@@ -1478,6 +1478,9 @@ void MainWindow::openSettings(const QString& page, QWidget* parent)
         sshServers->apply();
         logins->apply();
         hyperv_->reloadServers();
+#ifdef PORTAL_MUX_LIBVIRT
+        kvm_->reloadServers();
+#endif
         applied = current();
         changed();
     };

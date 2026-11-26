@@ -48,7 +48,12 @@ protected:
 #endif
             fit(dialog);
         } else if (event->type() == QEvent::LayoutRequest && dialog->isVisible()) {
-            QTimer::singleShot(0, dialog, [dialog] { fit(dialog); });
+            QTimer::singleShot(0, dialog, [dialog] {
+                fit(dialog);
+#ifdef Q_OS_MACOS
+                look::dialogTitleBar(dialog); // Qt shows the buttons again with new size limits
+#endif
+            });
         }
         return false;
     }
