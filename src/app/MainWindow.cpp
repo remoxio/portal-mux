@@ -1526,7 +1526,7 @@ QString MainWindow::dropGroup(QPoint at, bool* ok) const
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
-    if (watched == tree_->viewport() && (event->type() == QEvent::DragMove || event->type() == QEvent::Drop)) {
+    if (tree_ && watched == tree_->viewport() && (event->type() == QEvent::DragMove || event->type() == QEvent::Drop)) {
         auto* drop = static_cast<QDropEvent*>(event);
         const Connection* c = drop->source() == tree_ ? store_.find(selectedId()) : nullptr;
         bool ok = false;

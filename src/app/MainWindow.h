@@ -164,13 +164,13 @@ private:
     QSettings* settings_;
     bool blurPending_ = false;
     Gamepads* gamepads_ = nullptr;
-    QSplitter* splitter_;
-    ActivityBar* activityBar_;
-    QStackedWidget* views_;
-    QWidget* body_; // activity bar and splitter
+    QSplitter* splitter_ = nullptr;
+    ActivityBar* activityBar_ = nullptr;
+    QStackedWidget* views_ = nullptr;
+    QWidget* body_ = nullptr; // activity bar and splitter
     SidebarMode sidebarMode_ = SidebarMode::Docked;
     int panelWidth_ = 300;
-    QTreeWidget* tree_;
+    QTreeWidget* tree_ = nullptr;
     QLineEdit* filter_;
     QTreeWidget* active_;
     Folding *treeFolding_, *sessionsFolding_;
