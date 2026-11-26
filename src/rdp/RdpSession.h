@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <mutex>
 #include <thread>
 
@@ -85,7 +86,8 @@ private:
     uint32_t serverFileGroupId_ = 0;            // 0 if not offered
     std::string serverFiles_;                   // its file list where there is no FUSE mount
     std::string offeredFiles_;                  // UI thread: the one on the pasteboard
-    uint32_t pendingFormat_ = 0;
+    std::deque<std::pair<uint32_t, unsigned>> requested_; // format and server list asked for, in order: a response names neither
+    unsigned serverList_ = 0;                             // the server clipboard's generation
 };
 
 } // namespace rdc

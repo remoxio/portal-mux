@@ -36,6 +36,8 @@
 
 namespace rdc {
 
+static constexpr const char* clipTag = "portal-mux.cliprdr"; // in freerdp.log, to follow a copy
+
 // while any screen is frozen: every PDU header (the server's heartbeats) and every GFX frame and its acknowledgement
 static void traceFrozen(bool frozen)
 {
@@ -182,6 +184,8 @@ struct RdpSession::Callbacks {
     static BOOL desktopResize(rdpContext* ctx)
     {
         rdpSettings* st = ctx->settings;
+        WLog_INFO("portal-mux.rdp", "%s: the server's desktop is now %ux%u", self(ctx)->label().c_str(),
+                  freerdp_settings_get_uint32(st, FreeRDP_DesktopWidth), freerdp_settings_get_uint32(st, FreeRDP_DesktopHeight));
         if (!gdi_resize(ctx->gdi, freerdp_settings_get_uint32(st, FreeRDP_DesktopWidth),
                         freerdp_settings_get_uint32(st, FreeRDP_DesktopHeight)))
             return FALSE;
@@ -300,6 +304,7 @@ struct RdpSession::Callbacks {
             cliprdr_file_context_init(s->fileContext_, c); // sets c->custom, serves FileContents
             std::lock_guard lock(s->clipMutex_);
             s->cliprdr_ = c;
+            s->requested_.clear(); // a reconnect's channel answers none of them
         } else if (strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0) {
             auto* d = static_cast<DispClientContext*>(e->pInterface);
             d->custom = s;
@@ -362,7 +367,8 @@ struct RdpSession::Callbacks {
         CLIPRDR_CAPABILITIES caps{};
         caps.cCapabilitiesSets = 1;
         caps.capabilitySets = reinterpret_cast<CLIPRDR_CAPABILITY_SET*>(&general);
-        if (getenv("PORTAL_MUX_DEBUG")) fprintf(stderr, "cliprdr: client caps flags=0x%x (server 0x%x)\n", general.generalFlags, cliprdr_file_context_remote_get_flags(s->fileContext_));
+        WLog_INFO(clipTag, "%s: file copy flags 0x%x, the server's 0x%x (0x4: files allowed)", s->label().c_str(), general.generalFlags,
+                  cliprdr_file_context_remote_get_flags(s->fileContext_));
         if (UINT rc = c->ClientCapabilities(c, &caps); rc != CHANNEL_RC_OK) return rc;
         s->announceClipboard();
         return CHANNEL_RC_OK;
@@ -393,8 +399,10 @@ struct RdpSession::Callbacks {
         if (UINT rc = c->ClientFormatListResponse(c, &response); rc != CHANNEL_RC_OK) return rc;
 
         bool text = false, dib = false, dibV5 = false;
+        uint32_t want = 0;
         {
             std::lock_guard lock(s->clipMutex_);
+            ++s->serverList_;
             s->serverFileGroupId_ = 0;
             s->serverFiles_.clear();
             for (UINT32 i = 0; i < list->numFormats; ++i) {
@@ -405,27 +413,32 @@ struct RdpSession::Callbacks {
                 dibV5 = dibV5 || f.formatId == CF_DIBV5;
             }
             // text first: Office copies cells and text with a picture of them too
-            s->pendingFormat_ = s->serverFileGroupId_ ? s->serverFileGroupId_
-                                : text                ? CF_UNICODETEXT
-                                : dib                 ? CF_DIB
-                                : dibV5               ? CF_DIBV5
-                                                      : 0;
+            want = s->serverFileGroupId_ ? s->serverFileGroupId_ : text ? CF_UNICODETEXT : dib ? CF_DIB : dibV5 ? CF_DIBV5 : 0;
+            if (want) s->requested_.emplace_back(want, s->serverList_);
         }
+        WLog_INFO(clipTag, "%s: the server copied %u formats%s; asking for %u", s->label().c_str(), list->numFormats,
+                  s->serverFileGroupId_ ? ", files among them" : "", want);
         if (UINT rc = cliprdr_file_context_notify_new_server_format_list(s->fileContext_); rc != CHANNEL_RC_OK) return rc;
-        if (!s->pendingFormat_) return CHANNEL_RC_OK;
+        if (!want) return CHANNEL_RC_OK;
         // eager, so the local clipboard mirrors the remote
         CLIPRDR_FORMAT_DATA_REQUEST request{};
         request.common.msgType = CB_FORMAT_DATA_REQUEST;
-        request.requestedFormatId = s->pendingFormat_;
+        request.requestedFormatId = want;
         return c->ClientFormatDataRequest(c, &request);
     }
 
     static UINT clipDataResponse(CliprdrClientContext* c, const CLIPRDR_FORMAT_DATA_RESPONSE* r)
     {
         RdpSession* s = clipSelf(c);
-        if (!(r->common.msgFlags & CB_RESPONSE_OK) || !r->requestedFormatData) return CHANNEL_RC_OK;
         std::unique_lock lock(s->clipMutex_);
-        if (s->pendingFormat_ != 0 && s->pendingFormat_ == s->serverFileGroupId_) {
+        if (s->requested_.empty()) return CHANNEL_RC_OK;
+        const auto [format, list] = s->requested_.front();
+        s->requested_.pop_front();
+        const bool ok = (r->common.msgFlags & CB_RESPONSE_OK) && r->requestedFormatData;
+        WLog_INFO(clipTag, "%s: format %u from the server: %s, %u bytes%s", s->label().c_str(), format, ok ? "ok" : "failed", r->common.dataLen,
+                  list != s->serverList_ ? ", for an older copy: dropped" : "");
+        if (!ok || list != s->serverList_) return CHANNEL_RC_OK;
+        if (format == s->serverFileGroupId_) {
             if (!cliprdr_file_context_has_local_support(s->fileContext_)) { // no FUSE mount
                 s->serverFiles_.assign(reinterpret_cast<const char*>(r->requestedFormatData), r->common.dataLen);
                 s->localClipboard_.clear(); // the same local copy again is offered again
@@ -457,12 +470,12 @@ struct RdpSession::Callbacks {
             if (!uris.empty()) s->listener_.onClipboardUris(std::move(uris));
             return CHANNEL_RC_OK;
         }
-        if (s->pendingFormat_ == CF_DIB || s->pendingFormat_ == CF_DIBV5) {
+        if (format == CF_DIB || format == CF_DIBV5) {
             std::string bmp;
             ClipboardLock(s->clipboard_);
             UINT32 size = 0;
             void* file = nullptr;
-            if (ClipboardSetData(s->clipboard_, s->pendingFormat_, r->requestedFormatData, r->common.dataLen))
+            if (ClipboardSetData(s->clipboard_, format, r->requestedFormatData, r->common.dataLen))
                 file = ClipboardGetData(s->clipboard_, s->bmpId_, &size); // WinPR adds the file header
             if (file) bmp.assign(static_cast<const char*>(file), size);
             free(file);
@@ -523,9 +536,8 @@ struct RdpSession::Callbacks {
                 if (data) memcpy(data, s->localImage_.data() + 14, size);
             }
         }
-        if (getenv("PORTAL_MUX_DEBUG"))
-            fprintf(stderr, "cliprdr: server requests format %u (our file list id %u): %s, %u bytes\n", request->requestedFormatId,
-                    s->fileGroupId_, data ? "ok" : "FAIL", size);
+        WLog_INFO(clipTag, "%s: the server asks for format %u%s: %s, %u bytes", s->label().c_str(), request->requestedFormatId,
+                  request->requestedFormatId == s->fileGroupId_ ? " (our files)" : "", data ? "ok" : "failed", size);
         if (data) {
             response.common.msgFlags = CB_RESPONSE_OK;
             response.common.dataLen = size;
@@ -684,7 +696,9 @@ bool RdpSession::offerClipboardFiles()
         *size = files.size();
         return strcmp(type, "FileGroupDescriptorW") == 0 ? files.data() : nullptr;
     };
-    return cliprdr_file_context_set_local_clipboard_data(fileContext_, data, this, types, 1);
+    const bool offered = cliprdr_file_context_set_local_clipboard_data(fileContext_, data, this, types, 1);
+    WLog_INFO(clipTag, "%s: the server's files %s the pasteboard", label().c_str(), offered ? "are on" : "could not be put on");
+    return offered;
 #endif
 }
 
@@ -742,6 +756,11 @@ void RdpSession::announceClipboard()
         if (!localClipboard_.empty()) formats.push_back({CF_UNICODETEXT, nullptr});
         if (!localImage_.empty()) formats.push_back({CF_DIB, nullptr}); // Windows makes the bitmap and DIBV5 of it
     }
+    const std::string what = !localUris_.empty()      ? std::to_string(std::count(localUris_.begin(), localUris_.end(), '\n')) + " files"
+                             : !localImage_.empty()     ? "a picture"
+                             : !localClipboard_.empty() ? "text"
+                                                        : "nothing";
+    WLog_INFO(clipTag, "%s: copied here: %s", label().c_str(), what.c_str());
     CLIPRDR_FORMAT_LIST list{};
     list.common.msgType = CB_FORMAT_LIST;
     list.numFormats = UINT32(formats.size());
@@ -767,6 +786,7 @@ void RdpSession::sendLayout()
     monitor.Height = UINT32(wantHeight_);
     monitor.DesktopScaleFactor = UINT32(scale);
     monitor.DeviceScaleFactor = deviceScale(scale);
+    WLog_INFO("portal-mux.rdp", "%s: asking for a %dx%d desktop at %d%%", label().c_str(), wantWidth_, wantHeight_, scale);
     if (disp_->SendMonitorLayout(disp_, 1, &monitor) == CHANNEL_RC_OK) sentScale_ = scale;
 }
 
