@@ -8,6 +8,7 @@
 #include "app/Pasteboard.h"
 #endif
 
+#include <QApplication>
 #include <QBuffer>
 #include <QClipboard>
 #include <QDropEvent>
@@ -208,14 +209,18 @@ void RemoteView::localClipboardChanged()
 {
     if (!session_ || !options_.clipboard) return;
 #ifdef Q_OS_MACOS
-    if (pasteboardChangeCount() == ownFiles) return;
+    if (pasteboardChangeCount() == ownFiles) return session_->relayClipboardFiles(); // passed on, not downloaded
 #endif
     const QMimeData* mime = QGuiApplication::clipboard()->mimeData();
     if (!mime || mime->hasFormat(remoteMark)) return;
     if (mime->hasUrls() && mime->urls() == lastRemoteUrls_) return;
     QStringList files;
+#ifdef Q_OS_MACOS
+    for (const QString& path : pasteboardFiles()) files << QString::fromUtf8(QUrl::fromLocalFile(path).toEncoded());
+#else
     for (const QUrl& url : mime->urls())
-        if (url.isLocalFile()) files << QString::fromUtf8(url.toEncoded());
+        if (url.isLocalFile() && QFileInfo::exists(url.toLocalFile())) files << QString::fromUtf8(url.toEncoded());
+#endif
     if (!files.isEmpty()) {
         session_->sendClipboardUris((files.join(QStringLiteral("\r\n")) + QStringLiteral("\r\n")).toStdString());
         return;
@@ -384,6 +389,8 @@ void RemoteView::onClipboardFiles()
 #ifdef Q_OS_MACOS
         ownFiles = pasteboardChangeCount();
 #endif
+        for (QWidget* w : QApplication::allWidgets()) // the other sessions offer them too
+            if (auto* other = qobject_cast<RemoteView*>(w); other && other != this) other->localClipboardChanged();
     }, Qt::QueuedConnection);
 }
 

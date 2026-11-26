@@ -57,6 +57,7 @@ public:
     virtual void sendClipboardText(const std::string& text) = 0;
     virtual void sendClipboardUris(const std::string&) {}
     virtual bool offerClipboardFiles() { return false; } // on the pasteboard, fetched on paste (macOS); false: not offered
+    virtual void relayClipboardFiles() {} // another session's offered files to this one's server, fetched from that one on paste
     // a BMP file, offered with the text beside it
     virtual bool takesClipboardImages() const { return false; }
     virtual void sendClipboardImage(const std::string& /*bmp*/, const std::string& text) { if (!text.empty()) sendClipboardText(text); }

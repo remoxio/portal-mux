@@ -55,6 +55,7 @@ public:
     void sendClipboardText(const std::string& t) override { inner_->sendClipboardText(t); }
     void sendClipboardUris(const std::string& u) override { inner_->sendClipboardUris(u); }
     bool offerClipboardFiles() override { return inner_->offerClipboardFiles(); }
+    void relayClipboardFiles() override { inner_->relayClipboardFiles(); }
     bool takesClipboardImages() const override { return inner_->takesClipboardImages(); }
     void sendClipboardImage(const std::string& b, const std::string& t) override { inner_->sendClipboardImage(b, t); }
     void syncLocks(uint8_t locks) override { inner_->syncLocks(locks); }

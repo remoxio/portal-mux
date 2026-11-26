@@ -34,11 +34,22 @@
 #include <filesystem>
 #include <climits>
 #include <cmath>
+#include <map>
+#include <set>
 #include <sstream>
 
 namespace rdc {
 
 static constexpr const char* clipTag = "portal-mux.cliprdr"; // in freerdp.log, to follow a copy
+
+// files passed from one session's server to another's, no copy of them here (macOS has no FUSE mount)
+static std::mutex relayMutex;
+static std::set<RdpSession*> liveSessions;
+static RdpSession* filesOffered = nullptr;                                 // whose server's files the pasteboard offers
+static std::map<uint32_t, std::pair<RdpSession*, uint32_t>> relayStreams; // the source's stream: the session asking, its stream
+static uint32_t lastRelayStream = 0x80000000;                             // apart from the file context's
+static pcCliprdrServerFileContentsRequest serveLocalFiles = nullptr;       // FreeRDP's file context's
+static pcCliprdrServerFileContentsResponse takeFileContents = nullptr;
 
 // while any screen is frozen: every PDU header (the server's heartbeats) and every GFX frame and its acknowledgement
 static void traceFrozen(bool frozen)
@@ -329,6 +340,10 @@ struct RdpSession::Callbacks {
             c->ServerFormatDataRequest = clipDataRequest;
             c->ServerFormatDataResponse = clipDataResponse;
             cliprdr_file_context_init(s->fileContext_, c); // sets c->custom, serves FileContents
+            serveLocalFiles = c->ServerFileContentsRequest;
+            takeFileContents = c->ServerFileContentsResponse;
+            c->ServerFileContentsRequest = clipFileContentsRequest; // relayed ones go on to their source
+            c->ServerFileContentsResponse = clipFileContentsResponse;
             std::lock_guard lock(s->clipMutex_);
             s->cliprdr_ = c;
             s->requested_.clear(); // a reconnect's channel answers none of them
@@ -350,6 +365,11 @@ struct RdpSession::Callbacks {
     {
         RdpSession* s = self(static_cast<rdpContext*>(context));
         if (strcmp(e->name, CLIPRDR_SVC_CHANNEL_NAME) == 0) {
+            {
+                std::lock_guard relay(relayMutex);
+                if (filesOffered == s) filesOffered = nullptr;
+                std::erase_if(relayStreams, [s](const auto& entry) { return entry.second.first == s; });
+            }
             cliprdr_file_context_uninit(s->fileContext_, static_cast<CliprdrClientContext*>(e->pInterface));
             std::lock_guard lock(s->clipMutex_);
             s->cliprdr_ = nullptr;
@@ -431,6 +451,7 @@ struct RdpSession::Callbacks {
             std::lock_guard lock(s->clipMutex_);
             ++s->serverList_;
             s->serverFileGroupId_ = 0;
+            s->relayFiles_.clear();
             s->serverFiles_.clear();
             for (UINT32 i = 0; i < list->numFormats; ++i) {
                 const CLIPRDR_FORMAT& f = list->formats[i];
@@ -539,7 +560,11 @@ struct RdpSession::Callbacks {
         UINT32 size = 0;
         {
             std::lock_guard lock(s->clipMutex_);
-            if (request->requestedFormatId == s->fileGroupId_ && !s->localUris_.empty()) {
+            if (request->requestedFormatId == s->fileGroupId_ && !s->relayFiles_.empty()) { // the other server's list as it sent it
+                size = UINT32(s->relayFiles_.size());
+                data = static_cast<BYTE*>(malloc(size));
+                if (data) memcpy(data, s->relayFiles_.data(), size);
+            } else if (request->requestedFormatId == s->fileGroupId_ && !s->localUris_.empty()) {
                 ClipboardLock(s->clipboard_);
                 UINT32 len = 0;
                 FILEDESCRIPTORW* descriptors = nullptr;
@@ -574,17 +599,79 @@ struct RdpSession::Callbacks {
         free(data);
         return rc;
     }
+
+    // a file of another session's server: asked from that one, its answer goes back here
+    static UINT clipFileContentsRequest(CliprdrClientContext* c, const CLIPRDR_FILE_CONTENTS_REQUEST* request)
+    {
+        RdpSession* s = clipSelf(c);
+        RdpSession* source = nullptr;
+        {
+            std::lock_guard lock(s->clipMutex_);
+            if (!s->relayFiles_.empty()) source = s->relaySource_;
+        }
+        if (!source) return serveLocalFiles ? serveLocalFiles(c, request) : CHANNEL_RC_OK;
+        UINT rc = ERROR_INTERNAL_ERROR;
+        {
+            std::lock_guard relay(relayMutex);
+            if (liveSessions.count(source)) {
+                std::lock_guard lock(source->clipMutex_);
+                if (source->cliprdr_) {
+                    CLIPRDR_FILE_CONTENTS_REQUEST asked = *request;
+                    asked.streamId = ++lastRelayStream;
+                    asked.haveClipDataId = FALSE;
+                    asked.clipDataId = 0;
+                    relayStreams[asked.streamId] = {s, request->streamId};
+                    rc = source->cliprdr_->ClientFileContentsRequest(source->cliprdr_, &asked);
+                    if (rc != CHANNEL_RC_OK) relayStreams.erase(asked.streamId);
+                }
+            }
+        }
+        if (rc == CHANNEL_RC_OK) return rc;
+        WLog_WARN(clipTag, "%s: a file of another session could not be asked for", s->label().c_str());
+        CLIPRDR_FILE_CONTENTS_RESPONSE failed{};
+        failed.common.msgType = CB_FILECONTENTS_RESPONSE;
+        failed.common.msgFlags = CB_RESPONSE_FAIL;
+        failed.streamId = request->streamId;
+        return c->ClientFileContentsResponse(c, &failed);
+    }
+
+    static UINT clipFileContentsResponse(CliprdrClientContext* c, const CLIPRDR_FILE_CONTENTS_RESPONSE* response)
+    {
+        std::unique_lock relay(relayMutex);
+        const auto it = relayStreams.find(response->streamId);
+        if (it == relayStreams.end()) {
+            relay.unlock();
+            return takeFileContents ? takeFileContents(c, response) : CHANNEL_RC_OK;
+        }
+        const auto [asker, stream] = it->second;
+        relayStreams.erase(it);
+        if (!liveSessions.count(asker)) return CHANNEL_RC_OK;
+        std::lock_guard lock(asker->clipMutex_);
+        if (!asker->cliprdr_) return CHANNEL_RC_OK;
+        CLIPRDR_FILE_CONTENTS_RESPONSE passed = *response;
+        passed.common.msgType = CB_FILECONTENTS_RESPONSE;
+        passed.streamId = stream;
+        (void)asker->cliprdr_->ClientFileContentsResponse(asker->cliprdr_, &passed); // its failure isn't this channel's
+        return CHANNEL_RC_OK;
+    }
 };
 
 RdpSession::RdpSession(DisplayListener& listener, Connection connection, std::string configDir)
     : listener_(listener), connection_(std::move(connection)), configDir_(std::move(configDir)),
       alwaysTrust_(connection_.flag("alwaysTrust"))
 {
+    std::lock_guard relay(relayMutex);
+    liveSessions.insert(this);
 }
 
 RdpSession::~RdpSession()
 {
     disconnect();
+    {
+        std::lock_guard relay(relayMutex);
+        liveSessions.erase(this);
+        if (filesOffered == this) filesOffered = nullptr;
+    }
     if (context_) freerdp_client_context_free(context_);
     if (fileContext_) cliprdr_file_context_free(fileContext_);
     if (clipboard_) ClipboardDestroy(clipboard_);
@@ -685,7 +772,8 @@ void RdpSession::sendClipboardText(const std::string& text)
 {
     {
         std::lock_guard lock(clipMutex_);
-        if (text == localClipboard_ && localUris_.empty() && localImage_.empty()) return;
+        if (text == localClipboard_ && localUris_.empty() && localImage_.empty() && relayFiles_.empty()) return;
+        relayFiles_.clear();
         localClipboard_ = text;
         localUris_.clear();
         localImage_.clear();
@@ -697,7 +785,8 @@ void RdpSession::sendClipboardImage(const std::string& bmp, const std::string& t
 {
     {
         std::lock_guard lock(clipMutex_);
-        if (bmp == localImage_ && text == localClipboard_ && localUris_.empty()) return;
+        if (bmp == localImage_ && text == localClipboard_ && localUris_.empty() && relayFiles_.empty()) return;
+        relayFiles_.clear();
         localImage_ = bmp;
         localClipboard_ = text;
         localUris_.clear();
@@ -709,7 +798,8 @@ void RdpSession::sendClipboardUris(const std::string& uriList)
 {
     {
         std::lock_guard lock(clipMutex_);
-        if (uriList == localUris_) return;
+        if (uriList == localUris_ && relayFiles_.empty()) return;
+        relayFiles_.clear();
         localUris_ = uriList;
         localClipboard_.clear();
         localImage_.clear();
@@ -734,9 +824,30 @@ bool RdpSession::offerClipboardFiles()
         return strcmp(type, "FileGroupDescriptorW") == 0 ? files.data() : nullptr;
     };
     const bool offered = cliprdr_file_context_set_local_clipboard_data(fileContext_, data, this, types, 1);
+    if (offered) {
+        std::lock_guard relay(relayMutex);
+        filesOffered = this;
+    }
     WLog_INFO(clipTag, "%s: the server's files %s the pasteboard", label().c_str(), offered ? "are on" : "could not be put on");
     return offered;
 #endif
+}
+
+void RdpSession::relayClipboardFiles()
+{
+    {
+        std::lock_guard relay(relayMutex);
+        RdpSession* source = filesOffered;
+        if (!source || source == this) return;
+        std::lock_guard lock(clipMutex_);
+        if (relaySource_ == source && relayFiles_ == source->offeredFiles_) return; // both the UI thread's
+        relaySource_ = source;
+        relayFiles_ = source->offeredFiles_;
+        localUris_.clear();
+        localClipboard_.clear();
+        localImage_.clear();
+    }
+    post([this] { announceClipboard(); });
 }
 
 void RdpSession::resizeDesktop(int width, int height)
@@ -788,12 +899,13 @@ void RdpSession::announceClipboard()
     if (!cliprdr_) return; // MonitorReady announces once the channel is up
     static char fileGroupName[] = "FileGroupDescriptorW";
     std::vector<CLIPRDR_FORMAT> formats;
-    if (!localUris_.empty()) formats.push_back({fileGroupId_, fileGroupName});
+    if (!localUris_.empty() || !relayFiles_.empty()) formats.push_back({fileGroupId_, fileGroupName});
     else {
         if (!localClipboard_.empty()) formats.push_back({CF_UNICODETEXT, nullptr});
         if (!localImage_.empty()) formats.push_back({CF_DIB, nullptr}); // Windows makes the bitmap and DIBV5 of it
     }
-    const std::string what = !localUris_.empty()      ? std::to_string(std::count(localUris_.begin(), localUris_.end(), '\n')) + " files"
+    const std::string what = !relayFiles_.empty()     ? "files of another session, passed on"
+                             : !localUris_.empty()      ? std::to_string(std::count(localUris_.begin(), localUris_.end(), '\n')) + " files"
                              : !localImage_.empty()     ? "a picture"
                              : !localClipboard_.empty() ? "text"
                                                         : "nothing";

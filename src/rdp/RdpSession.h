@@ -33,6 +33,7 @@ public:
     void sendClipboardText(const std::string& text) override;
     void sendClipboardUris(const std::string& uriList) override;
     bool offerClipboardFiles() override;
+    void relayClipboardFiles() override;
     bool takesClipboardImages() const override { return true; }
     void sendClipboardImage(const std::string& bmp, const std::string& text) override;
     void resizeDesktop(int width, int height) override;
@@ -89,6 +90,8 @@ private:
     uint32_t serverFileGroupId_ = 0;            // 0 if not offered
     std::string serverFiles_;                   // its file list where there is no FUSE mount
     std::string offeredFiles_;                  // UI thread: the one on the pasteboard
+    std::string relayFiles_;                    // another session's server files offered to this server
+    RdpSession* relaySource_ = nullptr;         // that session: its server sends their contents
     std::deque<std::pair<uint32_t, unsigned>> requested_; // format and server list asked for, in order: a response names neither
     unsigned serverList_ = 0;                             // the server clipboard's generation
 };
