@@ -490,7 +490,8 @@ void VmView::removeHost(LibvirtVms* host, bool ask)
 LibvirtVms* VmView::selectedHost() const
 {
     const QTreeWidgetItem* item = tree_->currentItem();
-    return item ? hostOf(item) : nullptr;
+    LibvirtVms* host = item ? hostOf(item) : nullptr;
+    return std::find(hosts_.begin(), hosts_.end(), host) != hosts_.end() ? host : nullptr; // its rows outlive it until rebuild()
 }
 
 const Vm* VmView::selected() const
