@@ -1,4 +1,5 @@
 #include "app/VmSettingsDialog.h"
+#include "app/Look.h"
 #include "app/Prompts.h"
 
 #include <QCheckBox>
@@ -49,10 +50,8 @@ VmSettingsDialog::VmSettingsDialog(const QString& name, VmSettings settings, App
     iso->setEditable(true);
     iso->addItems(s.isos);
     iso->setCurrentText(s.iso);
-    iso->lineEdit()->setPlaceholderText(s.hasCd ? tr("No disc") : tr("No CD/DVD drive"));
     iso->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     iso->setMinimumContentsLength(36);
-    iso->setToolTip(tr("A disc image on the host: from its storage pools, or a path typed in"));
     auto* browse = new QPushButton(tr("&Browse…"));
     browse->setVisible(s.localFiles);
     connect(browse, &QPushButton::clicked, this, [this, iso] {
@@ -63,10 +62,12 @@ VmSettingsDialog::VmSettingsDialog(const QString& name, VmSettings settings, App
     });
     auto* eject = new QPushButton(tr("&Eject"));
     connect(eject, &QPushButton::clicked, iso, [iso] { iso->setCurrentText({}); });
-    auto* cdRow = new QHBoxLayout;
-    cdRow->addWidget(iso, 1);
-    cdRow->addWidget(browse);
-    cdRow->addWidget(eject);
+    auto* cdRow = new QWidget;
+    auto* cdLayout = new QHBoxLayout(cdRow);
+    cdLayout->setContentsMargins(0, 0, 0, 0);
+    cdLayout->addWidget(iso, 1);
+    cdLayout->addWidget(browse);
+    cdLayout->addWidget(eject);
     auto* cdFirst = new QCheckBox(tr("Boot from the CD/DVD &first"));
     cdFirst->setChecked(s.cdFirst);
     for (QWidget* w : {static_cast<QWidget*>(iso), static_cast<QWidget*>(browse), static_cast<QWidget*>(eject), static_cast<QWidget*>(cdFirst)})
@@ -75,9 +76,11 @@ VmSettingsDialog::VmSettingsDialog(const QString& name, VmSettings settings, App
     auto* form = new QFormLayout;
     form->addRow(tr("&Processors:"), cpus);
     form->addRow(tr("&Memory:"), memory);
-    auto* cdLabel = new QLabel(tr("&CD/DVD:"));
+    QLabel* cdLabel = look::hintedRow(form, tr("&CD/DVD:"), cdRow,
+                                      s.hasCd ? tr("A disc image on the host, from its storage pools or a path. Leave empty for no disc.")
+                                              : tr("This machine has no CD/DVD drive."))
+                          .label;
     cdLabel->setBuddy(iso);
-    form->addRow(cdLabel, cdRow);
     form->addRow(QString(), cdFirst);
     auto* note = new QLabel(tr("It is running: processors, memory and the boot order change at its next start; the disc changes now."));
     note->setWordWrap(true);

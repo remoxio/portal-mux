@@ -345,15 +345,13 @@ void AzureView::editAccount(AzureClient* client)
     QDialog dialog(this);
     dialog.setWindowTitle(client ? tr("Edit Azure Account") : tr("Add Azure Account"));
     auto* name = new QLineEdit(QString::fromStdString(old.name));
-    name->setPlaceholderText(tr("Who signs in"));
     auto* tenant = new QLineEdit(QString::fromStdString(old.tenant));
     auto* app = new QLineEdit(QString::fromStdString(old.clientId));
-    app->setPlaceholderText(tr("Azure CLI's"));
     auto* form = new QFormLayout;
-    form->addRow(tr("&Name:"), name);
+    look::hintedRow(form, tr("&Name:"), name, tr("Leave empty to show the account that signs in."));
     look::hintedRow(form, tr("&Directory:"), tenant,
                     tr("\"organizations\" for your work account's own; a directory's ID or domain for guest and personal accounts."));
-    look::hintedRow(form, tr("&Application ID:"), app, tr("Empty for Azure CLI's. Your own: a public client with the redirect URI http://localhost."));
+    look::hintedRow(form, tr("&Application ID:"), app, tr("Leave empty for Azure CLI's. Your own: a public client with the redirect URI http://localhost."));
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     buttons->button(QDialogButtonBox::Ok)->setText(client ? tr("OK") : tr("Sign In"));
     if (!client) buttons->button(QDialogButtonBox::Ok)->setToolTip(tr("In your web browser"));

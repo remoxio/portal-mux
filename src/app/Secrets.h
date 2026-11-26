@@ -19,6 +19,7 @@ void read(const std::string& id, QObject* context, std::function<void(QString pa
 void write(const std::string& id, const QString& password, QObject* context, std::function<void(QString error)> done);
 void remove(const std::string& id);
 bool saved(const std::string& id); // without unlocking anything
+QString savedHint(bool saved); // a password field's hint
 // A password field's saved password: an eye shows it once the master password is typed again, a trash can deletes it
 // after asking. The eye shows typed text at once. deleted: after a deletion.
 void attach(QLineEdit* field, const std::string& id, std::function<void()> deleted = {});

@@ -328,23 +328,35 @@ void paintSelection(QPainter* p, const QRectF& rect, const QPalette& palette, qr
     p->restore();
 }
 
-QLabel* hintedRow(QFormLayout* form, const QString& label, QWidget* field, const QString& hint)
+HintedRow hintedRow(QFormLayout* form, const QString& label, QWidget* field, const QString& hint)
 {
     auto* note = new QLabel(hint);
     note->setWordWrap(true);
+    if (hint.isEmpty()) note->hide();
     note->setForegroundRole(QPalette::PlaceholderText);
     QFont font = note->font();
     font.setPointSizeF(font.pointSizeF() * 0.85);
     note->setFont(font);
-    auto* cell = new QVBoxLayout;
-    cell->setSpacing(3);
-    cell->addWidget(field);
-    cell->addWidget(note);
+    auto* cell = new QWidget; // one widget: showing the row again keeps an empty hint hidden
+    auto* column = new QVBoxLayout(cell);
+    column->setContentsMargins(0, 0, 0, 0);
+    column->setSpacing(3);
+    const bool grows = field->sizePolicy().horizontalPolicy() & QSizePolicy::ExpandFlag ||
+                       (field->layout() && field->layout()->expandingDirections() & Qt::Horizontal);
+    column->addWidget(field, 0, grows ? Qt::Alignment() : Qt::AlignLeft); // a pop-up keeps its width, its hint takes the row's
+    column->addWidget(note);
+    cell->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     auto* name = new QLabel(label);
     name->setBuddy(field);
     name->setMaximumHeight(field->sizeHint().height()); // QFormLayout then aligns it with the field, not the cell
     form->addRow(name, cell);
-    return note;
+    return {name, note};
+}
+
+void setHint(QLabel* hint, const QString& text)
+{
+    hint->setText(text);
+    hint->setHidden(text.isEmpty());
 }
 
 } // namespace look

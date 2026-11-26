@@ -1,5 +1,6 @@
 #include "app/Snippets.h"
 #include "app/Icons.h"
+#include "app/Look.h"
 
 #include <QCheckBox>
 #include <QDialog>
@@ -62,7 +63,6 @@ void edit(QWidget* parent, QSettings* settings)
     remove->setIcon(icons::lucide("trash"));
     remove->setToolTip(QObject::tr("Delete the snippet"));
     auto* name = new QLineEdit;
-    name->setPlaceholderText(QObject::tr("The command's first line"));
     auto* command = new QPlainTextEdit;
     command->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     command->setTabChangesFocus(true);
@@ -77,7 +77,7 @@ void edit(QWidget* parent, QSettings* settings)
     left->addWidget(list);
     left->addLayout(buttons);
     auto* form = new QFormLayout;
-    form->addRow(QObject::tr("Name:"), name);
+    look::hintedRow(form, QObject::tr("Name:"), name, QObject::tr("Leave empty to show the command's first line."));
     form->addRow(QObject::tr("Command:"), command);
     form->addRow(QString(), run);
     auto* columns = new QHBoxLayout;

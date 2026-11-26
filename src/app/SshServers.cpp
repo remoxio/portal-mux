@@ -3,7 +3,9 @@
 #include "app/CardRow.h"
 #include "app/ConnectionStore.h"
 #include "app/Icons.h"
+#include "app/Look.h"
 #include "app/Prompts.h"
+#include "app/Secrets.h"
 #include "ssh/SshConnection.h"
 #include "ssh/SshTunnel.h"
 
@@ -222,25 +224,16 @@ void SshServersPage::edit(int row)
     sheet->setWindowFlag(Qt::Sheet);
 #endif
     auto* name = new QLineEdit(s.name);
-    name->setPlaceholderText(tr("As the host"));
     auto* host = new QLineEdit(s.host);
-    host->setPlaceholderText(tr("hostname or hostname:port"));
     host->setMinimumWidth(host->fontMetrics().averageCharWidth() * 40);
     auto* user = new QLineEdit(s.user);
-    user->setPlaceholderText(tr("Empty = your user name here"));
     auto* auth = new QComboBox;
     auth->addItem(tr("Password"), QStringLiteral("password"));
     auth->addItem(tr("Public key"), QStringLiteral("publicKey"));
     auth->setCurrentIndex(std::max(0, auth->findData(s.auth)));
     auto* password = new QLineEdit(passwords_.value(s.id));
     password->setEchoMode(QLineEdit::Password);
-    password->setPlaceholderText(!passwords_.contains(s.id) && secrets::saved(sshServerSecret(s.id)) ? tr("Saved") : tr("Ask when connecting"));
-    secrets::attach(password, sshServerSecret(s.id), [this, password, id = s.id] {
-        passwords_.remove(id);
-        password->setPlaceholderText(tr("Ask when connecting"));
-    });
     auto* keyFile = new QLineEdit(s.keyFile);
-    keyFile->setPlaceholderText(tr("Empty = SSH agent and ~/.ssh default keys"));
     auto* browse = new QPushButton(tr("Browse…"));
     auto* keyRow = new QWidget;
     auto* keyLayout = new QHBoxLayout(keyRow);
@@ -248,18 +241,22 @@ void SshServersPage::edit(int row)
     keyLayout->addWidget(keyFile, 1);
     keyLayout->addWidget(browse);
     auto* form = new QFormLayout;
-    form->addRow(tr("&Name:"), name);
-    form->addRow(tr("&Host:"), host);
+    look::hintedRow(form, tr("&Name:"), name, tr("Leave empty to show the host."));
+    look::hintedRow(form, tr("&Host:"), host, tr("A host name or address, with :port when not 22."));
     form->addRow(tr("&Authentication:"), auth);
-    form->addRow(tr("&User name:"), user);
-    form->addRow(tr("&Password:"), password);
-    form->addRow(tr("Private &key:"), keyRow);
-    auto showAuth = [form, auth, password, keyRow] {
-        const bool key = auth->currentData().toString() == QLatin1String("publicKey");
-        form->setRowVisible(password, !key);
-        form->setRowVisible(keyRow, key);
+    look::hintedRow(form, tr("&User name:"), user, tr("Leave empty for your user name on this computer."));
+    const look::HintedRow passwordRow = look::hintedRow(form, tr("&Password:"), password, secrets::savedHint(!passwords_.contains(s.id) && secrets::saved(sshServerSecret(s.id))));
+    secrets::attach(password, sshServerSecret(s.id), [this, hint = passwordRow.hint, id = s.id] {
+        passwords_.remove(id);
+        look::setHint(hint, secrets::savedHint(false));
+    });
+    QLabel* keyLabel = look::hintedRow(form, tr("Private &key:"), keyRow, tr("Leave empty for your SSH agent and ~/.ssh default keys.")).label;
+    keyLabel->setBuddy(keyFile);
+    auto showAuth = [form, auth, password = passwordRow.label, key = keyLabel] {
+        const bool usesKey = auth->currentData().toString() == QLatin1String("publicKey");
+        form->setRowVisible(password, !usesKey);
+        form->setRowVisible(key, usesKey);
     };
-    showAuth();
     connect(auth, &QComboBox::currentIndexChanged, sheet, showAuth);
     connect(browse, &QPushButton::clicked, sheet, [sheet, keyFile] {
         const QString path = QFileDialog::getOpenFileName(sheet, tr("Private Key"), keyFile->text().isEmpty() ? QDir::homePath() + QStringLiteral("/.ssh") : keyFile->text());
@@ -307,6 +304,7 @@ void SshServersPage::edit(int row)
     layout->addWidget(heading);
 #endif
     layout->addLayout(form);
+    showAuth(); // in the sheet: a widget without a parent would be a window
     auto* bottom = new QHBoxLayout; // the test on the left, as a dialog's extra button
     bottom->addWidget(test);
     bottom->addStretch();

@@ -3,6 +3,7 @@
 #include "app/ConnectionStore.h"
 #include "app/Icons.h"
 #include "app/Logins.h"
+#include "app/Look.h"
 #include "app/Secrets.h"
 
 #include <QCheckBox>
@@ -30,12 +31,12 @@ using rdc::Protocol;
 
 std::string connectionSecret(const std::string& id, const std::string& property) { return property.empty() ? id : id + "/" + property; }
 
-// says whether one is saved; an eye shows it, a trash can deletes it
-static void secretField(QLineEdit* field, const std::string& id, const QString& none)
+// its hint says whether one is saved; an eye shows it, a trash can deletes it
+static void secretField(QLineEdit* field, QLabel* hint, const std::string& id, const QString& none)
 {
     field->setEchoMode(QLineEdit::Password);
-    field->setPlaceholderText(secrets::saved(id) ? ConnectionDialog::tr("Saved") : none);
-    secrets::attach(field, id, [field, none] { field->setPlaceholderText(none); });
+    look::setHint(hint, secrets::saved(id) ? secrets::savedHint(true) : none);
+    secrets::attach(field, id, [hint, none] { look::setHint(hint, none); });
 }
 
 static QWidget* withBrowse(QLineEdit* edit, bool directory)
@@ -96,15 +97,18 @@ ConnectionDialog::ConnectionDialog(const rdc::Connection& c, const QStringList& 
     port_->setValue(c.port);
     username_ = text(c.username);
     password_ = new QLineEdit;
-    secretField(password_, connectionSecret(c.id, ""), tr("Ask when connecting"));
 
     generalForm_->addRow(tr("&Name:"), name_);
     generalForm_->addRow(tr("&Group:"), group_);
     generalForm_->addRow(tr("&Protocol:"), protocol_);
-    generalForm_->addRow(tr("&Host:"), host_);
+    const look::HintedRow host = look::hintedRow(generalForm_, tr("&Host:"), host_);
+    hostLabel_ = host.label;
+    hostHint_ = host.hint;
     generalForm_->addRow(tr("P&ort:"), port_);
     generalForm_->addRow(tr("&User name:"), username_);
-    generalForm_->addRow(tr("Pass&word:"), password_);
+    const look::HintedRow password = look::hintedRow(generalForm_, tr("Pass&word:"), password_);
+    passwordLabel_ = password.label;
+    secretField(password_, password.hint, connectionSecret(c.id, ""), secrets::savedHint(false));
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     auto* layout = new QVBoxLayout(this);
@@ -115,17 +119,16 @@ ConnectionDialog::ConnectionDialog(const rdc::Connection& c, const QStringList& 
     // adb serial (empty = the only device); no port, user or password
     validate_ = [this, buttons] {
         const bool android = protocol() == Protocol::Android, serial = protocol() == Protocol::Serial;
-        if (auto* label = qobject_cast<QLabel*>(generalForm_->labelForField(host_)))
-            label->setText(android || serial ? tr("&Device:") : tr("&Host:"));
-        host_->setPlaceholderText(android  ? tr("Serial from \"adb devices\" or host:port; empty = the only connected device")
-                                  : serial ? tr("/dev/ttyUSB0, /dev/ttyACM0…")
-                                           : QString());
+        hostLabel_->setText(android || serial ? tr("&Device:") : tr("&Host:"));
+        look::setHint(hostHint_, android  ? tr("The serial from \"adb devices\", or host:port. Leave empty for the only connected device.")
+                                 : serial ? tr("Such as /dev/ttyUSB0 or /dev/ttyACM0.")
+                                          : QString());
         host_->setCompleter(serial ? serialCompleter_ : nullptr);
         const bool loginInside = protocol() == Protocol::Moonlight || protocol() == Protocol::Telnet; // paired, or logs in in the terminal
         const bool local = protocol() == Protocol::Local;
-        generalForm_->setRowVisible(host_, !local);
+        generalForm_->setRowVisible(hostLabel_, !local);
         generalForm_->setRowVisible(port_, !android && !local && !serial);
-        for (QWidget* w : std::initializer_list<QWidget*>{username_, password_})
+        for (QWidget* w : std::initializer_list<QWidget*>{username_, passwordLabel_})
             generalForm_->setRowVisible(w, !android && !loginInside && !local && !serial && !usesLogin());
         buttons->button(QDialogButtonBox::Ok)->setEnabled(android || local || !host_->text().trimmed().isEmpty());
     };
@@ -175,9 +178,7 @@ void ConnectionDialog::buildPropertyTabs(const std::map<std::string, std::string
         switch (d.kind) {
         case PropertyKind::Text:
         case PropertyKind::Secret: {
-            auto* e = new QLineEdit(d.kind == PropertyKind::Secret ? QString() : value);
-            if (d.kind == PropertyKind::Secret) secretField(e, connectionSecret(original_.id, d.key), {});
-            editor = field = e;
+            editor = field = new QLineEdit(d.kind == PropertyKind::Secret ? QString() : value);
             break;
         }
         case PropertyKind::Int: {
@@ -219,6 +220,7 @@ void ConnectionDialog::buildPropertyTabs(const std::map<std::string, std::string
         }
         }
         if (!d.tip.empty()) field->setToolTip(tr(d.tip.c_str()));
+        QWidget* rowKey = field; // what removeRow takes
         if (d.kind == PropertyKind::Bool)
 #ifdef Q_OS_MACOS
             form->addRow(static_cast<QWidget*>(nullptr), field); // in the fields' column, as AppKit's forms
@@ -230,16 +232,17 @@ void ConnectionDialog::buildPropertyTabs(const std::map<std::string, std::string
             QFormLayout::ItemRole role;
             generalForm_->getWidgetPosition(username_, &row, &role);
             generalForm_->insertRow(row, label + QLatin1Char(':'), field);
-        } else
+        } else if (d.kind == PropertyKind::Secret) {
+            const look::HintedRow hinted = look::hintedRow(form, label + QLatin1Char(':'), field);
+            secretField(static_cast<QLineEdit*>(field), hinted.hint, connectionSecret(original_.id, d.key), {});
+            rowKey = hinted.label;
+        } else if (d.key == "tunnel" || d.key == "jumpHost") {
+            rowKey = look::hintedRow(form, label + QLatin1Char(':'), field, tr("New SSH Server… in the list adds one to Settings → SSH Servers.")).label;
+        } else {
             form->addRow(label + QLatin1Char(':'), field);
-        if (form == generalForm_) generalRows_.push_back(field);
-        editors_[d.key] = editor;
-        if (d.key == "tunnel" || d.key == "jumpHost") {
-            auto* note = new QLabel(tr("New SSH Server… in the list adds one to Settings → SSH Servers."));
-            note->setEnabled(false); // dimmed
-            form->addRow(QString(), note);
-            if (form == generalForm_) generalRows_.push_back(note);
         }
+        if (form == generalForm_) generalRows_.push_back(rowKey);
+        editors_[d.key] = editor;
     }
 }
 

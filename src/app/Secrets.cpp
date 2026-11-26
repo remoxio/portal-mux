@@ -364,6 +364,8 @@ void remove(const std::string& id)
 
 bool saved(const std::string& id) { return vault().passwords.count(QString::fromStdString(id)) > 0; }
 
+QString savedHint(bool saved) { return saved ? tr("Saved. Type a new one to replace it.") : tr("Leave empty to be asked when connecting."); }
+
 void attach(QLineEdit* field, const std::string& id, std::function<void()> deleted)
 {
     QAction* eye = field->addAction(icons::lucide("eye"), QLineEdit::TrailingPosition);

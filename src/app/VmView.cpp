@@ -370,14 +370,11 @@ void VmView::editHost(LibvirtVms* host)
     auto* name = new QLineEdit(host ? host->name() : QString());
     auto* server = new QComboBox;
     auto* hostName = new QLineEdit(old.host());
-    hostName->setPlaceholderText(tr("Host name, address or a Host of ~/.ssh/config"));
     auto* port = new QSpinBox;
     port->setRange(1, 65535);
     port->setValue(old.port(22));
     auto* user = new QLineEdit(old.userName());
-    user->setPlaceholderText(tr("Empty = your user name here"));
     auto* keyFile = new QLineEdit(QUrlQuery(old).queryItemValue(QStringLiteral("keyfile"), QUrl::FullyDecoded));
-    keyFile->setPlaceholderText(tr("Empty = SSH agent and ~/.ssh default keys"));
     auto* browse = new QPushButton(tr("Browse…"));
     auto* keyRow = new QWidget;
     auto* keyLayout = new QHBoxLayout(keyRow);
@@ -392,20 +389,23 @@ void VmView::editHost(LibvirtVms* host)
     machines->setCurrentIndex(machines->findData(machinesOf(old)));
     auto* address = new QLineEdit;
     address->setReadOnly(true);
-    address->setPlaceholderText(tr("Made of the fields above"));
     auto* form = new QFormLayout;
-    form->addRow(tr("&Name:"), name);
-    QLabel* passwordNote = look::hintedRow(form, tr("&SSH server:"), server,
-                                           tr("This server logs in with a password, which libvirt can't type: it tries your SSH agent "
-                                              "and ~/.ssh default keys instead."));
-    look::hintedRow(form, tr("&Host:"), hostName, tr("The host's key must be known here: ssh to it once."));
-    form->addRow(tr("&Port:"), port);
-    look::hintedRow(form, tr("&User name:"), user, tr("Must be allowed to use libvirt there: in the libvirt group."));
-    look::hintedRow(form, tr("Private &key:"), keyRow, tr("libvirt can't type a passphrase: a key without one, or one in your SSH agent."));
-    form->addRow(tr("&Machines:"), machines);
-    form->addRow(tr("&Address:"), address);
-    auto* layout = new QVBoxLayout(&dialog); // before the note is shown or hidden: a widget without a parent would be a window
+    auto* layout = new QVBoxLayout(&dialog); // before hints are shown: a widget without a parent would be a window
     layout->addLayout(form);
+    QLabel* nameHint = look::hintedRow(form, tr("&Name:"), name).hint;
+    QLabel* serverHint = look::hintedRow(form, tr("&SSH server:"), server).hint;
+    look::hintedRow(form, tr("&Host:"), hostName,
+                    tr("A host name, an address or a Host of ~/.ssh/config. Its key must be known here: ssh to it once."));
+    form->addRow(tr("&Port:"), port);
+    look::hintedRow(form, tr("&User name:"), user,
+                    tr("Leave empty for your user name on this computer. It must be allowed to use libvirt there: in the libvirt group."));
+    QLabel* keyLabel = look::hintedRow(form, tr("Private &key:"), keyRow,
+                                       tr("Leave empty for your SSH agent and ~/.ssh default keys. libvirt can't type a passphrase: "
+                                          "use a key without one, or one in your SSH agent."))
+                           .label;
+    keyLabel->setBuddy(keyFile);
+    form->addRow(tr("&Machines:"), machines);
+    look::hintedRow(form, tr("&Address:"), address, tr("Made of the fields above."));
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -427,9 +427,12 @@ void VmView::editHost(LibvirtVms* host)
             keyFile->setText(login.keyFile);
         }
         for (QWidget* w : {static_cast<QWidget*>(hostName), static_cast<QWidget*>(port), static_cast<QWidget*>(user), keyRow}) w->setEnabled(!s);
-        name->setPlaceholderText(s ? s->name : tr("As the host"));
-        passwordNote->setVisible(s && s->auth != QLatin1String("publicKey"));
-        if (dialog.isVisible()) dialog.resize(dialog.width(), dialog.layout()->totalHeightForWidth(dialog.width())); // the note's lines
+        look::setHint(nameHint, s ? tr("Leave empty to show the server's name.") : tr("Leave empty to show the host."));
+        look::setHint(serverHint, s && s->auth != QLatin1String("publicKey")
+                                      ? tr("This server logs in with a password, which libvirt can't type: it tries your SSH agent "
+                                           "and ~/.ssh default keys instead.")
+                                      : QString());
+        if (dialog.isVisible()) dialog.resize(dialog.width(), dialog.layout()->totalHeightForWidth(dialog.width())); // the hint's lines
     };
     SshServersRefill fill = [&](const QString& select, const std::vector<SshServer>& list) {
         servers = list;

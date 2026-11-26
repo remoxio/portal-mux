@@ -11,6 +11,7 @@
 
 class QComboBox;
 class QFormLayout;
+class QLabel;
 class QLineEdit;
 class QSettings;
 class QSpinBox;
@@ -48,9 +49,10 @@ private:
     QTabWidget* tabs_;
     QFormLayout* generalForm_;
     QLineEdit *name_, *host_, *username_, *password_;
+    QLabel *hostLabel_, *hostHint_, *passwordLabel_; // a hinted row's label stands for the row
     class QCompleter* serialCompleter_;
     QComboBox *group_, *protocol_;
     QSpinBox* port_;
     std::map<std::string, QWidget*> editors_;
-    std::vector<QWidget*> generalRows_;
+    std::vector<QWidget*> generalRows_; // fields or labels, as removeRow takes them
 };

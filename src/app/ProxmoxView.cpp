@@ -335,18 +335,17 @@ void ProxmoxView::editServer(ProxmoxClient* client)
     QDialog dialog(this);
     dialog.setWindowTitle(client ? tr("Edit Proxmox Server") : tr("Add Proxmox Server"));
     auto* name = new QLineEdit(QString::fromStdString(old.name));
-    name->setPlaceholderText(tr("As the address"));
     auto* address = new QLineEdit(client ? QStringLiteral("%1:%2").arg(QString::fromStdString(old.host)).arg(old.port) : QString());
-    address->setPlaceholderText(tr("pve.example.com or pve.example.com:8006"));
     auto* user = new QLineEdit(QString::fromStdString(client ? old.user : "root@pam"));
     auto* secret = new QLineEdit;
     secret->setEchoMode(QLineEdit::Password);
-    secret->setPlaceholderText(client ? tr("Unchanged") : QString());
     auto* form = new QFormLayout;
-    form->addRow(tr("&Name:"), name);
-    form->addRow(tr("&Address:"), address);
+    look::hintedRow(form, tr("&Name:"), name, tr("Leave empty to show the address."));
+    look::hintedRow(form, tr("&Address:"), address, tr("A host name or address, with :port when not 8006."));
     look::hintedRow(form, tr("&User:"), user, tr("user@realm, or user@realm!tokenid for an API token."));
-    look::hintedRow(form, tr("&Password:"), secret, tr("Or the API token's secret. Accounts with a second factor need a token."));
+    look::hintedRow(form, tr("&Password:"), secret,
+                    tr("Or the API token's secret. Accounts with a second factor need a token.") +
+                        (client ? QLatin1Char(' ') + tr("Leave empty to keep the saved one.") : QString()));
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);

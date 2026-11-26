@@ -1139,8 +1139,6 @@ void MainWindow::quickConnect()
     protocol->setCurrentIndex(std::max(0, protocol->findData(settings_->value(QStringLiteral("quick/protocol")).toInt())));
     protocol->setToolTip(tr("Protocol for an address that names none"));
     auto* address = new QLineEdit;
-    address->setPlaceholderText(tr("host or user@host:port"));
-    address->setToolTip(tr("Connect without saving: host, user@host:port, or an rdp://, vnc://, spice:// or ssh:// address"));
     address->setMinimumWidth(address->fontMetrics().averageCharWidth() * 44);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel);
     QPushButton* go = buttons->addButton(tr("&Connect"), QDialogButtonBox::AcceptRole);
@@ -1154,7 +1152,7 @@ void MainWindow::quickConnect()
     });
     auto* form = new QFormLayout;
     form->addRow(tr("&Protocol:"), protocol);
-    form->addRow(tr("&Address:"), address);
+    look::hintedRow(form, tr("&Address:"), address, tr("A host, user@host:port, or an rdp://, vnc://, spice:// or ssh:// address. Nothing is saved."));
     auto* layout = new QVBoxLayout(&dialog);
     layout->addLayout(form);
     layout->addWidget(buttons);

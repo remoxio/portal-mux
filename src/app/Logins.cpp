@@ -2,6 +2,7 @@
 
 #include "app/CardRow.h"
 #include "app/Icons.h"
+#include "app/Look.h"
 #include "app/Prompts.h"
 #include "app/Secrets.h"
 #include "core/Properties.h"
@@ -211,23 +212,20 @@ void LoginsPage::edit(int row)
     sheet->setWindowFlag(Qt::Sheet);
 #endif
     auto* name = new QLineEdit(l.name);
-    name->setPlaceholderText(tr("As the user name"));
     auto* user = new QLineEdit(l.user);
     user->setMinimumWidth(user->fontMetrics().averageCharWidth() * 40);
     auto* domain = new QLineEdit(l.domain);
-    domain->setPlaceholderText(tr("Windows (RDP) only; empty = the connection's"));
     auto* password = new QLineEdit(passwords_.value(l.id));
     password->setEchoMode(QLineEdit::Password);
-    password->setPlaceholderText(!passwords_.contains(l.id) && secrets::saved(loginSecret(l.id)) ? tr("Saved") : tr("Ask when connecting"));
-    secrets::attach(password, loginSecret(l.id), [this, password, id = l.id] {
-        passwords_.remove(id);
-        password->setPlaceholderText(tr("Ask when connecting"));
-    });
     auto* form = new QFormLayout;
-    form->addRow(tr("&Name:"), name);
+    look::hintedRow(form, tr("&Name:"), name, tr("Leave empty to show the user name."));
     form->addRow(tr("&User name:"), user);
-    form->addRow(tr("&Domain:"), domain);
-    form->addRow(tr("&Password:"), password);
+    look::hintedRow(form, tr("&Domain:"), domain, tr("Windows (RDP) only. Leave empty for the connection's."));
+    QLabel* passwordHint = look::hintedRow(form, tr("&Password:"), password, secrets::savedHint(!passwords_.contains(l.id) && secrets::saved(loginSecret(l.id)))).hint;
+    secrets::attach(password, loginSecret(l.id), [this, passwordHint, id = l.id] {
+        passwords_.remove(id);
+        look::setHint(passwordHint, secrets::savedHint(false));
+    });
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     QPushButton* ok = buttons->button(QDialogButtonBox::Ok);
     ok->setEnabled(!l.user.isEmpty());
