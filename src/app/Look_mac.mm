@@ -220,6 +220,13 @@ public:
     // group boxes as cards: a small title over a rounded box
     void drawComplexControl(ComplexControl control, const QStyleOptionComplex* option, QPainter* p, const QWidget* widget) const override
     {
+        if (const auto* spin = qstyleoption_cast<const QStyleOptionSpinBox*>(option);
+            control == CC_SpinBox && spin && spin->frame && (spin->subControls & SC_SpinBoxFrame)) {
+            drawField(QRectF(proxy()->subControlRect(CC_SpinBox, spin, SC_SpinBoxEditField, widget)).adjusted(1, 1, -1, -1), option, p);
+            QStyleOptionSpinBox stepper = *spin;
+            stepper.subControls &= ~SC_SpinBoxFrame;
+            return QProxyStyle::drawComplexControl(control, &stepper, p, widget);
+        }
         // a button in a capsule: a round highlight, not AppKit's bezel
         if (const auto* tool = qstyleoption_cast<const QStyleOptionToolButton*>(option);
             control == CC_ToolButton && tool && widget && capsules(widget->parentWidget())) {
@@ -324,6 +331,10 @@ public:
     {
         if (element == PE_IndicatorTabClose && widget && pills(widget->parentWidget())) return drawPillClose(option, p, widget);
         if (element == PE_IndicatorToolBarSeparator && capsules(widget)) return; // the gap between capsules
+        if (const auto* frame = qstyleoption_cast<const QStyleOptionFrame*>(option); element == PE_PanelLineEdit && frame) {
+            if (frame->lineWidth > 0) return drawField(QRectF(option->rect).adjusted(1, 1, -1, -1), option, p);
+            if (widget && qobject_cast<const QAbstractSpinBox*>(widget->parentWidget())) return; // on the spin box's field
+        }
         if (element != PE_FrameTabWidget || !tabView(widget)) return QProxyStyle::drawPrimitive(element, option, p, widget);
         QColor ink = option->palette.color(QPalette::WindowText);
         const bool dark = ink.lightness() > 128;
@@ -370,6 +381,21 @@ public:
     }
 
 private:
+    // filled and outlined also unfocused, where AppKit's dark ones show only a faint outline
+    static void drawField(const QRectF& field, const QStyleOption* option, QPainter* p)
+    {
+        QColor ink = option->palette.color(QPalette::Active, QPalette::WindowText);
+        const qreal fade = option->state & State_Enabled ? 1 : 0.6;
+        p->save();
+        p->setRenderHint(QPainter::Antialiasing);
+        ink.setAlphaF(0.11 * fade);
+        p->setPen(QPen(ink, 1));
+        ink.setAlphaF(0.02 * fade);
+        p->setBrush(ink);
+        p->drawRoundedRect(field.adjusted(0.5, 0.5, -0.5, -0.5), fieldRadius - 0.5, fieldRadius - 0.5);
+        p->restore();
+    }
+
     static void drawFieldRing(const QRectF& field, QPainter* p)
     {
         QPainterPath ring;
