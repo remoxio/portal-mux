@@ -334,7 +334,8 @@ struct RdpSession::Callbacks {
             c->MonitorReady = clipMonitorReady;
             c->ServerCapabilities = clipServerCapabilities;
             c->ServerFormatList = clipServerFormatList;
-            c->ServerFormatListResponse = [](CliprdrClientContext*, const CLIPRDR_FORMAT_LIST_RESPONSE*) -> UINT {
+            c->ServerFormatListResponse = [](CliprdrClientContext* c, const CLIPRDR_FORMAT_LIST_RESPONSE* r) -> UINT {
+                if (r->common.msgFlags & CB_RESPONSE_FAIL) WLog_WARN(clipTag, "%s: the server refused our copy", clipSelf(c)->label().c_str());
                 return CHANNEL_RC_OK;
             };
             c->ServerFormatDataRequest = clipDataRequest;
@@ -914,8 +915,8 @@ void RdpSession::announceClipboard()
     list.common.msgType = CB_FORMAT_LIST;
     list.numFormats = UINT32(formats.size());
     list.formats = formats.data();
-    if (cliprdr_file_context_notify_new_client_format_list(fileContext_) != CHANNEL_RC_OK) return;
-    (void)cliprdr_->ClientFormatList(cliprdr_, &list);
+    if (cliprdr_file_context_notify_new_client_format_list(fileContext_) != CHANNEL_RC_OK || cliprdr_->ClientFormatList(cliprdr_, &list) != CHANNEL_RC_OK)
+        WLog_WARN(clipTag, "%s: our copy could not be sent", label().c_str());
 }
 
 // the setting is relative to this display: 100 = the size of its own apps
