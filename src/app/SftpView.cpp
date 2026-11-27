@@ -62,7 +62,7 @@ SftpView::SftpView(rdc::SshConnection::Params params, QSettings* settings, bool 
         follow_->setCheckable(true);
         follow_->setChecked(true);
         connect(follow_, &QToolButton::toggled, this, [this](bool on) {
-            if (on) setBusy(tr("Follows the terminal: its prompt must report the folder (OSC 7, or the window title)."));
+            if (on) setBusy(tr("Follows the terminal: its prompt must show the folder (OSC 7, the window title, or user@host:folder)."));
         });
     } else {
         up = new QPushButton(icons::lucide("arrow-up"), tr("&Up"));

@@ -2571,6 +2571,7 @@ void MainWindow::addFilePanel(TerminalView* terminal, const Connection& c)
     });
     connect(terminal, &TerminalView::directoryChanged, files, &SftpView::follow);
     connect(terminal, &TerminalView::titleChanged, files, &SftpView::followTitle);
+    connect(terminal, &TerminalView::promptShown, files, &SftpView::followTitle);
     connect(files, &SftpView::pathPicked, terminal, [terminal](const QString& path) {
         terminal->paste(shellQuoted(path));
         terminal->setFocus();

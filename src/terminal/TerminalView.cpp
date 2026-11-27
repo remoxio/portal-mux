@@ -374,8 +374,24 @@ void TerminalView::feed(const char* data, size_t len)
         vterm_input_write(vt_, rest.data() + at, 4);
     }
     vterm_input_write(vt_, rest.data(), rest.size());
+    if (!altScreen_) checkPrompt();
     updateScrollBar(atBottom);
     viewport()->update();
+}
+
+// Debian's prompt without a title or OSC 7 still tells the folder
+void TerminalView::checkPrompt()
+{
+    const int line = int(scrollback_.size()) + cursor_.row;
+    const Text t = joined(lineStart(line), line);
+    const auto end = std::find_if(t.at.begin(), t.at.end(), [&](Pos p) { return p.line == line && p.col >= cursor_.col; });
+    static const QRegularExpression prompt(QStringLiteral("^([^@\\s]+@[^:\\s]+:(?:~|/).*?)[$#] ?$"));
+    const QRegularExpressionMatch m = prompt.match(t.text.left(end - t.at.begin()));
+    const long long at = pushed_ + cursor_.row;
+    if (!m.hasMatch() || (at == promptLine_ && m.captured(1) == prompt_)) return;
+    promptLine_ = at;
+    prompt_ = m.captured(1);
+    emit promptShown(prompt_);
 }
 
 void TerminalView::send(const char* data, size_t len)

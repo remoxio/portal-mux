@@ -61,6 +61,7 @@ signals:
     void gridChanged();
     void bell();
     void directoryChanged(const QString& path); // the shell's, by OSC 7
+    void promptShown(const QString& prompt);   // "user@host:folder" of a new "user@host:folder$ " prompt at the cursor
     void keyTyped(int key, Qt::KeyboardModifiers m, const QString& text); // by the user, not typeKey()
     void pasted(const QString& text); // by the user: the clipboard or the selection
 
@@ -116,6 +117,7 @@ private:
     void logLine(int line);
     void logScrollback();
     void logScreen();
+    void checkPrompt();
     Pos posAt(QPoint point) const;
     bool selected(int line, int col) const;
     QString selectedText() const;
@@ -157,6 +159,8 @@ private:
     int wheelRest_ = 0; // eighths of a degree not yet sent as a wheel step
     std::string titlePart_; // the title arrives in pieces
     std::string oscPart_;   // OSC 7 too
+    long long promptLine_ = -1; // checkPrompt()'s last
+    QString prompt_;
     std::string clipPart_;  // OSC 52, decoded
     QPointer<QWidget> side_;
     QWidget* sideEdge_ = nullptr;
